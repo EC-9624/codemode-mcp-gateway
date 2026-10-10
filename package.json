@@ -1,0 +1,29 @@
+{
+  "name": "mcm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small code-mode sandbox built for learning",
+  "type": "module",
+  "scripts": {
+    "example": "bun run examples/basic.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test ./tests",
+    "lint": "oxlint --deny-warnings .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "0.32.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": "1.4.2"
+  },
+  "packageManager": "bun@1.4.2"
+}
