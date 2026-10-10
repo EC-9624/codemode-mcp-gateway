@@ -1,4 +1,5 @@
 import { execute, ToolResult } from "../src/sandbox";
+import { createDiscoveryTools, ToolCatalog } from "../src/tool-catalog";
 import { runSandbox } from "../src/worker-execution";
 
 console.log(await execute("return 1 + 2;"));
@@ -23,3 +24,20 @@ console.log(
 );
 
 console.log(await runSandbox("return { answer: 42 };"));
+
+const catalog = ToolCatalog.create({
+  answer: {
+    description: "Return the answer to the example question",
+    execute: () => ToolResult.success(42),
+  },
+});
+const discovery = createDiscoveryTools(catalog);
+console.log(
+  await execute(
+    `
+  const matches = await tools.searchTools({ query: "answer" });
+  return await tools[matches[0].name]();
+`,
+    { ...catalog.tools, searchTools: discovery.searchTools, describeTool: discovery.describeTool },
+  ),
+);

@@ -142,6 +142,8 @@ is a boundary fix, not worker isolation or blanket built-in lockdown.
 - `src/sandbox-engine.ts`: wraps code, pumps jobs, and enforces the worker-local
   per-execution deadline.
 - `src/tool.ts`: host callback contracts, private-error handling, and JSON conversion.
+- `src/tool-catalog.ts`: host-owned tool descriptions, schemas, callback bindings,
+  and discovery callbacks.
 - `src/tool-bridge.ts`: installs guest callbacks and settles guest promises through
   JSON text. The same-thread adapter lives in `tests/local-tools.ts` for engine-level
   ownership and fault tests.
@@ -241,7 +243,7 @@ unsupported tool results reject with a public conversion error.
 - Timeout or failure stops waiting and closes the VM, not the host operation.
   Started operations may still finish or have side effects; there is no rollback,
   automatic retry, cancellation signal, or exactly-once guarantee.
-- No imports, TypeScript, persistent state, discovery, or MCP integration yet.
+- No imports, TypeScript, persistent state, or MCP integration yet.
 - Parser/VM/loading infrastructure failures can reject the host promise; script
   failures return the explicit error result.
 - This is a learning milestone, not a production-hardened sandbox.
@@ -394,11 +396,70 @@ out-of-order replies, JSON conversion on the host, malformed/duplicate messages,
 transport failure, worker crashes during calls, and late callback completion.
 
 This slice does not move callback CPU work off the main thread or add parent
-deadlines, caller cancellation, worker pooling, tool discovery, or MCP integration.
+deadlines, caller cancellation, worker pooling, or MCP integration.
+
+### Host-owned catalog and discovery
+
+The app owns tool metadata and implementations. `ToolCatalog.create` captures
+callback bindings, names, and descriptions from a definition record. Input schemas
+are descriptive metadata, not automatic validators; callbacks still validate their
+domain inputs. Schema objects remain host-owned and should be treated as read-only.
+
+```ts
+import { execute, ToolResult } from "./src/sandbox";
+import { createDiscoveryTools, ToolCatalog } from "./src/tool-catalog";
+
+const catalog = ToolCatalog.create({
+  answer: {
+    description: "Return the answer to the example question",
+    execute: () => ToolResult.success(42),
+  },
+});
+
+catalog.search("answer"); // [{ name: "answer", description: "..." }]
+catalog.describe("answer"); // metadata; undefined for an unknown name
+
+const discovery = createDiscoveryTools(catalog);
+await execute(
+  `
+  const matches = await tools.searchTools({ query: "answer" });
+  const name = matches[0].name;
+  const description = await tools.describeTool({ name });
+  return { description, value: await tools[name]() };
+`,
+  {
+    ...catalog.tools,
+    searchTools: discovery.searchTools,
+    describeTool: discovery.describeTool,
+  },
+);
+```
+
+- Search matches whitespace-separated query terms against names and descriptions,
+  case-insensitively. More distinct matching terms rank first; ties retain catalog
+  order. Blank or unmatched host queries return an empty list.
+- Search and description lookup return names, descriptions, and any input schema,
+  never implementations or extra definition fields. Discovery does not invoke tools.
+- Discovery callbacks use the existing tool-call bridge. Guests call them through
+  `tools`, just like any other tool. Invalid requests and missing description names
+  produce deliberately public tool failures.
+- The app selects the catalog and exposed callbacks for an execution. Discovery
+  names are chosen explicitly, so an app can expose `findTools: discovery.searchTools`
+  when its catalog already contains a tool named `searchTools`.
+- Guest wrappers already exist for the supplied callbacks; discovery does not install
+  additional tools. Names are preserved exactly: use `tools["billing.listInvoices"]`
+  for names that are not JavaScript identifiers.
+
+Only callable names go to the worker at startup. Metadata reaches the guest when
+discovery returns it. Future MCP connections belong to the app; an MCP adapter can
+provide definitions and callbacks without teaching the engine about MCP.
+
+Production has one worker-backed execution path. Same-thread callback wiring is
+test support and reuses the real guest bridge and host callback/serialization logic.
 
 ## Next milestones
 
 1. Add parent-supervised deadlines, caller cancellation, and worker cleanup supervision.
-2. Add tool discovery, schema validation, and one MCP upstream.
+2. Add schema-backed argument validation and one MCP upstream to the host catalog.
 
 Do not add a gateway framework before the sandbox behavior is understood.
