@@ -97,15 +97,20 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 - Keep each catch scoped to the operation whose failure it understands.
 - Do not combine tool invocation, serialization, VM allocation, and settlement
   under one catch.
-- Classify only recognized failures. Propagate unexpected infrastructure
-  exceptions with their original cause.
+- Classify only recognized failures. Within a thread, propagate unexpected
+  infrastructure exceptions with their original cause.
+- Across the worker boundary, send only controlled failure categories. The host
+  promise rejects with a new error; arbitrary worker exception messages, stacks,
+  and original error identity are not transferred. This differs from guest-visible
+  tool failures, which expose only deliberately public messages.
 - Keep guest exceptions and rejected promises consistent with native JavaScript.
 - Only deliberately public tool failure messages cross into the guest.
 - Unexpected host callback exceptions become a private, generic guest rejection.
 - Never expose private host messages, stacks, or credentials to guest code.
 - Do not retry VM operations after an infrastructure failure.
 - Do not swallow failures or replace them with success-shaped fallbacks.
-- Error messages should explain what failed and the next useful action.
+- Error messages should explain what failed. Include a next action when it is
+  concrete and supported; avoid vague troubleshooting instructions.
 - Do not invent a cause when it is unknown.
 
 ## QuickJS Ownership and Boundaries
@@ -139,6 +144,8 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use `bun:test`.
 - Test actual implementation and observable semantics.
+- Use `rejectionOf` from `tests/rejection.ts` when inspecting rejection reasons;
+  it fails on fulfillment rather than treating resolved values as failures.
 - Do not duplicate implementation logic inside tests.
 - Prefer real QuickJS execution over mocks.
 - Allow narrowly scoped fault injection for infrastructure failures that cannot

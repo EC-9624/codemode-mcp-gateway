@@ -1,17 +1,22 @@
 import { type SandboxResult } from "./sandbox";
 
+type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
+
 export type WorkerRequest = { type: "execute"; code: string };
 
 export const WorkerRequest = {
-  is(value: unknown): value is WorkerRequest {
-    return (
+  decode(value: unknown): DecodeResult<WorkerRequest> {
+    if (
       typeof value === "object" &&
       value !== null &&
       "type" in value &&
       value.type === "execute" &&
       "code" in value &&
       typeof value.code === "string"
-    );
+    ) {
+      return { ok: true, value: { type: "execute", code: value.code } };
+    }
+    return { ok: false, message: "Sandbox worker received an invalid execution request." };
   },
 };
 
@@ -20,12 +25,20 @@ export type WorkerResponse =
   | { type: "failed"; reason: "request" | "execution" };
 
 export const WorkerResponse = {
-  is(value: unknown): value is WorkerResponse {
-    if (typeof value !== "object" || value === null || !("type" in value)) return false;
-    if (value.type === "failed") {
-      return "reason" in value && (value.reason === "request" || value.reason === "execution");
+  decode(value: unknown): DecodeResult<WorkerResponse> {
+    if (typeof value === "object" && value !== null && "type" in value) {
+      if (
+        value.type === "failed" &&
+        "reason" in value &&
+        (value.reason === "request" || value.reason === "execution")
+      ) {
+        return { ok: true, value: { type: "failed", reason: value.reason } };
+      }
+      if (value.type === "completed" && "result" in value && isSandboxResult(value.result)) {
+        return { ok: true, value: { type: "completed", result: value.result } };
+      }
     }
-    return value.type === "completed" && "result" in value && isSandboxResult(value.result);
+    return { ok: false, message: "Sandbox worker returned an invalid response." };
   },
 };
 

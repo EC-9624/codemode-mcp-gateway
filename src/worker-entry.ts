@@ -1,21 +1,20 @@
+import { parentPort, workerData } from "node:worker_threads";
+import { execute } from "./sandbox";
 import { WorkerRequest, type WorkerResponse } from "./worker-protocol";
 
-// Install before any async initialization: Bun drops messages without a listener.
-const submission = Promise.withResolvers<unknown>();
-addEventListener("message", (event) => submission.resolve(event.data), { once: true });
-const request = await submission.promise;
+if (!parentPort) throw new Error("Sandbox worker entry requires a parent port.");
+const request = WorkerRequest.decode(workerData);
 
-if (!WorkerRequest.is(request)) {
-  postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
+if (!request.ok) {
+  parentPort.postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
 } else {
-  postMessage(await run(request.code));
+  parentPort.postMessage(await run(request.value.code));
 }
 
 async function run(code: string): Promise<WorkerResponse> {
-  // This worker boundary cannot transfer arbitrary infrastructure errors safely.
+  // Only the failure category crosses this boundary; arbitrary causes stay worker-local.
   // Posting the response stays outside the catch, so transport failures are not retried.
   try {
-    const { execute } = await import("./sandbox");
     return { type: "completed", result: await execute(code) };
   } catch {
     return { type: "failed", reason: "execution" };

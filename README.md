@@ -247,7 +247,8 @@ await executeInWorker("return { answer: 42 };");
 ```
 
 `executeInWorker(code)` runs source parsing and QuickJS computation in a fresh
-Bun worker, keeping the main thread responsive during busy guest computation.
+Bun worker through `node:worker_threads`, keeping the main thread responsive during
+busy guest computation. Bun remains the only supported host runtime.
 It reuses the existing sandbox engine with an empty tool registry. It accepts no
 host callbacks; `execute(code, tools)` remains unchanged and still supports tools
 on the main thread. This experimental entry point is a stepping stone toward a
@@ -255,39 +256,49 @@ worker-backed tool API, not a permanent alternative promised by this milestone.
 
 ```text
 main thread: executeInWorker(code)
-  -> create one referenced worker; install response/error/close listeners
-  -> post an execution request
-worker: receive request before async initialization
-  -> load the existing sandbox engine
+  -> create one referenced worker with the request in workerData
+  -> install response/error/exit listeners
+worker: decode workerData into a typed execution request
   -> execute(code): create VM, parse, run guest jobs, convert result, dispose VM
   -> post completion or a generic infrastructure failure
-main thread: validate response, remove listeners, request termination
+main thread: decode response, clean up listeners, await termination
   -> return SandboxResult or reject for infrastructure/transport failure
 ```
 
 ### Boundaries and ownership
 
 - `src/worker-execution.ts` coordinates one execution and owns its worker and
-  listeners through a scoped `DisposableStack`, removing listeners before requesting
-  termination even if setup fails partway through. Its internal `executeWorker`
+  listeners through a scoped `AsyncDisposableStack`. Message and exit listeners
+  are removed before termination; the error listener stays until termination settles
+  so late errors cannot become unhandled EventEmitter errors. Partial setup also
+  unwinds. Its internal `executeWorker`
   operation also enables real-worker lifecycle and failure tests without replacing
   host globals.
-- `src/worker-entry.ts` installs a one-shot message listener before loading the
-  engine, validates its request, and owns sandbox execution inside the worker.
-- `src/worker-protocol.ts` defines and validates the request and response envelopes.
+- `src/worker-entry.ts` statically imports the engine, decodes the initial
+  `workerData`, and owns sandbox execution inside the worker. Startup requires no
+  request message, submission promise, or listener-before-import workaround.
+- `src/worker-protocol.ts` defines request and response decoders that accept raw
+  `unknown` values and return explicit success/failure unions. Execution logic uses
+  decoded domain types; arbitrary guest results still remain `unknown`.
   Worker messages use structured cloning; guest values retain the engine's JSON
   semantics. No VM handles or tool functions cross the thread boundary.
 - Guest errors and the existing one-second guest deadline retain their result
   contract. Worker startup, protocol, execution-infrastructure, deserialization,
   and premature-close failures reject the host promise instead of becoming script
-  errors. Arbitrary worker exception messages/stacks are not sent to the caller;
-  original error identity and cause are not preserved across this boundary.
+  errors. The worker sends only a controlled failure category, which the coordinator
+  turns into a new host error. Arbitrary worker exception messages/stacks are not
+  sent to the caller; original error identity and cause are not preserved across
+  this boundary. Exceptions raised locally by worker construction (including initial
+  data serialization) propagate directly. These host-promise failures are separate from
+  deliberately public, guest-visible tool rejections.
 - Normal worker execution disposes its VM before posting completion. The
-  coordinator removes listeners and requests worker termination on both success
-  and failure. The first completion wins; duplicate/late events do not resettle it.
-  Bun's `terminate()` returns `void`, and its `close` event marks termination rather
-  than proving the thread has fully exited. The tests also verify process exit
-  after successful and failed guest executions.
+  coordinator awaits worker termination on both success and failure. The first
+  execution outcome wins; duplicate/late events do not resettle it. A termination
+  failure still rejects the host promise; cleanup failures are not swallowed.
+  Bun's `node:worker_threads` termination promise is backed by its underlying
+  worker `close` event, which marks termination rather than proving the thread has
+  fully exited. Awaiting that promise is not a hard-stop guarantee. The tests also
+  verify process exit after successful and failed guest executions.
 
 ### Deliberate limitations
 

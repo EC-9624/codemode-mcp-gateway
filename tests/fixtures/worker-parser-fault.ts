@@ -4,3 +4,6 @@ import { Parser } from "acorn";
 Parser.parse = () => {
   throw new Error("Private parser infrastructure details");
 };
+
+// Load the real entry only after installing the worker-local fault.
+await import("../../src/worker-entry");

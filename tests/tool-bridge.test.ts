@@ -3,6 +3,7 @@ import { QuickJSContext, Scope } from "quickjs-emscripten";
 import { createVm } from "../src/runtime";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
 import { installTools } from "../src/tool-bridge";
+import { rejectionOf } from "./rejection";
 
 const add: SandboxTool = async (args) => {
   if (
@@ -232,7 +233,7 @@ describe("async tool bridge", () => {
 
       using result = vm.evalCode("tools.answer();");
       expect(result.error).toBeUndefined();
-      expect(await Promise.all(bridge.pendingCalls).catch((cause: unknown) => cause)).toBe(failure);
+      expect((await rejectionOf(Promise.all(bridge.pendingCalls))).reason).toBe(failure);
       expect(fault).toHaveBeenCalledTimes(1);
       expect(guestErrors).not.toHaveBeenCalled();
     }
@@ -249,7 +250,7 @@ describe("async tool bridge", () => {
 
     using result = vm.evalCode("tools.fail();");
     expect(result.error).toBeUndefined();
-    expect(await Promise.all(bridge.pendingCalls).catch((cause: unknown) => cause)).toBe(failure);
+    expect((await rejectionOf(Promise.all(bridge.pendingCalls))).reason).toBe(failure);
     expect(fault).toHaveBeenCalledTimes(1);
   });
 
@@ -258,16 +259,20 @@ describe("async tool bridge", () => {
     using cleanup = new DisposableStack();
 
     expect(
-      await execute("tools.answer(); while (true) await Promise.resolve();", {
-        answer: () => {
-          // Inject only after VM setup, so the failure exercises bridge settlement.
-          const fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(() => {
-            throw failure;
-          });
-          cleanup.defer(() => fault.mockRestore());
-          return ToolResult.success(42);
-        },
-      }).catch((cause: unknown) => cause),
+      (
+        await rejectionOf(
+          execute("tools.answer(); while (true) await Promise.resolve();", {
+            answer: () => {
+              // Inject only after VM setup, so the failure exercises bridge settlement.
+              const fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(() => {
+                throw failure;
+              });
+              cleanup.defer(() => fault.mockRestore());
+              return ToolResult.success(42);
+            },
+          }),
+        )
+      ).reason,
     ).toBe(failure);
     cleanup.dispose();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });

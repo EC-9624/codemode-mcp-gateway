@@ -1,27 +1,33 @@
+import { parentPort, workerData } from "node:worker_threads";
 import { WorkerRequest, type WorkerResponse } from "../../src/worker-protocol";
 
-const submission = Promise.withResolvers<unknown>();
-addEventListener("message", (event) => submission.resolve(event.data), { once: true });
-const request = await submission.promise;
-if (!WorkerRequest.is(request)) throw new Error("Invalid fixture request");
+if (!parentPort) throw new Error("Fixture requires a parent port");
+const request = WorkerRequest.decode(workerData);
+if (!request.ok) throw new Error(request.message);
 
-switch (request.code) {
+switch (request.value.code) {
   case "invalid-response":
-    postMessage({ type: "completed", result: { ok: false, error: { kind: "unknown" } } });
+    parentPort.postMessage({
+      type: "completed",
+      result: { ok: false, error: { kind: "unknown" } },
+    });
     break;
   case "execution-failure":
-    postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
+    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
     break;
   case "request-failure":
-    postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
+    parentPort.postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
     break;
   case "crash":
     throw new Error("Private fixture failure details");
   case "close":
     process.exit(1);
   case "duplicate":
-    postMessage({ type: "completed", result: { ok: true, value: 42 } } satisfies WorkerResponse);
-    postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
+    parentPort.postMessage({
+      type: "completed",
+      result: { ok: true, value: 42 },
+    } satisfies WorkerResponse);
+    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
     break;
   case "idle":
     setInterval(() => {}, 1000);

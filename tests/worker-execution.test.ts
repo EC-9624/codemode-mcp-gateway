@@ -1,14 +1,22 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { execute } from "../src/sandbox";
 import { executeInWorker, executeWorker } from "../src/worker-execution";
 import { WorkerRequest, WorkerResponse } from "../src/worker-protocol";
+import { rejectionOf } from "./rejection";
 
 describe("worker protocol", () => {
   test("validates execution requests", () => {
-    expect(WorkerRequest.is({ type: "execute", code: "return 42;" })).toBe(true);
+    expect(WorkerRequest.decode({ type: "execute", code: "return 42;" })).toEqual({
+      ok: true,
+      value: { type: "execute", code: "return 42;" },
+    });
     for (const value of [null, undefined, 42, [], {}, { type: "execute", code: 42 }]) {
-      expect(WorkerRequest.is(value)).toBe(false);
+      expect(WorkerRequest.decode(value)).toEqual({
+        ok: false,
+        message: "Sandbox worker received an invalid execution request.",
+      });
     }
   });
 
@@ -19,8 +27,8 @@ describe("worker protocol", () => {
       { type: "completed", result: { ok: false, error: { kind: "timeout", message: "expired" } } },
       { type: "failed", reason: "execution" },
       { type: "failed", reason: "request" },
-    ]) {
-      expect(WorkerResponse.is(value)).toBe(true);
+    ] satisfies WorkerResponse[]) {
+      expect(WorkerResponse.decode(value)).toEqual({ ok: true, value });
     }
     for (const value of [
       null,
@@ -35,7 +43,10 @@ describe("worker protocol", () => {
       { type: "completed", result: { ok: false, error: { kind: "other", message: "failed" } } },
       { type: "completed", result: { ok: false, error: { kind: "script", message: 42 } } },
     ]) {
-      expect(WorkerResponse.is(value)).toBe(false);
+      expect(WorkerResponse.decode(value)).toEqual({
+        ok: false,
+        message: "Sandbox worker returned an invalid response.",
+      });
     }
   });
 });
@@ -135,26 +146,21 @@ describe("worker execution", () => {
   });
 
   test("rejects invalid requests at the actual worker boundary", async () => {
-    const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url).href, {
-      ref: true,
+    const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
+      workerData: { type: "execute", code: 42 },
     });
     try {
       const response = Promise.withResolvers<unknown>();
-      worker.addEventListener("message", (event) => response.resolve(event.data), { once: true });
-      worker.postMessage({ type: "execute", code: 42 });
+      worker.once("message", (data: unknown) => response.resolve(data));
       expect(await response.promise).toEqual({ type: "failed", reason: "request" });
     } finally {
-      worker.terminate();
+      await worker.terminate();
     }
   });
 
   test("rejects startup failures without returning a script error", async () => {
-    const worker = new Worker(new URL("./fixtures/missing-worker.ts", import.meta.url).href, {
-      ref: true,
-    });
-    const failure: unknown = await executeWorker(worker, "return 42;").catch(
-      (cause: unknown) => cause,
-    );
+    const worker = new Worker(new URL("./fixtures/missing-worker.ts", import.meta.url));
+    const failure = (await rejectionOf(executeWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
     expect(await executeInWorker("return 42;")).toEqual({ ok: true, value: 42 });
@@ -168,14 +174,12 @@ describe("worker execution", () => {
       ["crash", "Sandbox worker failed."],
       ["close", "closed before completion"],
     ] as const) {
-      const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url).href, {
-        ref: true,
+      const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+        workerData: { type: "execute", code: scenario },
       });
-      using remove = spyOn(worker, "removeEventListener");
+      using remove = spyOn(worker, "off");
       using terminate = spyOn(worker, "terminate");
-      const failure: unknown = await executeWorker(worker, scenario).catch(
-        (cause: unknown) => cause,
-      );
+      const failure = (await rejectionOf(executeWorker(worker))).reason;
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error) {
         expect(failure.message).toContain(message);
@@ -188,26 +192,23 @@ describe("worker execution", () => {
   });
 
   test("settles once and cleans up listeners and the worker", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url).href, {
-      ref: true,
+    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "duplicate" },
     });
-    using add = spyOn(worker, "addEventListener");
-    using remove = spyOn(worker, "removeEventListener");
+    using add = spyOn(worker, "on");
+    using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate");
-    expect(await executeWorker(worker, "duplicate")).toEqual({ ok: true, value: 42 });
+    expect(await executeWorker(worker)).toEqual({ ok: true, value: 42 });
     expect(remove.mock.calls).toEqual(add.mock.calls.toReversed());
     expect(remove).toHaveBeenCalledTimes(4);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
   test("keeps actual worker infrastructure exception details out of the response", async () => {
-    const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url).href, {
-      ref: true,
-      preload: [fileURLToPath(new URL("./fixtures/worker-parser-fault.ts", import.meta.url))],
+    const worker = new Worker(new URL("./fixtures/worker-parser-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "return 42;" },
     });
-    const failure: unknown = await executeWorker(worker, "return 42;").catch(
-      (cause: unknown) => cause,
-    );
+    const failure = (await rejectionOf(executeWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
@@ -217,59 +218,91 @@ describe("worker execution", () => {
   });
 
   test("cleans up after response deserialization errors", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url).href, {
-      ref: true,
+    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "idle" },
     });
-    using remove = spyOn(worker, "removeEventListener");
+    using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate");
-    const completion = executeWorker(worker, "idle");
+    const completion = executeWorker(worker);
     // A real structured-clone failure on receipt is not reliably constructible.
-    worker.dispatchEvent(new MessageEvent("messageerror"));
-    const failure: unknown = await completion.catch((cause: unknown) => cause);
+    worker.emit("messageerror", new Error("Injected deserialization failure"));
+    const failure = (await rejectionOf(completion)).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("could not be deserialized");
     expect(remove).toHaveBeenCalledTimes(4);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
-  test("cleans up if sending the execution request throws", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url).href, {
-      ref: true,
+  test("propagates termination failures and still removes listeners", async () => {
+    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "duplicate" },
     });
-    const failure = new Error("Request transport failed");
-    using post = spyOn(worker, "postMessage").mockImplementation(() => {
-      throw failure;
+    const terminateWorker = worker.terminate.bind(worker);
+    await using cleanup = new AsyncDisposableStack();
+    cleanup.defer(async () => {
+      await terminateWorker();
     });
-    using remove = spyOn(worker, "removeEventListener");
-    using terminate = spyOn(worker, "terminate");
-    expect(await executeWorker(worker, "idle").catch((cause: unknown) => cause)).toBe(failure);
-    expect(post).toHaveBeenCalledTimes(1);
+    const failure = new Error("Worker termination failed");
+    using remove = spyOn(worker, "off");
+    using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
+    expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
     expect(remove).toHaveBeenCalledTimes(4);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
+  test("awaits termination and observes late errors without changing a completed result", async () => {
+    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "duplicate" },
+    });
+    const terminateWorker = worker.terminate.bind(worker);
+    const terminating = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve());
+    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+      const code = await terminateWorker();
+      terminating.resolve();
+      await release.promise;
+      return code;
+    });
+    let settled = false;
+    const completion = executeWorker(worker).then((result) => {
+      settled = true;
+      return result;
+    });
+    await terminating.promise;
+    expect(settled).toBe(false);
+    expect(worker.listenerCount("message")).toBe(0);
+    expect(worker.listenerCount("error")).toBe(1);
+    worker.emit("error", new Error("Private late worker failure"));
+    release.resolve();
+    expect(await completion).toEqual({ ok: true, value: 42 });
+    expect(worker.listenerCount("error")).toBe(0);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
   test("unwinds partial listener setup before terminating the worker", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url).href, {
-      ref: true,
+    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+      workerData: { type: "execute", code: "idle" },
     });
     const failure = new Error("Listener setup failed");
-    const addListener = worker.addEventListener.bind(worker);
-    using add = spyOn(worker, "addEventListener").mockImplementation(
-      (...args: Parameters<Worker["addEventListener"]>) => {
-        if (args[0] === "error") throw failure;
-        addListener(...args);
-      },
-    );
-    using remove = spyOn(worker, "removeEventListener");
+    const addListener = worker.on.bind(worker);
+    using add = spyOn(worker, "on").mockImplementation((...args: Parameters<Worker["on"]>) => {
+      if (args[0] === "message") throw failure;
+      return addListener(...args);
+    });
+    using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate");
-    expect(await executeWorker(worker, "idle").catch((cause: unknown) => cause)).toBe(failure);
+    expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
     expect(add).toHaveBeenCalledTimes(2);
     expect(remove.mock.calls).toEqual(add.mock.calls.toReversed());
     expect(terminate).toHaveBeenCalledTimes(1);
     expect(
-      remove.mock.invocationCallOrder.every((order) =>
-        terminate.mock.invocationCallOrder.every((termination) => order < termination),
-      ),
+      remove.mock.invocationCallOrder
+        .slice(0, -1)
+        .every((order) =>
+          terminate.mock.invocationCallOrder.every((termination) => order < termination),
+        ),
     ).toBe(true);
   });
 
