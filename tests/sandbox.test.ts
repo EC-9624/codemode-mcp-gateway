@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import * as acorn from "acorn";
+import { Parser } from "acorn";
 import { execute } from "../src/sandbox";
 
 describe("sandbox", () => {
@@ -82,10 +82,10 @@ describe("sandbox", () => {
 
   test("propagates unexpected parser failures instead of reporting a script error", async () => {
     const failure = new Error("Parser infrastructure failed");
-    using parser = spyOn(acorn, "parse").mockImplementation(() => {
+    using parser = spyOn(Parser, "parse").mockImplementation(() => {
       throw failure;
     });
-    await expect(execute("return 3;")).rejects.toBe(failure);
+    expect(await execute("return 3;").catch((cause: unknown) => cause)).toBe(failure);
     expect(parser).toHaveBeenCalledTimes(1);
     parser.mockRestore();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });

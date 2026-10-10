@@ -14,6 +14,26 @@ bun run example
 bun run check
 ```
 
+## Code style and checks
+
+`AGENTS.md` defines the project-specific style and ownership rules. Oxfmt uses
+`.oxfmtrc.json` to preserve the existing formatting. Oxlint uses `.oxlintrc.json`
+with native rules and `oxlint-tsgolint` for type-aware promise and unsafe-operation
+checks. Bare `void` does not exempt an unhandled promise from linting.
+
+Lint also enforces named rather than namespace imports, type-only import markers,
+`const` where possible, and guard clauses where an `else` follows a return.
+Import aliases, helper extraction, narrow catches, and VM resource ownership remain
+review rules; the configuration does not claim to enforce them automatically.
+Legitimate `unknown` boundaries and runtime validation remain supported. No
+anti-slop preset is installed.
+
+```sh
+bun run format
+bun run lint
+bun run typecheck
+```
+
 ## Milestone 1: synchronous execution
 
 ```ts

@@ -4,7 +4,7 @@ export type ToolResult = { ok: true; value: unknown } | { ok: false; error: { me
 
 /** Only explicit failure messages cross into the guest; thrown errors stay private. */
 export const ToolResult = {
-  success(value: unknown = undefined): ToolResult {
+  success(value?: unknown): ToolResult {
     return { ok: true, value };
   },
   failure(message: string): ToolResult {

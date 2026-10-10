@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error"
+  },
+  "options": {
+    "typeAware": true,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "ignorePatterns": ["node_modules/**", "coverage/**"],
+  "rules": {
+    "eqeqeq": "error",
+    "prefer-const": "error",
+    "no-else-return": "error",
+    "no-nested-ternary": "error",
+    "no-useless-catch": "error",
+    "import/no-duplicates": "error",
+    "import/no-namespace": "error",
+    "oxc/no-accumulating-spread": "error",
+    "typescript/consistent-type-imports": ["error", { "fixStyle": "inline-type-imports" }],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-inferrable-types": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-unsafe-type-assertion": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-floating-promises": ["error", { "checkThenables": true, "ignoreVoid": false }],
+    "typescript/no-misused-promises": "error"
+  }
+}

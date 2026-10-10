@@ -200,7 +200,7 @@ describe("async tool bridge", () => {
     using vm = await createVm();
     using scope = new Scope();
     let calls = 0;
-    const { pendingCalls: pending } = installTools(
+    const bridge = installTools(
       vm,
       {
         echo: (args) => {
@@ -216,18 +216,14 @@ describe("async tool bridge", () => {
       expect(result.error).toBeDefined();
     }
     expect(calls).toBe(0);
-    expect(pending.size).toBe(0);
+    expect(bridge.pendingCalls.size).toBe(0);
   });
 
   test("propagates VM failures without retrying settlement as a tool rejection", async () => {
     for (const method of ["newString", "callFunction"] as const) {
       using vm = await createVm();
       using scope = new Scope();
-      const { pendingCalls: pending } = installTools(
-        vm,
-        { answer: () => ToolResult.success(42) },
-        scope,
-      );
+      const bridge = installTools(vm, { answer: () => ToolResult.success(42) }, scope);
       const failure = new Error("VM infrastructure failed");
       using fault = spyOn(vm, method).mockImplementation(() => {
         throw failure;
@@ -236,7 +232,7 @@ describe("async tool bridge", () => {
 
       using result = vm.evalCode("tools.answer();");
       expect(result.error).toBeUndefined();
-      await expect(Promise.all(pending)).rejects.toBe(failure);
+      expect(await Promise.all(bridge.pendingCalls).catch((cause: unknown) => cause)).toBe(failure);
       expect(fault).toHaveBeenCalledTimes(1);
       expect(guestErrors).not.toHaveBeenCalled();
     }
@@ -245,11 +241,7 @@ describe("async tool bridge", () => {
   test("propagates VM failures while rejecting an explicit tool failure", async () => {
     using vm = await createVm();
     using scope = new Scope();
-    const { pendingCalls: pending } = installTools(
-      vm,
-      { fail: () => ToolResult.failure("Public failure") },
-      scope,
-    );
+    const bridge = installTools(vm, { fail: () => ToolResult.failure("Public failure") }, scope);
     const failure = new Error("VM infrastructure failed");
     using fault = spyOn(vm, "newError").mockImplementation(() => {
       throw failure;
@@ -257,27 +249,27 @@ describe("async tool bridge", () => {
 
     using result = vm.evalCode("tools.fail();");
     expect(result.error).toBeUndefined();
-    await expect(Promise.all(pending)).rejects.toBe(failure);
+    expect(await Promise.all(bridge.pendingCalls).catch((cause: unknown) => cause)).toBe(failure);
     expect(fault).toHaveBeenCalledTimes(1);
   });
 
   test("propagates infrastructure failures even while guest jobs keep arriving", async () => {
     const failure = new Error("VM allocation failed");
-    const newString = QuickJSContext.prototype.newString;
-    using fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(function (
-      this: QuickJSContext,
-      value,
-    ) {
-      if (value === "42") throw failure;
-      return newString.call(this, value);
-    });
+    using cleanup = new DisposableStack();
 
-    await expect(
-      execute("tools.answer(); while (true) await Promise.resolve();", {
-        answer: () => ToolResult.success(42),
-      }),
-    ).rejects.toBe(failure);
-    fault.mockRestore();
+    expect(
+      await execute("tools.answer(); while (true) await Promise.resolve();", {
+        answer: () => {
+          // Inject only after VM setup, so the failure exercises bridge settlement.
+          const fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(() => {
+            throw failure;
+          });
+          cleanup.defer(() => fault.mockRestore());
+          return ToolResult.success(42);
+        },
+      }).catch((cause: unknown) => cause),
+    ).toBe(failure);
+    cleanup.dispose();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 

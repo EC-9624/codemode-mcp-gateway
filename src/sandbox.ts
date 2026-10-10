@@ -29,7 +29,6 @@ async function executeScript(
   bridge: ToolBridge,
 ): Promise<SandboxResult> {
   const runtime = vm.runtime;
-  const { pendingCalls } = bridge;
   using deadline = createDeadline();
 
   runtime.setInterruptHandler(() => performance.now() >= deadline.expiresAt);
@@ -67,7 +66,7 @@ async function executeScript(
     if (state.type === "fulfilled") {
       using result = state.value;
       // A return does not abandon calls already started by the script or toJSON.
-      if (!runtime.hasPendingJob() && pendingCalls.size === 0) {
+      if (!runtime.hasPendingJob() && bridge.pendingCalls.size === 0) {
         const value: unknown = JSON.parse(vm.getString(result));
         return { ok: true, value };
       }
@@ -79,7 +78,7 @@ async function executeScript(
       continue;
     }
 
-    if (pendingCalls.size === 0) {
+    if (bridge.pendingCalls.size === 0) {
       return {
         ok: false,
         error: {
@@ -90,7 +89,7 @@ async function executeScript(
     }
 
     // An interrupt handler cannot expire a script while QuickJS is idle.
-    await Promise.race([deadline.expired, ...pendingCalls]);
+    await Promise.race([deadline.expired, ...bridge.pendingCalls]);
   }
 }
 
@@ -198,14 +197,15 @@ function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): SandboxR
   // promise is an opaque thrown value, not a result to unwrap. Keep the caller's
   // handle borrowed and release only owned promise-state handles here.
   const state = context.getPromiseState(handle);
-  let error: unknown;
-  if (state.type === "fulfilled") {
-    if (state.notAPromise) error = context.dump(handle);
-    else state.value.dispose();
-  } else if (state.type === "rejected") {
-    state.error.dispose();
+  if (state.type === "fulfilled" && state.notAPromise) {
+    return {
+      ok: false,
+      error: { kind: "script", message: scriptErrorMessage(context.dump(handle)) },
+    };
   }
-  return { ok: false, error: { kind: "script", message: scriptErrorMessage(error) } };
+  if (state.type === "fulfilled") state.value.dispose();
+  if (state.type === "rejected") state.error.dispose();
+  return { ok: false, error: { kind: "script", message: scriptErrorMessage(undefined) } };
 }
 
 function scriptErrorMessage(error: unknown): string {
