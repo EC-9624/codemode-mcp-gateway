@@ -1,12 +1,13 @@
 # MCM
 
-A small code-mode sandbox built for learning. We implement execution and the
-host-call bridge ourselves, using QuickJS as the JavaScript engine. Pi and
-Executor are source references, not runtime dependencies.
+A code-mode sandbox developed in small, explainable slices toward production
+readiness. We implement execution and the host-call bridge ourselves, using
+QuickJS as the JavaScript engine. Pi and Executor are source references, not
+runtime dependencies. Learning shapes the delivery, not the final scope.
 
 ## Run
 
-Requires Bun 1.4.2.
+Requires Bun 1.4.2. Bun is the only supported host runtime for now.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
