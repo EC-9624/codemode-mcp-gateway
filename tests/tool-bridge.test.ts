@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { QuickJSContext, Scope } from "quickjs-emscripten";
+import { type QuickJSContext, Scope } from "quickjs-emscripten";
 import { createVm } from "../src/runtime";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
-import { executeLocally, installLocalTools } from "./local-tools";
+import { executeEngine } from "../src/sandbox-engine";
+import { installLocalTools } from "./local-tools";
 import { rejectionOf } from "./rejection";
 
 const add: SandboxTool = async (args) => {
@@ -37,7 +38,7 @@ describe("async tool bridge", () => {
     });
   });
 
-  test("validates inputs in the host before performing domain work", async () => {
+  test("reports uncaught tool argument validation failures as script errors", async () => {
     expect(await execute('return await tools.add({ a: "wrong", b: 2 });', { add })).toEqual({
       ok: false,
       error: { kind: "script", message: "add expects numeric a and b." },
@@ -122,33 +123,79 @@ describe("async tool bridge", () => {
     expect(started).toBe(2);
   });
 
-  test("drains unawaited calls before reporting success", async () => {
-    let completed = false;
-    expect(
-      await execute('tools.write(); return "done";', {
+  for (const scenario of [
+    { name: "unawaited calls", code: 'tools.write(); return "done";', value: "done" },
+    {
+      name: "calls started by result serialization",
+      code: "return { toJSON() { tools.write(); return 3; } };",
+      value: 3,
+    },
+  ]) {
+    test(`waits for ${scenario.name} before reporting success`, async () => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      using cleanup = new DisposableStack();
+      cleanup.defer(() => release.resolve());
+      let completed = false;
+      let settled = false;
+      const completion = execute(scenario.code, {
         write: async () => {
-          await Bun.sleep(5);
+          started.resolve();
+          await release.promise;
           completed = true;
           return ToolResult.success();
         },
-      }),
-    ).toEqual({ ok: true, value: "done" });
-    expect(completed).toBe(true);
-  });
+      }).then((result) => {
+        settled = true;
+        return result;
+      });
+      await started.promise;
+      expect(settled).toBe(false);
+      expect(completed).toBe(false);
+      release.resolve();
+      expect(await completion).toEqual({ ok: true, value: scenario.value });
+      expect(completed).toBe(true);
+    });
+  }
 
   test("drains race losers without replay or automatic cancellation", async () => {
+    const winnerObserved = Promise.withResolvers<unknown>();
+    const releaseLoser = Promise.withResolvers<void>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => releaseLoser.resolve());
     let completed = false;
-    expect(
-      await execute("return await Promise.race([tools.fast(), tools.slow()]);", {
+    let calls = 0;
+    let settled = false;
+    const completion = execute(
+      `
+        const winner = await Promise.race([tools.fast(), tools.slow()]);
+        await tools.reportWinner(winner);
+        return winner;
+      `,
+      {
         fast: () => ToolResult.success(1),
         slow: async () => {
-          await Bun.sleep(5);
+          calls += 1;
+          await releaseLoser.promise;
           completed = true;
           return ToolResult.success(2);
         },
-      }),
-    ).toEqual({ ok: true, value: 1 });
+        reportWinner: (winner) => {
+          winnerObserved.resolve(winner);
+          return ToolResult.success();
+        },
+      },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+    expect(await winnerObserved.promise).toBe(1);
+    expect(settled).toBe(false);
+    expect(completed).toBe(false);
+    releaseLoser.resolve();
+    expect(await completion).toEqual({ ok: true, value: 1 });
     expect(completed).toBe(true);
+    expect(calls).toBe(1);
   });
 
   test("round-trips JSON without sharing host object identity", async () => {
@@ -159,12 +206,22 @@ describe("async tool bridge", () => {
       }),
     ).toEqual({ ok: true, value: { nested: { value: 4 } } });
     expect(source.nested.value).toBe(3);
+  });
+
+  test("passes absent tool arguments as undefined", async () => {
+    let argument: unknown = "not called";
     expect(
-      await execute("return await tools.echo();", { echo: (args) => ToolResult.success(args) }),
+      await execute("return await tools.echo();", {
+        echo: (args) => {
+          argument = args;
+          return ToolResult.success(args);
+        },
+      }),
     ).toEqual({
       ok: true,
       value: null,
     });
+    expect(argument).toBeUndefined();
   });
 
   test("preserves argument and result conversion after guest JSON mutation", async () => {
@@ -261,23 +318,34 @@ describe("async tool bridge", () => {
   test("propagates infrastructure failures even while guest jobs keep arriving", async () => {
     const failure = new Error("VM allocation failed");
     using cleanup = new DisposableStack();
-
-    expect(
-      (
-        await rejectionOf(
-          executeLocally("tools.answer(); while (true) await Promise.resolve();", {
+    const resources: { vm: QuickJSContext; scope: Scope }[] = [];
+    const completion = executeEngine(
+      "tools.answer(); while (true) await Promise.resolve();",
+      (vm, scope) => {
+        resources.push({ vm, scope });
+        return installLocalTools(
+          vm,
+          {
             answer: () => {
-              // Inject only after VM setup, so the failure exercises bridge settlement.
-              const fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(() => {
+              // Injecting during setup would not exercise bridge settlement while guest jobs arrive.
+              const fault = spyOn(vm, "newString").mockImplementation(() => {
                 throw failure;
               });
               cleanup.defer(() => fault.mockRestore());
               return ToolResult.success(42);
             },
-          }),
-        )
-      ).reason,
-    ).toBe(failure);
+          },
+          scope,
+        );
+      },
+    );
+    expect((await rejectionOf(completion)).reason).toBe(failure);
+    expect(resources).toHaveLength(1);
+    for (const { vm, scope } of resources) {
+      expect(vm.alive).toBe(false);
+      expect(vm.runtime.alive).toBe(false);
+      expect(scope.alive).toBe(false);
+    }
     cleanup.dispose();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
@@ -300,7 +368,7 @@ describe("async tool bridge", () => {
     expect(calls).toBe(0);
   });
 
-  test("rejects non-JSON host results with corrective public errors", async () => {
+  test("rejects non-JSON host results with a public conversion error", async () => {
     const cycle: { self?: unknown } = {};
     cycle.self = cycle;
     for (const value of [1n, () => 3, cycle]) {
@@ -346,20 +414,6 @@ describe("async tool bridge", () => {
     if (!result.ok) expect(result.error.kind).toBe("script");
   });
 
-  test("drains calls started by result serialization", async () => {
-    let completed = false;
-    expect(
-      await execute("return { toJSON() { tools.write(); return 3; } };", {
-        write: async () => {
-          await Bun.sleep(5);
-          completed = true;
-          return ToolResult.success();
-        },
-      }),
-    ).toEqual({ ok: true, value: 3 });
-    expect(completed).toBe(true);
-  });
-
   test("reports guest promises that cannot make progress", async () => {
     expect(await execute("return await new Promise(() => {});")).toEqual({
       ok: false,
@@ -381,7 +435,7 @@ describe("async tool bridge", () => {
     });
   });
 
-  test("yields to host timers while guest jobs keep arriving", async () => {
+  test("receives tool replies while guest jobs keep arriving", async () => {
     expect(
       await execute(
         `let done = false;
@@ -427,7 +481,7 @@ describe("async tool bridge", () => {
     await Bun.sleep(0);
   });
 
-  test("does not touch a closed VM when host calls settle after timeout", async () => {
+  test("allows new executions after timed-out callbacks fulfill or reject late", async () => {
     for (const fail of [false, true]) {
       const late = Promise.withResolvers<number>();
       expect(
@@ -448,7 +502,7 @@ describe("async tool bridge", () => {
     }
   });
 
-  test("closes the bridge on script failure without waiting for unrelated calls", async () => {
+  test("reports script failure without waiting for unrelated callbacks", async () => {
     const late = Promise.withResolvers<number>();
     expect(
       await execute('tools.wait(); throw new Error("Script failed");', {
@@ -460,7 +514,7 @@ describe("async tool bridge", () => {
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 
-  test("releases bridge handles after repeated success and failure", async () => {
+  test("continues executing tools after repeated success and validation failure", async () => {
     for (let index = 0; index < 10; index += 1) {
       expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).ok).toBe(true);
       expect((await execute("return await tools.add(null);", { add })).ok).toBe(false);

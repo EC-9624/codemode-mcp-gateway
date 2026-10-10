@@ -67,7 +67,7 @@ describe("sandbox", () => {
     }
   });
 
-  test("reports thrown promises without consuming the caller's error handle", async () => {
+  test("reports thrown promises as opaque errors without awaiting or unwrapping them", async () => {
     for (const code of [
       "throw Promise.resolve(3);",
       "throw new Promise(() => {});",
@@ -153,7 +153,7 @@ describe("sandbox", () => {
     ).toEqual({ ok: true, value: ["undefined", "undefined", "undefined", "undefined"] });
   });
 
-  test("releases resources after repeated successes and failures", async () => {
+  test("continues executing after repeated successes and script failures", async () => {
     for (let index = 0; index < 20; index += 1) {
       expect((await execute("return 3;")).ok).toBe(true);
       expect((await execute('throw new Error("failure");')).ok).toBe(false);

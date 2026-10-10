@@ -12,7 +12,7 @@ export async function createVm(): Promise<QuickJSContext> {
     vm.runtime.setMaxStackSize(STACK_LIMIT_BYTES);
     return vm;
   } catch (error) {
-    // Ownership transfers only after setup succeeds.
+    // Factory-local `using` would dispose the VM before ownership reaches the caller.
     vm.dispose();
     throw error;
   }

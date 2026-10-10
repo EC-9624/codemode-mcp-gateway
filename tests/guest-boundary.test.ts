@@ -14,7 +14,7 @@ describe("guest prelude boundary", () => {
     ).toEqual({ ok: true, value: Array.from({ length: 8 }, () => "undefined") });
   });
 
-  test("rejects the former raw-callback bypass without dispatching a host call", async () => {
+  test("rejects access to raw callbacks without dispatching a host call", async () => {
     let calls = 0;
     const result = await execute("return await hostTools.answer();", {
       answer: () => {
@@ -41,7 +41,7 @@ describe("guest prelude boundary", () => {
     ).toEqual({ ok: true, value: Array.from({ length: 4 }, () => "undefined") });
   });
 
-  test("still lets eval and dynamic functions call the permitted public tools", async () => {
+  test("lets eval and dynamic functions call the permitted public tools", async () => {
     expect(
       await execute(
         `return [
@@ -72,7 +72,7 @@ describe("guest prelude boundary", () => {
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 
-  test("preserves normal JavaScript syntax instead of counting braces or interpreting an AST", async () => {
+  test("accepts classes, generators, and wrapper-like text in strings, regexes, and comments", async () => {
     expect(
       await execute(`
         const text = "}); tools.write(); (async () => {";
@@ -120,8 +120,11 @@ describe("guest prelude boundary", () => {
     ).toEqual({ ok: true, value: 42 });
   });
 
-  test("keeps the existing guest this binding and strict assignments to public tools", async () => {
+  test("binds guest this to globalThis", async () => {
     expect(await execute("return this === globalThis;")).toEqual({ ok: true, value: true });
+  });
+
+  test("rejects assignments to public tools before dispatch", async () => {
     let calls = 0;
     const result = await execute("tools.answer = () => 0; return await tools.answer();", {
       answer: () => {

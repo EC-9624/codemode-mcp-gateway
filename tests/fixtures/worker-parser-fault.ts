@@ -5,5 +5,5 @@ Parser.parse = () => {
   throw new Error("Private parser infrastructure details");
 };
 
-// Load the real entry only after installing the worker-local fault.
+// A static import would start execution before the parser fault is installed.
 await import("../../src/worker-entry");

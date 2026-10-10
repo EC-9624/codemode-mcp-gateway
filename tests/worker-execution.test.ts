@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { execute } from "../src/sandbox";
 import { executeLocally } from "./local-tools";
 import { runSandbox, executeWorker } from "../src/worker-execution";
 import { WorkerRequest, WorkerResponse } from "../src/worker-protocol";
@@ -12,14 +13,7 @@ describe("worker protocol", () => {
       ok: true,
       value: { type: "execute", code: "return 42;", toolNames: [] },
     });
-    for (const value of [
-      null,
-      undefined,
-      42,
-      [],
-      {},
-      { type: "execute", code: 42, toolNames: [] },
-    ]) {
+    for (const value of [null, undefined, 42, [], {}, { type: "execute", code: 42 }]) {
       expect(WorkerRequest.decode(value)).toEqual({
         ok: false,
         message: "Sandbox worker received an invalid execution request.",
@@ -59,7 +53,7 @@ describe("worker protocol", () => {
 });
 
 describe("worker execution", () => {
-  test("preserves sandbox values, promises, JSON conversion, and errors", async () => {
+  test("worker transport preserves engine results for values, promises, and errors", async () => {
     for (const code of [
       "return 1 + 2;",
       'return { name: "mcm", values: [1, true, null] };',
@@ -100,7 +94,7 @@ describe("worker execution", () => {
     if (!escaped.ok) expect(escaped.error.kind).toBe("script");
   });
 
-  test("creates fresh guest state and preserves concurrent result routing", async () => {
+  test("creates fresh guest state for each execution", async () => {
     expect(
       await runSandbox("globalThis.marker = 3; Array.prototype.marker = 3; return marker;"),
     ).toEqual({ ok: true, value: 3 });
@@ -108,6 +102,9 @@ describe("worker execution", () => {
       ok: true,
       value: ["undefined", "undefined"],
     });
+  });
+
+  test("routes results to the correct concurrent execution", async () => {
     expect(await Promise.all([1, 2, 3, 4].map((value) => runSandbox(`return ${value};`)))).toEqual(
       [1, 2, 3, 4].map((value) => ({ ok: true, value })),
     );
@@ -117,7 +114,7 @@ describe("worker execution", () => {
     const ticks: number[] = [];
     const timer = setInterval(() => ticks.push(Date.now()), 10);
     try {
-      const result = await runSandbox(`
+      const result = await execute(`
         const started = Date.now();
         while (Date.now() - started < 400) {}
         return { started, ended: Date.now() };
@@ -152,7 +149,7 @@ describe("worker execution", () => {
 
   test("rejects invalid requests at the actual worker boundary", async () => {
     const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
-      workerData: { type: "execute", code: 42, toolNames: [] },
+      workerData: { type: "execute", code: 42 },
     });
     try {
       const response = Promise.withResolvers<unknown>();
@@ -171,18 +168,17 @@ describe("worker execution", () => {
     expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
-  test("rejects protocol, reported infrastructure, crash, and premature-close failures", async () => {
-    for (const [scenario, message] of [
-      ["invalid-response", "invalid response"],
-      ["execution-failure", "execution failed"],
-      ["request-failure", "rejected the execution request"],
-      ["crash", "Sandbox worker failed."],
-      ["close", "closed before completion"],
-    ] as const) {
+  for (const [scenario, message] of [
+    ["invalid-response", "invalid response"],
+    ["execution-failure", "execution failed"],
+    ["request-failure", "rejected the execution request"],
+    ["crash", "Sandbox worker failed."],
+    ["close", "closed before completion"],
+  ] as const) {
+    test(`rejects ${scenario} and releases the worker`, async () => {
       const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
         workerData: { type: "execute", code: scenario, toolNames: [] },
       });
-      using remove = spyOn(worker, "off");
       using terminate = spyOn(worker, "terminate");
       const failure = (await rejectionOf(executeWorker(worker))).reason;
       expect(failure).toBeInstanceOf(Error);
@@ -190,22 +186,29 @@ describe("worker execution", () => {
         expect(failure.message).toContain(message);
         expect(failure.message).not.toContain("Private fixture failure details");
       }
-      expect(remove).toHaveBeenCalledTimes(4);
+      expectNoExecutionListeners(worker);
       expect(terminate).toHaveBeenCalledTimes(1);
-    }
-    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
-  });
+      expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
+    });
+  }
 
   test("settles once and cleans up listeners and the worker", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
       workerData: { type: "execute", code: "duplicate", toolNames: [] },
     });
-    using add = spyOn(worker, "on");
-    using remove = spyOn(worker, "off");
-    using terminate = spyOn(worker, "terminate");
+    const terminateWorker = worker.terminate.bind(worker);
+    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+      const removedListeners = ["message", "messageerror", "exit"].map((name) =>
+        worker.listenerCount(name),
+      );
+      const errorListeners = worker.listenerCount("error");
+      const code = await terminateWorker();
+      expect(removedListeners).toEqual([0, 0, 0]);
+      expect(errorListeners).toBeGreaterThan(0);
+      return code;
+    });
     expect(await executeWorker(worker)).toEqual({ ok: true, value: 42 });
-    expect(remove.mock.calls).toEqual(add.mock.calls.toReversed());
-    expect(remove).toHaveBeenCalledTimes(4);
+    expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
@@ -226,7 +229,6 @@ describe("worker execution", () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
       workerData: { type: "execute", code: "idle", toolNames: [] },
     });
-    using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate");
     const completion = executeWorker(worker);
     // A real structured-clone failure on receipt is not reliably constructible.
@@ -234,7 +236,7 @@ describe("worker execution", () => {
     const failure = (await rejectionOf(completion)).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("could not be deserialized");
-    expect(remove).toHaveBeenCalledTimes(4);
+    expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
@@ -248,10 +250,9 @@ describe("worker execution", () => {
       await terminateWorker();
     });
     const failure = new Error("Worker termination failed");
-    using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
     expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
-    expect(remove).toHaveBeenCalledTimes(4);
+    expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
@@ -282,7 +283,7 @@ describe("worker execution", () => {
     worker.emit("error", new Error("Private late worker failure"));
     release.resolve();
     expect(await completion).toEqual({ ok: true, value: 42 });
-    expect(worker.listenerCount("error")).toBe(0);
+    expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
@@ -293,22 +294,25 @@ describe("worker execution", () => {
     const failure = new Error("Listener setup failed");
     const addListener = worker.on.bind(worker);
     using add = spyOn(worker, "on").mockImplementation((...args: Parameters<Worker["on"]>) => {
-      if (args[0] === "message") throw failure;
-      return addListener(...args);
+      const added = addListener(...args);
+      if (args[0] === "messageerror") throw failure;
+      return added;
     });
-    using remove = spyOn(worker, "off");
-    using terminate = spyOn(worker, "terminate");
+    const terminateWorker = worker.terminate.bind(worker);
+    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+      const removedListeners = ["message", "messageerror", "exit"].map((name) =>
+        worker.listenerCount(name),
+      );
+      const errorListeners = worker.listenerCount("error");
+      const code = await terminateWorker();
+      expect(removedListeners).toEqual([0, 0, 0]);
+      expect(errorListeners).toBeGreaterThan(0);
+      return code;
+    });
     expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
-    expect(add).toHaveBeenCalledTimes(2);
-    expect(remove.mock.calls).toEqual(add.mock.calls.toReversed());
+    expect(add).toHaveBeenCalledWith("messageerror", expect.any(Function));
+    expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
-    expect(
-      remove.mock.invocationCallOrder
-        .slice(0, -1)
-        .every((order) =>
-          terminate.mock.invocationCallOrder.every((termination) => order < termination),
-        ),
-    ).toBe(true);
   });
 
   test("allows a process to exit after successful and failed guest executions", async () => {
@@ -347,3 +351,9 @@ describe("worker execution", () => {
     }
   }, 15000);
 });
+
+function expectNoExecutionListeners(worker: Worker) {
+  for (const name of ["message", "messageerror", "exit", "error"]) {
+    expect(worker.listenerCount(name)).toBe(0);
+  }
+}

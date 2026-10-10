@@ -17,6 +17,10 @@ bun run check
 
 ## Code style and checks
 
+Code explains **How**, tests specify **What**, commit logs explain **Why**, and
+code comments explain **Why not**. Comments preserve non-obvious constraints;
+tests prove the behavior they name, including resource ownership where claimed.
+
 `AGENTS.md` defines the project-specific style and ownership rules. Oxfmt uses
 `.oxfmtrc.json` to preserve the existing formatting. Oxlint uses `.oxlintrc.json`
 with native rules and `oxlint-tsgolint` for type-aware promise and unsafe-operation

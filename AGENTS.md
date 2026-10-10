@@ -134,6 +134,12 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 ## Comments and Documentation
 
+- Code explains **How** through names, types, and control flow.
+- Tests specify **What**: observable contracts, with names that match their assertions.
+- Commit logs explain **Why**: the problem and motivation, not a list of edits.
+- Code comments explain **Why not**: why an apparently simpler alternative would
+  break a constraint or guarantee. Do not invent rationale or narrate readable code.
+- Keep concise API and ownership documentation where callers need the contract.
 - Explain non-obvious constraints, ownership rules, and surprising behavior.
 - Do not narrate obvious assignments or control flow.
 - Keep comments accurate when changing implementation.
@@ -144,6 +150,13 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use `bun:test`.
 - Test actual implementation and observable semantics.
+- Name recovery tests as recovery tests; claims about disposal require assertions
+  on the actual owned resources.
+- Assert listener lifetime and required ordering, rather than exact registration
+  sequences. Call counts are useful when they prove no retry or duplicate dispatch.
+- Use explicit start/release gates for ordering contracts; use real timers when
+  timing is the behavior under test.
+- Give independent contracts separate tests and table variations descriptive names.
 - Use `rejectionOf` from `tests/rejection.ts` when inspecting rejection reasons;
   it fails on fulfillment rather than treating resolved values as failures.
 - Do not duplicate implementation logic inside tests.
