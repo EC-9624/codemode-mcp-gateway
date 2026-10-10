@@ -3,18 +3,20 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { execute } from "../src/sandbox";
 import { executeLocally } from "./local-tools";
-import { runSandbox, executeWorker } from "../src/worker-execution";
-import { WorkerRequest, WorkerResponse } from "../src/worker-protocol";
+import { runSandbox, superviseWorker } from "../src/worker-execution";
+import { WorkerStartupData, WorkerToMainMessage } from "../src/worker-protocol";
 import { rejectionOf } from "./rejection";
 
 describe("worker protocol", () => {
   test("validates execution requests", () => {
-    expect(WorkerRequest.decode({ type: "execute", code: "return 42;", toolNames: [] })).toEqual({
+    expect(
+      WorkerStartupData.decode({ type: "execute", code: "return 42;", toolNames: [] }),
+    ).toEqual({
       ok: true,
       value: { type: "execute", code: "return 42;", toolNames: [] },
     });
     for (const value of [null, undefined, 42, [], {}, { type: "execute", code: 42 }]) {
-      expect(WorkerRequest.decode(value)).toEqual({
+      expect(WorkerStartupData.decode(value)).toEqual({
         ok: false,
         message: "Sandbox worker received an invalid execution request.",
       });
@@ -28,8 +30,8 @@ describe("worker protocol", () => {
       { type: "completed", result: { ok: false, error: { kind: "timeout", message: "expired" } } },
       { type: "failed", reason: "execution" },
       { type: "failed", reason: "request" },
-    ] satisfies WorkerResponse[]) {
-      expect(WorkerResponse.decode(value)).toEqual({ ok: true, value });
+    ] satisfies WorkerToMainMessage[]) {
+      expect(WorkerToMainMessage.decode(value)).toEqual({ ok: true, value });
     }
     for (const value of [
       null,
@@ -44,7 +46,7 @@ describe("worker protocol", () => {
       { type: "completed", result: { ok: false, error: { kind: "other", message: "failed" } } },
       { type: "completed", result: { ok: false, error: { kind: "script", message: 42 } } },
     ]) {
-      expect(WorkerResponse.decode(value)).toEqual({
+      expect(WorkerToMainMessage.decode(value)).toEqual({
         ok: false,
         message: "Sandbox worker returned an invalid response.",
       });
@@ -162,7 +164,7 @@ describe("worker execution", () => {
 
   test("rejects startup failures without returning a script error", async () => {
     const worker = new Worker(new URL("./fixtures/missing-worker.ts", import.meta.url));
-    const failure = (await rejectionOf(executeWorker(worker))).reason;
+    const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
     expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
@@ -180,7 +182,7 @@ describe("worker execution", () => {
         workerData: { type: "execute", code: scenario, toolNames: [] },
       });
       using terminate = spyOn(worker, "terminate");
-      const failure = (await rejectionOf(executeWorker(worker))).reason;
+      const failure = (await rejectionOf(superviseWorker(worker))).reason;
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error) {
         expect(failure.message).toContain(message);
@@ -207,7 +209,7 @@ describe("worker execution", () => {
       expect(errorListeners).toBeGreaterThan(0);
       return code;
     });
-    expect(await executeWorker(worker)).toEqual({ ok: true, value: 42 });
+    expect(await superviseWorker(worker)).toEqual({ ok: true, value: 42 });
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -216,7 +218,7 @@ describe("worker execution", () => {
     const worker = new Worker(new URL("./fixtures/worker-parser-fault.ts", import.meta.url), {
       workerData: { type: "execute", code: "return 42;", toolNames: [] },
     });
-    const failure = (await rejectionOf(executeWorker(worker))).reason;
+    const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
@@ -230,7 +232,7 @@ describe("worker execution", () => {
       workerData: { type: "execute", code: "idle", toolNames: [] },
     });
     using terminate = spyOn(worker, "terminate");
-    const completion = executeWorker(worker);
+    const completion = superviseWorker(worker);
     // A real structured-clone failure on receipt is not reliably constructible.
     worker.emit("messageerror", new Error("Injected deserialization failure"));
     const failure = (await rejectionOf(completion)).reason;
@@ -239,6 +241,62 @@ describe("worker execution", () => {
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
+
+  test("keeps synchronous VM allocation failures private across the worker boundary", async () => {
+    const worker = new Worker(new URL("./fixtures/worker-allocation-fault.ts", import.meta.url), {
+      workerData: {
+        type: "execute",
+        code: "try { await tools.read(); } catch (error) { return error.message; }",
+        toolNames: ["read"],
+      },
+    });
+    const failure = (await rejectionOf(superviseWorker(worker))).reason;
+    expect(failure).toBeInstanceOf(Error);
+    if (failure instanceof Error) {
+      expect(failure.message).toContain("Sandbox worker execution failed.");
+      expect(failure.message).not.toContain("Private worker allocation details");
+    }
+    expectNoExecutionListeners(worker);
+    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
+  });
+
+  for (const errorPhase of ["listener setup", "termination"]) {
+    test(`preserves setup failure when a worker error arrives during ${errorPhase}`, async () => {
+      const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
+        workerData: { type: "execute", code: "idle", toolNames: [] },
+      });
+      const failure = new Error("Listener setup failed");
+      let workerErrorObserved = false;
+      const addListener = worker.on.bind(worker);
+      using add = spyOn(worker, "on").mockImplementation((...args: Parameters<Worker["on"]>) => {
+        const added = addListener(...args);
+        if (args[0] === "message") {
+          if (errorPhase === "listener setup") {
+            workerErrorObserved = worker.emit(
+              "error",
+              new Error("Private worker failure during setup"),
+            );
+          }
+          throw failure;
+        }
+        return added;
+      });
+      const terminateWorker = worker.terminate.bind(worker);
+      using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+        if (errorPhase === "termination") {
+          workerErrorObserved = worker.emit("error", new Error("Private late worker failure"));
+        }
+        return await terminateWorker();
+      });
+      expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
+      // Unhandled promise rejections fail bun:test; allow the rejection checkpoint to run.
+      await Bun.sleep(0);
+      expect(workerErrorObserved).toBe(true);
+      expect(add).toHaveBeenCalledWith("message", expect.any(Function));
+      expect(terminate).toHaveBeenCalledTimes(1);
+      expectNoExecutionListeners(worker);
+    });
+  }
 
   test("propagates termination failures and still removes listeners", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
@@ -251,7 +309,7 @@ describe("worker execution", () => {
     });
     const failure = new Error("Worker termination failed");
     using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
-    expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
+    expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -272,7 +330,7 @@ describe("worker execution", () => {
       return code;
     });
     let settled = false;
-    const completion = executeWorker(worker).then((result) => {
+    const completion = superviseWorker(worker).then((result) => {
       settled = true;
       return result;
     });
@@ -309,7 +367,7 @@ describe("worker execution", () => {
       expect(errorListeners).toBeGreaterThan(0);
       return code;
     });
-    expect((await rejectionOf(executeWorker(worker))).reason).toBe(failure);
+    expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
     expect(add).toHaveBeenCalledWith("messageerror", expect.any(Function));
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);

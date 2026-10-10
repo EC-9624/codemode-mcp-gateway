@@ -1,24 +1,24 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { isMainThread, Worker } from "node:worker_threads";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
-import { executeWorker } from "../src/worker-execution";
-import { ToolReply, WorkerRequest, WorkerResponse } from "../src/worker-protocol";
+import { superviseWorker } from "../src/worker-execution";
+import { ToolReply, WorkerStartupData, WorkerToMainMessage } from "../src/worker-protocol";
 import { rejectionOf } from "./rejection";
 
 describe("worker tool protocol", () => {
   test("requires a dense list of unique string tool names", () => {
     for (const toolNames of [null, [42], ["read", "read"], Array(1)]) {
-      expect(WorkerRequest.decode({ type: "execute", code: "return 42;", toolNames }).ok).toBe(
+      expect(WorkerStartupData.decode({ type: "execute", code: "return 42;", toolNames }).ok).toBe(
         false,
       );
     }
-    expect(WorkerRequest.decode({ type: "execute", code: "return 42;" }).ok).toBe(false);
+    expect(WorkerStartupData.decode({ type: "execute", code: "return 42;" }).ok).toBe(false);
   });
 
   test("accepts JSON text and undefined arguments and results", () => {
     for (const argsJson of [undefined, "null", '"hello"', '{"value":42}']) {
       const value = { type: "tool-call", callId: 1, name: "read", argsJson } as const;
-      expect(WorkerResponse.decode(value)).toEqual({ ok: true, value });
+      expect(WorkerToMainMessage.decode(value)).toEqual({ ok: true, value });
       const reply = {
         type: "tool-result",
         callId: 1,
@@ -40,7 +40,8 @@ describe("worker tool protocol", () => {
   test("requires positive safe-integer call IDs in both directions", () => {
     for (const callId of [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"]) {
       expect(
-        WorkerResponse.decode({ type: "tool-call", callId, name: "read", argsJson: undefined }).ok,
+        WorkerToMainMessage.decode({ type: "tool-call", callId, name: "read", argsJson: undefined })
+          .ok,
       ).toBe(false);
       expect(
         ToolReply.decode({ type: "tool-result", callId, result: { ok: true, json: "42" } }).ok,
@@ -51,7 +52,7 @@ describe("worker tool protocol", () => {
   test("rejects arguments and results that are not JSON text or undefined", () => {
     for (const argsJson of [42, {}, "undefined", "not JSON"]) {
       expect(
-        WorkerResponse.decode({ type: "tool-call", callId: 1, name: "read", argsJson }).ok,
+        WorkerToMainMessage.decode({ type: "tool-call", callId: 1, name: "read", argsJson }).ok,
       ).toBe(false);
       expect(
         ToolReply.decode({ type: "tool-result", callId: 1, result: { ok: true, json: argsJson } })
@@ -151,8 +152,11 @@ describe("worker host tools", () => {
       throw failure;
     });
     expect(
-      (await rejectionOf(executeWorker(worker, new Map([["read", () => ToolResult.success(42)]]))))
-        .reason,
+      (
+        await rejectionOf(
+          superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+        )
+      ).reason,
     ).toBe(failure);
     expect(post).toHaveBeenCalledTimes(1);
   });
@@ -166,7 +170,9 @@ describe("worker host tools", () => {
       const send = worker.postMessage.bind(worker);
       using post = spyOn(worker, "postMessage").mockImplementation(() => send(reply));
       const failure = (
-        await rejectionOf(executeWorker(worker, new Map([["read", () => ToolResult.success(42)]])))
+        await rejectionOf(
+          superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+        )
       ).reason;
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error)
@@ -183,7 +189,7 @@ describe("worker host tools", () => {
       send(value);
     });
     const failure = (
-      await rejectionOf(executeWorker(worker, new Map([["read", () => ToolResult.success(42)]])))
+      await rejectionOf(superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])))
     ).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error)
@@ -199,7 +205,7 @@ describe("worker host tools", () => {
     test(`rejects ${name} without dispatching a callback`, async () => {
       const worker = toolWorker("return 42;");
       let calls = 0;
-      const completion = executeWorker(
+      const completion = superviseWorker(
         worker,
         new Map([
           [
@@ -221,7 +227,7 @@ describe("worker host tools", () => {
     const worker = toolWorker("return 42;");
     const late = Promise.withResolvers<ToolResult>();
     let calls = 0;
-    const completion = executeWorker(
+    const completion = superviseWorker(
       worker,
       new Map([
         [
@@ -246,7 +252,7 @@ describe("worker host tools", () => {
     const late = Promise.withResolvers<ToolResult>();
     let conversions = 0;
     using post = spyOn(worker, "postMessage");
-    expect(await executeWorker(worker, new Map([["read", () => late.promise]]))).toEqual({
+    expect(await superviseWorker(worker, new Map([["read", () => late.promise]]))).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
     });
@@ -273,7 +279,7 @@ describe("worker host tools", () => {
       worker.postMessage("crash now");
       return late.promise;
     };
-    const failure = (await rejectionOf(executeWorker(worker, new Map([["read", read]])))).reason;
+    const failure = (await rejectionOf(superviseWorker(worker, new Map([["read", read]])))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).not.toContain("Private fixture");
     late.reject(new Error("Private late failure"));
@@ -285,6 +291,6 @@ describe("worker host tools", () => {
 
 function toolWorker(code: string) {
   return new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
-    workerData: { type: "execute", code, toolNames: ["read"] } satisfies WorkerRequest,
+    workerData: { type: "execute", code, toolNames: ["read"] } satisfies WorkerStartupData,
   });
 }

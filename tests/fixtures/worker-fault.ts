@@ -1,8 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { WorkerRequest, type WorkerResponse } from "../../src/worker-protocol";
+import { WorkerStartupData, type WorkerToMainMessage } from "../../src/worker-protocol";
 
 if (!parentPort) throw new Error("Fixture requires a parent port");
-const request = WorkerRequest.decode(workerData);
+const request = WorkerStartupData.decode(workerData);
 if (!request.ok) throw new Error(request.message);
 
 switch (request.value.code) {
@@ -13,10 +13,10 @@ switch (request.value.code) {
     });
     break;
   case "execution-failure":
-    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
+    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerToMainMessage);
     break;
   case "request-failure":
-    parentPort.postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
+    parentPort.postMessage({ type: "failed", reason: "request" } satisfies WorkerToMainMessage);
     break;
   case "crash":
     throw new Error("Private fixture failure details");
@@ -26,8 +26,8 @@ switch (request.value.code) {
     parentPort.postMessage({
       type: "completed",
       result: { ok: true, value: 42 },
-    } satisfies WorkerResponse);
-    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerResponse);
+    } satisfies WorkerToMainMessage);
+    parentPort.postMessage({ type: "failed", reason: "execution" } satisfies WorkerToMainMessage);
     break;
   case "idle":
     setInterval(() => {}, 1000);
@@ -38,7 +38,7 @@ switch (request.value.code) {
       callId: 1,
       name: "read",
       argsJson: undefined,
-    } satisfies WorkerResponse);
+    } satisfies WorkerToMainMessage);
     // The parent signals after the callback starts, keeping the failure deterministic.
     parentPort.once("message", () => {
       throw new Error("Private fixture failure details");

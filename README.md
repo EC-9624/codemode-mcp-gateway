@@ -226,6 +226,11 @@ the SDK's context, which owns its runtime.
   controlled worker-failure message, without transferring private details. They are not
   reclassified as tool failures or retried against the VM. The job pump checks bridge failures between turns,
   including while guest jobs keep arriving.
+- Synchronous guest-bridge exceptions are recorded before the SDK can turn them
+  into catchable guest errors. The interrupt handler also observes that failure,
+  and the engine checks it after guest execution, job pumping, and error conversion.
+  Guest `try/catch`, a subsequent loop, or an error getter cannot replace the
+  recorded infrastructure failure with a script result.
 - An uncaught script rejection ends execution. Late host completions do not
   access the closed VM.
 - Thrown promises are opaque values without an error message, not promises to
@@ -332,15 +337,19 @@ main thread: decode response, clean up listeners, await termination
   listeners through a scoped `AsyncDisposableStack`. Message and exit listeners
   are removed before termination; the error listener stays until termination settles
   so late errors cannot become unhandled EventEmitter errors. Partial setup also
-  unwinds. Its internal `executeWorker`
+  unwinds. Completion records a result or infrastructure failure as a resolved
+  outcome, so an error during partial setup cannot reject an unobserved internal
+  promise. The supervisor throws the recorded infrastructure failure when awaited.
+  Its internal `superviseWorker`
   operation also enables real-worker lifecycle and failure tests without replacing
   host globals.
 - `src/worker-entry.ts` statically imports the engine, decodes the initial
   `workerData`, installs the remote tool bridge, and owns sandbox execution inside
   the worker. Startup requires no
   request message, submission promise, or listener-before-import workaround.
-- `src/worker-protocol.ts` defines request and response decoders that accept raw
-  `unknown` values and return explicit success/failure unions. Execution logic uses
+- `src/worker-protocol.ts` defines `WorkerStartupData`, `WorkerToMainMessage`, and
+  `ToolReply` decoders that accept raw `unknown` values and return explicit
+  success/failure unions. Execution logic uses
   decoded domain types; arbitrary guest results still remain `unknown`.
   Worker messages use structured cloning; guest values retain the engine's JSON
   semantics. No VM handles or tool functions cross the thread boundary.
@@ -423,6 +432,11 @@ main: close dispatch, await worker termination, return SandboxResult
   owns QuickJS handles. Protocol/transport failures wake the engine through the
   bridge's separate infrastructure-failure signal, including during idle waits
   and continuous guest jobs. They never become catchable tool failures.
+- The guest bridge's `pendingCalls` tracks work until guest promises are
+  settled. `failure` holds the first private infrastructure failure, while
+  `failureSignal` resolves to wake the engine. The worker bridge's `pendingReplies`
+  instead correlates outstanding call IDs with main-thread replies. Its
+  `cleanup` stack owns listeners and reply resolvers; `scope` owns VM handles.
 - Host dispatch observes every started callback. On completion/failure it stops
   dispatching and drops late results before conversion or posting. Pending host
   operations are not awaited during cleanup, cancelled, retried, or rolled back.

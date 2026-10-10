@@ -1,7 +1,9 @@
 import { Worker } from "node:worker_threads";
 import { type SandboxResult } from "./sandbox-result";
 import { callTool, serializeToolResult, type SandboxTool } from "./tool";
-import { type ToolReply, type WorkerRequest, WorkerResponse } from "./worker-protocol";
+import { type ToolReply, type WorkerStartupData, WorkerToMainMessage } from "./worker-protocol";
+
+type WorkerCompletion = { ok: true; result: SandboxResult } | { ok: false; error: unknown };
 
 export async function runSandbox(
   code: string,
@@ -9,35 +11,40 @@ export async function runSandbox(
 ): Promise<SandboxResult> {
   const registry = new Map(Object.entries(tools));
   const worker = new Worker(new URL("./worker-entry.ts", import.meta.url), {
-    workerData: { type: "execute", code, toolNames: [...registry.keys()] } satisfies WorkerRequest,
+    workerData: {
+      type: "execute",
+      code,
+      toolNames: [...registry.keys()],
+    } satisfies WorkerStartupData,
   });
-  return await executeWorker(worker, registry);
+  return await superviseWorker(worker, registry);
 }
 
 /** @internal Takes ownership of a fresh, single-execution worker, including termination. */
-export async function executeWorker(
+export async function superviseWorker(
   worker: Worker,
   tools: ReadonlyMap<string, SandboxTool> = new Map(),
 ): Promise<SandboxResult> {
   await using cleanup = new AsyncDisposableStack();
-  const completion = Promise.withResolvers<SandboxResult>();
+  // Setup can throw before the wait is reached; rejecting here could leave an unobserved promise.
+  const completion = Promise.withResolvers<WorkerCompletion>();
   let active = true;
   let lastCallId = 0;
   const fail = (error: unknown) => {
     if (!active) return;
     active = false;
-    completion.reject(error);
+    completion.resolve({ ok: false, error });
   };
   const onMessage = (data: unknown) => {
     if (!active) return;
-    const response = WorkerResponse.decode(data);
+    const response = WorkerToMainMessage.decode(data);
     if (!response.ok) {
       fail(new Error(response.message));
       return;
     }
     if (response.value.type === "completed") {
       active = false;
-      completion.resolve(response.value.result);
+      completion.resolve({ ok: true, result: response.value.result });
       return;
     }
     if (response.value.type === "tool-call") {
@@ -90,6 +97,9 @@ export async function executeWorker(
   cleanup.defer(async () => {
     await worker.terminate();
   });
+  cleanup.defer(() => {
+    active = false;
+  });
   worker.on("error", onError);
   // Register removal before adding, so partial listener setup also unwinds.
   cleanup.defer(() => {
@@ -104,9 +114,8 @@ export async function executeWorker(
     worker.off("exit", onExit);
   });
   worker.on("exit", onExit);
-  cleanup.defer(() => {
-    active = false;
-  });
   // Await inside the cleanup scope; returning the promise would terminate early.
-  return await completion.promise;
+  const outcome = await completion.promise;
+  if (!outcome.ok) throw outcome.error;
+  return outcome.result;
 }

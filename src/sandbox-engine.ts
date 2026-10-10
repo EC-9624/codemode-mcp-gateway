@@ -15,7 +15,11 @@ export async function executeEngine(
   using vm = await createVm();
   using bridgeScope = new Scope();
   const bridge = installBridge(vm, bridgeScope);
-  return await executeScript(vm, code, bridge);
+  const result = await executeScript(vm, code, bridge);
+  // Error conversion can run guest getters after the job loop's last failure check.
+  const failure = bridge.failure;
+  if (!failure.ok) throw failure.error;
+  return result;
 }
 
 async function executeScript(
@@ -26,14 +30,16 @@ async function executeScript(
   const runtime = vm.runtime;
   using deadline = createDeadline();
 
-  runtime.setInterruptHandler(() => performance.now() >= deadline.expiresAt);
+  runtime.setInterruptHandler(() => !bridge.failure.ok || performance.now() >= deadline.expiresAt);
 
-  const submission = buildScript(code);
+  const submission = prepareScript(code);
   if (performance.now() >= deadline.expiresAt) return timeoutResult();
   if (!submission.ok) {
     return { ok: false, error: { kind: "script", message: submission.message } };
   }
   using evaluated = startScript(vm, submission.source);
+  const initialFailure = bridge.failure;
+  if (!initialFailure.ok) throw initialFailure.error;
 
   if (evaluated.error) {
     if (performance.now() >= deadline.expiresAt) return timeoutResult();
@@ -41,11 +47,14 @@ async function executeScript(
   }
 
   while (true) {
-    if (!bridge.failure.ok) throw bridge.failure.error;
+    const failure = bridge.failure;
+    if (!failure.ok) throw failure.error;
     if (performance.now() >= deadline.expiresAt) return timeoutResult();
 
     // Resolving a guest promise queues work; QuickJS does not run it for us.
     using jobs = runtime.executePendingJobs(JOBS_PER_TURN);
+    const jobFailure = bridge.failure;
+    if (!jobFailure.ok) throw jobFailure.error;
     if (performance.now() >= deadline.expiresAt) return timeoutResult();
     if (jobs.error) {
       return scriptFailure(vm, jobs.error);
@@ -84,7 +93,7 @@ async function executeScript(
     }
 
     // An interrupt handler cannot expire a script while QuickJS is idle.
-    await Promise.race([deadline.expired, bridge.failed, ...bridge.pendingCalls]);
+    await Promise.race([deadline.expired, bridge.failureSignal, ...bridge.pendingCalls]);
   }
 }
 
@@ -108,7 +117,9 @@ function timeoutResult(): SandboxResult {
   };
 }
 
-function buildScript(code: string): { ok: true; source: string } | { ok: false; message: string } {
+function prepareScript(
+  code: string,
+): { ok: true; source: string } | { ok: false; message: string } {
   const prefix = '(async (tools) => {\n"use strict";\n';
   const source = `${prefix}${code}\n})`;
   let program: ReturnType<typeof parse>;

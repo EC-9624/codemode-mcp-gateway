@@ -3,10 +3,10 @@ import { type SerializedToolResult } from "./tool";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
-export type WorkerRequest = { type: "execute"; code: string; toolNames: string[] };
+export type WorkerStartupData = { type: "execute"; code: string; toolNames: string[] };
 
-export const WorkerRequest = {
-  decode(value: unknown): DecodeResult<WorkerRequest> {
+export const WorkerStartupData = {
+  decode(value: unknown): DecodeResult<WorkerStartupData> {
     if (
       typeof value === "object" &&
       value !== null &&
@@ -23,13 +23,13 @@ export const WorkerRequest = {
   },
 };
 
-export type WorkerResponse =
+export type WorkerToMainMessage =
   | { type: "tool-call"; callId: number; name: string; argsJson: string | undefined }
   | { type: "completed"; result: SandboxResult }
   | { type: "failed"; reason: "request" | "execution" };
 
-export const WorkerResponse = {
-  decode(value: unknown): DecodeResult<WorkerResponse> {
+export const WorkerToMainMessage = {
+  decode(value: unknown): DecodeResult<WorkerToMainMessage> {
     if (typeof value === "object" && value !== null && "type" in value) {
       if (
         value.type === "tool-call" &&

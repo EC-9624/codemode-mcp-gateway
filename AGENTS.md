@@ -30,6 +30,8 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 - Keep supporting helpers close to the code they support, usually below the
   main export.
 - Prefer existing patterns over new abstractions.
+- Prefer short names that are clear in context; add qualifiers only to distinguish
+  real responsibilities or ownership. More names and longer names are not inherently clearer.
 - Prefer Bun APIs when they fit the task.
 - Do not introduce dependencies for problems that existing tools solve simply.
 

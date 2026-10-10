@@ -6,7 +6,7 @@ export { ToolResult, type SandboxTool } from "./tool";
 export type ToolBridge = {
   pendingCalls: ReadonlySet<Promise<void>>;
   readonly failure: { ok: true } | { ok: false; error: unknown };
-  failed: Promise<void>;
+  failureSignal: Promise<void>;
   fail(error: unknown): void;
 };
 
@@ -17,41 +17,50 @@ export type ToolBridge = {
  */
 export function installGuestToolBridge(
   context: QuickJSContext,
-  names: readonly string[],
+  toolNames: readonly string[],
   invoke: (name: string, json: string | undefined) => Promise<SerializedToolResult>,
   scope: Scope,
 ): ToolBridge {
-  const pending = new Set<Promise<void>>();
-  const failed = Promise.withResolvers<void>();
+  const pendingCalls = new Set<Promise<void>>();
+  const failureSignal = Promise.withResolvers<void>();
   let failure: ToolBridge["failure"] = { ok: true };
   const fail = (error: unknown) => {
     if (!failure.ok) return;
     failure = { ok: false, error };
-    failed.resolve();
+    failureSignal.resolve();
   };
   using toolObject = context.newObject(context.null);
 
-  for (const name of names) {
+  for (const name of toolNames) {
     using callback = context.newFunction(name, (args = context.undefined) => {
-      const noArgs = context.typeof(args) === "undefined";
-      if (!noArgs && context.typeof(args) !== "string") {
-        return { error: context.newError("Tool arguments must be JSON text or undefined.") };
-      }
-      const json = noArgs ? undefined : context.getString(args);
-      // Relying on the public wrapper alone would leave raw bridge calls unchecked.
-      if (json !== undefined) {
-        try {
-          JSON.parse(json);
-        } catch (error) {
-          if (!(error instanceof SyntaxError)) throw error;
-          return { error: context.newError("Tool arguments are not valid JSON.") };
+      if (!failure.ok) return context.undefined;
+      let json: string | undefined;
+      let deferred: QuickJSDeferredPromise;
+      try {
+        const noArgs = context.typeof(args) === "undefined";
+        if (!noArgs && context.typeof(args) !== "string") {
+          return { error: context.newError("Tool arguments must be JSON text or undefined.") };
         }
+        json = noArgs ? undefined : context.getString(args);
+        // Relying on the public wrapper alone would leave raw bridge calls unchecked.
+        if (json !== undefined) {
+          try {
+            JSON.parse(json);
+          } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+            return { error: context.newError("Tool arguments are not valid JSON.") };
+          }
+        }
+        // Callback-local `using` would dispose the resolver before the host reply arrives.
+        deferred = scope.manage(context.newPromise());
+      } catch (error) {
+        // Escaping this callback lets the SDK turn private exceptions into guest errors.
+        fail(error);
+        return context.undefined;
       }
-      // Callback-local `using` would dispose the resolver before the host reply arrives.
-      const deferred = scope.manage(context.newPromise());
-      const invocation = settleTool(context, () => invoke(name, json), deferred, scope);
-      pending.add(invocation);
-      void invocation.then(() => pending.delete(invocation), fail);
+      const settlement = settlePromise(context, () => invoke(name, json), deferred, scope);
+      pendingCalls.add(settlement);
+      void settlement.then(() => pendingCalls.delete(settlement), fail);
       return deferred.handle;
     });
     context.setProp(toolObject, name, callback);
@@ -59,16 +68,16 @@ export function installGuestToolBridge(
 
   context.setProp(context.global, "tools", toolObject);
   return {
-    pendingCalls: pending,
+    pendingCalls,
     get failure() {
       return failure;
     },
-    failed: failed.promise,
+    failureSignal: failureSignal.promise,
     fail,
   };
 }
 
-async function settleTool(
+async function settlePromise(
   context: QuickJSContext,
   invoke: () => Promise<SerializedToolResult>,
   deferred: QuickJSDeferredPromise,

@@ -2,56 +2,64 @@ import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { type SerializedToolResult } from "./tool";
 import { installGuestToolBridge } from "./guest-tool-bridge";
-import { ToolReply, type WorkerResponse } from "./worker-protocol";
+import { ToolReply, type WorkerToMainMessage } from "./worker-protocol";
 
 /** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
 export function connectGuestToolsToMainThread(
   context: QuickJSContext,
-  names: readonly string[],
+  toolNames: readonly string[],
   port: MessagePort,
   scope: Scope,
   cleanup: DisposableStack,
 ) {
-  const pending = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
-  let nextId = 1;
+  const pendingReplies = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
+  let nextCallId = 1;
+
   const bridge = installGuestToolBridge(
     context,
-    names,
+    toolNames,
     (name, argsJson) => {
-      if (!bridge.failure.ok) return Promise.reject(bridge.failure.error);
-      if (!Number.isSafeInteger(nextId)) throw new Error("Sandbox tool call IDs exhausted.");
-      const callId = nextId++;
-      const call = Promise.withResolvers<SerializedToolResult>();
+      const failure = bridge.failure;
+
+      if (!failure.ok) return Promise.reject(failure.error);
+
+      if (!Number.isSafeInteger(nextCallId)) throw new Error("Sandbox tool call IDs exhausted.");
+
+      const callId = nextCallId++;
+      const pendingReply = Promise.withResolvers<SerializedToolResult>();
+
       // Storing the resolver first would leave a pending call if posting throws.
-      port.postMessage({ type: "tool-call", callId, name, argsJson } satisfies WorkerResponse);
-      pending.set(callId, call);
-      return call.promise;
+      port.postMessage({ type: "tool-call", callId, name, argsJson } satisfies WorkerToMainMessage);
+      pendingReplies.set(callId, pendingReply);
+
+      return pendingReply.promise;
     },
     scope,
   );
 
   const onMessage = (data: unknown) => {
     if (!bridge.failure.ok) return;
-    const reply = ToolReply.decode(data);
-    if (!reply.ok) {
-      bridge.fail(new Error(reply.message));
+    const decodedReply = ToolReply.decode(data);
+    if (!decodedReply.ok) {
+      bridge.fail(new Error(decodedReply.message));
       return;
     }
-    const call = pending.get(reply.value.callId);
-    if (!call) {
+    const pendingReply = pendingReplies.get(decodedReply.value.callId);
+    if (!pendingReply) {
       bridge.fail(new Error("Sandbox worker received an unknown or duplicate tool reply."));
       return;
     }
-    pending.delete(reply.value.callId);
-    call.resolve(reply.value.result);
+    pendingReplies.delete(decodedReply.value.callId);
+    pendingReply.resolve(decodedReply.value.result);
   };
   const onMessageError = () =>
     bridge.fail(new Error("Sandbox tool reply could not be deserialized."));
   const onClose = () => bridge.fail(new Error("Sandbox tool transport closed before completion."));
 
   cleanup.defer(() => {
-    for (const call of pending.values()) call.reject(new Error("Sandbox tool transport closed."));
-    pending.clear();
+    for (const pendingReply of pendingReplies.values())
+      pendingReply.reject(new Error("Sandbox tool transport closed."));
+    pendingReplies.clear();
   });
   cleanup.defer(() => {
     port.off("message", onMessage);
