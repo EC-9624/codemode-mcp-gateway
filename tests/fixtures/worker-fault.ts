@@ -32,6 +32,18 @@ switch (request.value.code) {
   case "idle":
     setInterval(() => {}, 1000);
     break;
+  case "call-and-crash":
+    parentPort.postMessage({
+      type: "tool-call",
+      callId: 1,
+      name: "read",
+      argsJson: undefined,
+    } satisfies WorkerResponse);
+    // The parent signals after the callback starts, keeping the failure deterministic.
+    parentPort.once("message", () => {
+      throw new Error("Private fixture failure details");
+    });
+    break;
   default:
     throw new Error("Unknown fixture scenario");
 }

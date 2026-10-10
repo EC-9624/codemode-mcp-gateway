@@ -76,24 +76,30 @@ Ordinary JavaScript runs inside QuickJS; `process`, `Bun`, `require`, and `fetch
 are not exposed. Each call creates a fresh runtime and context. Only the
 compiled WASM module is shared within a host thread.
 
-### Two promise environments
+### Guest promise bridge
+
+The guest bridge connects worker-side Bun promises to QuickJS promises. A message
+bridge connects those worker promises to host callbacks on the main thread.
 
 ```text
 guest tools.add(args)
   -> guest wrapper serializes arguments to JSON text
-  -> host decodes arguments, awaits the callback, and unwraps its explicit result
-  -> host resolves a QuickJS promise with JSON text (or rejects it)
-  -> advance QuickJS jobs
+  -> worker sends a tool-call message to the main thread
+  -> main thread decodes arguments, awaits the callback, and serializes its result
+  -> worker receives the reply and resolves or rejects the QuickJS promise
+  -> worker advances QuickJS jobs
   -> guest wrapper decodes the result and the script resumes
 ```
 
-The host callback returns a guest promise handle, not a Bun promise. The bridge
-connects the two using `context.newPromise()`. Resolving that promise queues guest
+The callback installed inside QuickJS returns a guest promise handle. The actual
+host tool callback returns `ToolResult` or a Bun promise of it on the main thread.
+The worker bridge uses `context.newPromise()` to connect the reply to the guest.
+Resolving that promise queues guest
 continuations; `runtime.executePendingJobs()` runs them. The job pump processes
 at most 100 jobs per turn and yields to host timers/I/O between batches.
 
 Native JSON functions are captured by the guest wrappers before user code runs.
-The host bridge handles only JSON strings or undefined, not guest object graphs.
+The worker's guest bridge handles only JSON strings or undefined, not guest object graphs.
 It no longer needs guest JSON function handles or calls back into the VM to
 serialize arguments or parse results. Malformed low-level payloads fail before
 host dispatch. A synchronous argument conversion failure still throws at the
@@ -132,17 +138,21 @@ is a boundary fix, not worker isolation or blanket built-in lockdown.
 ### Module boundaries
 
 - `src/runtime.ts`: loads QuickJS and creates a fresh VM with memory/stack limits.
-- `src/sandbox.ts`: orchestrates execution, wraps code, pumps jobs, and enforces
-  the per-execution deadline.
-- `src/tool-bridge.ts`: installs host callbacks and settles guest promises through
-  JSON text.
+- `src/sandbox.ts`: public worker-backed `execute(code, tools)` and type exports.
+- `src/sandbox-engine.ts`: wraps code, pumps jobs, and enforces the worker-local
+  per-execution deadline.
+- `src/tool.ts`: host callback contracts, private-error handling, and JSON conversion.
+- `src/tool-bridge.ts`: installs guest callbacks and settles guest promises through
+  JSON text. The same-thread adapter lives in `tests/local-tools.ts` for engine-level
+  ownership and fault tests.
+- `src/remote-tools.ts`: correlates worker tool calls and host replies.
 
-The public `execute()` flow is deliberately small:
+The worker-local engine's flow is deliberately small:
 
 ```ts
 using vm = await createVm();
 using bridgeScope = new Scope();
-const bridge = installTools(vm, tools, bridgeScope);
+const bridge = installBridge(vm, bridgeScope);
 return await executeScript(vm, code, bridge);
 ```
 
@@ -159,8 +169,9 @@ the SDK's context, which owns its runtime.
   JSON conversion failures become explicit results. Getters and `toJSON` may
   throw arbitrary values during host result conversion; these remain private
   and produce the public conversion error.
-- Unexpected parser errors and VM allocation/settlement failures reject the host
-  promise with their original cause in the existing `execute` path. They are not
+- Unexpected parser errors and VM allocation/settlement failures propagate with
+  their original cause within the engine thread. Public `execute` rejects with a
+  controlled worker-failure message, without transferring private details. They are not
   reclassified as tool failures or retried against the VM. The job pump checks bridge failures between turns,
   including while guest jobs keep arriving.
 - An uncaught script rejection ends execution. Late host completions do not
@@ -178,7 +189,7 @@ the SDK's context, which owns its runtime.
   progress and fails explicitly instead of hanging.
 - One monotonic deadline covers source validation, prelude setup, execution,
   guest jobs, and host waits after WASM loading, VM setup, and tool installation.
-  A host timer wakes idle execution; the QuickJS
+  A worker timer wakes idle execution; the QuickJS
   interrupt handler stops running guest computation.
 
 ### Execution and ownership
@@ -221,13 +232,11 @@ unsupported tool results reject with a public conversion error.
 
 ### Current limitations
 
-- In the existing `execute(code, tools)` path, source parsing, VM computation, and
-  synchronous parts of host callbacks still run on the host thread. An infinite
-  guest loop is interrupted, but blocks the host until the
-  interrupt runs. A synchronous host callback cannot be forcibly interrupted.
-  Host-side source parsing is checked against the deadline after it returns,
-  not interrupted while it runs.
-  This is not worker isolation or a hard response-latency guarantee.
+- Source parsing and VM computation run in a fresh worker. Synchronous host
+  callbacks and host result conversion still run on the main thread and cannot be
+  forcibly interrupted. Source parsing is checked against the worker's deadline
+  after it returns, not interrupted while it runs. There is no hard response-latency
+  guarantee or parent-supervised startup deadline yet.
 - Limits cover guest execution, not total host/WASM memory or model-facing output.
 - Timeout or failure stops waiting and closes the VM, not the host operation.
   Started operations may still finish or have side effects; there is no rollback,
@@ -240,26 +249,26 @@ unsupported tool results reject with a public conversion error.
 ## Milestone 4: experimental worker execution
 
 ```ts
-import { executeInWorker } from "./src/worker-execution";
+import { runSandbox } from "./src/worker-execution";
 
-await executeInWorker("return { answer: 42 };");
+await runSandbox("return { answer: 42 };");
 // { ok: true, value: { answer: 42 } }
 ```
 
-`executeInWorker(code)` runs source parsing and QuickJS computation in a fresh
+`runSandbox(code)` runs source parsing and QuickJS computation in a fresh
 Bun worker through `node:worker_threads`, keeping the main thread responsive during
 busy guest computation. Bun remains the only supported host runtime.
-It reuses the existing sandbox engine with an empty tool registry. It accepts no
-host callbacks; `execute(code, tools)` remains unchanged and still supports tools
-on the main thread. This experimental entry point is a stepping stone toward a
-worker-backed tool API, not a permanent alternative promised by this milestone.
+This milestone originally reused the engine with an empty tool registry. Since
+milestone 5, public `execute(code, tools)` uses this same coordinator with host tools.
+The coordinator is named `runSandbox`; there is only one worker-backed execution
+implementation.
 
 ```text
-main thread: executeInWorker(code)
+main thread: execute(code, tools) -> runSandbox(code, tools)
   -> create one referenced worker with the request in workerData
   -> install response/error/exit listeners
 worker: decode workerData into a typed execution request
-  -> execute(code): create VM, parse, run guest jobs, convert result, dispose VM
+  -> executeEngine(code, installBridge): create VM, parse, run jobs, convert result, dispose VM
   -> post completion or a generic infrastructure failure
 main thread: decode response, clean up listeners, await termination
   -> return SandboxResult or reject for infrastructure/transport failure
@@ -275,7 +284,8 @@ main thread: decode response, clean up listeners, await termination
   operation also enables real-worker lifecycle and failure tests without replacing
   host globals.
 - `src/worker-entry.ts` statically imports the engine, decodes the initial
-  `workerData`, and owns sandbox execution inside the worker. Startup requires no
+  `workerData`, installs the remote tool bridge, and owns sandbox execution inside
+  the worker. Startup requires no
   request message, submission promise, or listener-before-import workaround.
 - `src/worker-protocol.ts` defines request and response decoders that accept raw
   `unknown` values and return explicit success/failure unions. Execution logic uses
@@ -311,12 +321,84 @@ The deadline still starts inside the existing engine after VM/tool setup. Worker
 startup and loading are not covered. There is no parent watchdog, caller
 `AbortSignal`, or hard response-latency guarantee yet; a stuck worker that neither
 reports failure nor closes can leave execution pending. Cross-thread host tools
-and supervised cancellation are the next slices.
+are implemented below; supervised cancellation is the next slice.
+
+## Milestone 5: worker-backed host tools
+
+The public API is unchanged:
+
+```ts
+import { execute, ToolResult } from "./src/sandbox";
+
+await execute("return await tools.answer();", {
+  answer: async () => ToolResult.success(42),
+});
+// { ok: true, value: 42 }
+```
+
+`execute` snapshots the supplied registry, retains callbacks on the main thread,
+and passes source plus tool names to a fresh worker. The worker imports the engine,
+never the public wrapper. No callback functions or QuickJS handles cross threads.
+
+```text
+main: execute(code, tools) -> coordinator -> workerData { code, toolNames }
+worker: executeEngine -> installRemoteTools -> QuickJS guest
+
+guest: await tools.answer(args)
+  -> private wrapper serializes arguments
+worker: allocate call ID, send tool-call { callId, name, argsJson }
+main: validate call, invoke callback, serialize explicit ToolResult
+  -> send tool-result { callId, result }
+worker: decode reply, match call ID, resolve/reject the guest promise
+  -> pump QuickJS jobs; guest resumes
+
+worker: dispose VM, close remote bridge, send final result
+main: close dispatch, await worker termination, return SandboxResult
+```
+
+### Protocol and ownership
+
+- Startup data and both message directions have typed decoders. JSON strings are
+  validated before dispatch or guest settlement. Tool callbacks still validate
+  their own domain inputs; arbitrary input/output data remains `unknown`.
+- Per-execution call IDs increase in dispatch order. The host rejects unknown
+  tool names and invalid/replayed call IDs. Replies may finish out of order;
+  the worker rejects unknown/duplicate replies while execution is active.
+- Callback values undergo native JSON conversion on the host before transport,
+  preserving getters, `toJSON`, conversion errors, and `undefined` tool results.
+  Structured cloning transports only envelopes and serialized data.
+- The worker owns its pending remote resolvers and listeners. The engine scope
+  owns QuickJS handles. Protocol/transport failures wake the engine through the
+  bridge's separate infrastructure-failure signal, including during idle waits
+  and continuous guest jobs. They never become catchable tool failures.
+- Host dispatch observes every started callback. On completion/failure it stops
+  dispatching and drops late results before conversion or posting. Pending host
+  operations are not awaited during cleanup, cancelled, retried, or rolled back.
+
+### Preserved behavior and verification
+
+Guests still receive ordinary values or catchable tool rejections. Explicit
+failure messages are public; unexpected callback exceptions become `Host tool
+failed.`. Script failures and engine timeouts return `SandboxResult`; worker and
+transport infrastructure failures reject the host promise. Local transport
+exceptions retain their identity; worker-local exceptions do not cross threads.
+
+Successful execution drains started calls, including unawaited calls, race losers,
+and calls started by guest result serialization. Failure/timeout closes execution
+without waiting for unrelated callbacks. Awaiting one promise twice never replays
+its call. Concurrent executions have separate registries and call IDs.
+
+The behavior tests use public worker-backed `execute`. Engine-local fault tests
+still cover original exception identity and VM ownership. Additional tests cover
+out-of-order replies, JSON conversion on the host, malformed/duplicate messages,
+transport failure, worker crashes during calls, and late callback completion.
+
+This slice does not move callback CPU work off the main thread or add parent
+deadlines, caller cancellation, worker pooling, tool discovery, or MCP integration.
 
 ## Next milestones
 
-1. Bridge host tools across the worker boundary while preserving existing semantics.
-2. Add parent-supervised deadlines, caller cancellation, and worker cleanup supervision.
-3. Add tool discovery, schema validation, and one MCP upstream.
+1. Add parent-supervised deadlines, caller cancellation, and worker cleanup supervision.
+2. Add tool discovery, schema validation, and one MCP upstream.
 
 Do not add a gateway framework before the sandbox behavior is understood.

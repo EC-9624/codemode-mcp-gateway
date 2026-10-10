@@ -1,5 +1,6 @@
-import { parentPort, workerData } from "node:worker_threads";
-import { execute } from "./sandbox";
+import { parentPort, workerData, type MessagePort } from "node:worker_threads";
+import { installRemoteTools } from "./remote-tools";
+import { executeEngine } from "./sandbox-engine";
 import { WorkerRequest, type WorkerResponse } from "./worker-protocol";
 
 if (!parentPort) throw new Error("Sandbox worker entry requires a parent port.");
@@ -8,14 +9,18 @@ const request = WorkerRequest.decode(workerData);
 if (!request.ok) {
   parentPort.postMessage({ type: "failed", reason: "request" } satisfies WorkerResponse);
 } else {
-  parentPort.postMessage(await run(request.value.code));
+  parentPort.postMessage(await run(request.value, parentPort));
 }
 
-async function run(code: string): Promise<WorkerResponse> {
+async function run(request: WorkerRequest, port: MessagePort): Promise<WorkerResponse> {
   // Only the failure category crosses this boundary; arbitrary causes stay worker-local.
   // Posting the response stays outside the catch, so transport failures are not retried.
   try {
-    return { type: "completed", result: await execute(code) };
+    using cleanup = new DisposableStack();
+    const result = await executeEngine(request.code, (vm, scope) =>
+      installRemoteTools(vm, request.toolNames, port, scope, cleanup),
+    );
+    return { type: "completed", result };
   } catch {
     return { type: "failed", reason: "execution" };
   }

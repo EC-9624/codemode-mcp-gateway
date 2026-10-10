@@ -1,18 +1,25 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { execute } from "../src/sandbox";
-import { executeInWorker, executeWorker } from "../src/worker-execution";
+import { executeLocally } from "./local-tools";
+import { runSandbox, executeWorker } from "../src/worker-execution";
 import { WorkerRequest, WorkerResponse } from "../src/worker-protocol";
 import { rejectionOf } from "./rejection";
 
 describe("worker protocol", () => {
   test("validates execution requests", () => {
-    expect(WorkerRequest.decode({ type: "execute", code: "return 42;" })).toEqual({
+    expect(WorkerRequest.decode({ type: "execute", code: "return 42;", toolNames: [] })).toEqual({
       ok: true,
-      value: { type: "execute", code: "return 42;" },
+      value: { type: "execute", code: "return 42;", toolNames: [] },
     });
-    for (const value of [null, undefined, 42, [], {}, { type: "execute", code: 42 }]) {
+    for (const value of [
+      null,
+      undefined,
+      42,
+      [],
+      {},
+      { type: "execute", code: 42, toolNames: [] },
+    ]) {
       expect(WorkerRequest.decode(value)).toEqual({
         ok: false,
         message: "Sandbox worker received an invalid execution request.",
@@ -80,39 +87,37 @@ describe("worker execution", () => {
       "return [typeof process, typeof Bun, typeof require, typeof fetch];",
       "return Object.keys(tools);",
     ]) {
-      expect(await executeInWorker(code)).toEqual(await execute(code));
+      expect(await runSandbox(code)).toEqual(await executeLocally(code));
     }
   });
 
   test("retains the private prelude boundary", async () => {
     expect(
-      await executeInWorker("return [typeof hostTools, typeof run, tools === globalThis.tools];"),
+      await runSandbox("return [typeof hostTools, typeof run, tools === globalThis.tools];"),
     ).toEqual({ ok: true, value: ["undefined", "undefined", true] });
-    const escaped = await executeInWorker("}); globalThis.escaped = true; (async () => {");
+    const escaped = await runSandbox("}); globalThis.escaped = true; (async () => {");
     expect(escaped.ok).toBe(false);
     if (!escaped.ok) expect(escaped.error.kind).toBe("script");
   });
 
   test("creates fresh guest state and preserves concurrent result routing", async () => {
     expect(
-      await executeInWorker("globalThis.marker = 3; Array.prototype.marker = 3; return marker;"),
+      await runSandbox("globalThis.marker = 3; Array.prototype.marker = 3; return marker;"),
     ).toEqual({ ok: true, value: 3 });
-    expect(await executeInWorker("return [typeof marker, typeof Array.prototype.marker];")).toEqual(
-      {
-        ok: true,
-        value: ["undefined", "undefined"],
-      },
+    expect(await runSandbox("return [typeof marker, typeof Array.prototype.marker];")).toEqual({
+      ok: true,
+      value: ["undefined", "undefined"],
+    });
+    expect(await Promise.all([1, 2, 3, 4].map((value) => runSandbox(`return ${value};`)))).toEqual(
+      [1, 2, 3, 4].map((value) => ({ ok: true, value })),
     );
-    expect(
-      await Promise.all([1, 2, 3, 4].map((value) => executeInWorker(`return ${value};`))),
-    ).toEqual([1, 2, 3, 4].map((value) => ({ ok: true, value })));
   });
 
   test("keeps main-thread timers running during guest computation, not just worker startup", async () => {
     const ticks: number[] = [];
     const timer = setInterval(() => ticks.push(Date.now()), 10);
     try {
-      const result = await executeInWorker(`
+      const result = await runSandbox(`
         const started = Date.now();
         while (Date.now() - started < 400) {}
         return { started, ended: Date.now() };
@@ -138,16 +143,16 @@ describe("worker execution", () => {
   });
 
   test("interrupts infinite guest computation and recovers", async () => {
-    expect(await executeInWorker("while (true) {} ")).toEqual({
+    expect(await runSandbox("while (true) {} ")).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
     });
-    expect(await executeInWorker("return 42;")).toEqual({ ok: true, value: 42 });
+    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
   test("rejects invalid requests at the actual worker boundary", async () => {
     const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
-      workerData: { type: "execute", code: 42 },
+      workerData: { type: "execute", code: 42, toolNames: [] },
     });
     try {
       const response = Promise.withResolvers<unknown>();
@@ -163,7 +168,7 @@ describe("worker execution", () => {
     const failure = (await rejectionOf(executeWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
-    expect(await executeInWorker("return 42;")).toEqual({ ok: true, value: 42 });
+    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
   test("rejects protocol, reported infrastructure, crash, and premature-close failures", async () => {
@@ -175,7 +180,7 @@ describe("worker execution", () => {
       ["close", "closed before completion"],
     ] as const) {
       const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-        workerData: { type: "execute", code: scenario },
+        workerData: { type: "execute", code: scenario, toolNames: [] },
       });
       using remove = spyOn(worker, "off");
       using terminate = spyOn(worker, "terminate");
@@ -188,12 +193,12 @@ describe("worker execution", () => {
       expect(remove).toHaveBeenCalledTimes(4);
       expect(terminate).toHaveBeenCalledTimes(1);
     }
-    expect(await executeInWorker("return 42;")).toEqual({ ok: true, value: 42 });
+    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
   test("settles once and cleans up listeners and the worker", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "duplicate" },
+      workerData: { type: "execute", code: "duplicate", toolNames: [] },
     });
     using add = spyOn(worker, "on");
     using remove = spyOn(worker, "off");
@@ -206,7 +211,7 @@ describe("worker execution", () => {
 
   test("keeps actual worker infrastructure exception details out of the response", async () => {
     const worker = new Worker(new URL("./fixtures/worker-parser-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "return 42;" },
+      workerData: { type: "execute", code: "return 42;", toolNames: [] },
     });
     const failure = (await rejectionOf(executeWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
@@ -214,12 +219,12 @@ describe("worker execution", () => {
       expect(failure.message).toContain("Sandbox worker execution failed.");
       expect(failure.message).not.toContain("Private parser infrastructure details");
     }
-    expect(await executeInWorker("return 42;")).toEqual({ ok: true, value: 42 });
+    expect(await runSandbox("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
   test("cleans up after response deserialization errors", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "idle" },
+      workerData: { type: "execute", code: "idle", toolNames: [] },
     });
     using remove = spyOn(worker, "off");
     using terminate = spyOn(worker, "terminate");
@@ -235,7 +240,7 @@ describe("worker execution", () => {
 
   test("propagates termination failures and still removes listeners", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "duplicate" },
+      workerData: { type: "execute", code: "duplicate", toolNames: [] },
     });
     const terminateWorker = worker.terminate.bind(worker);
     await using cleanup = new AsyncDisposableStack();
@@ -252,7 +257,7 @@ describe("worker execution", () => {
 
   test("awaits termination and observes late errors without changing a completed result", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "duplicate" },
+      workerData: { type: "execute", code: "duplicate", toolNames: [] },
     });
     const terminateWorker = worker.terminate.bind(worker);
     const terminating = Promise.withResolvers<void>();
@@ -283,7 +288,7 @@ describe("worker execution", () => {
 
   test("unwinds partial listener setup before terminating the worker", async () => {
     const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "idle" },
+      workerData: { type: "execute", code: "idle", toolNames: [] },
     });
     const failure = new Error("Listener setup failed");
     const addListener = worker.on.bind(worker);
@@ -334,6 +339,7 @@ describe("worker execution", () => {
       ).toEqual([
         { ok: true, value: 42 },
         { ok: false, error: { kind: "script", message: "guest failure" } },
+        { ok: true, value: 7 },
       ]);
     } finally {
       clearTimeout(timer);

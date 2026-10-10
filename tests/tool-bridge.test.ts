@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { QuickJSContext, Scope } from "quickjs-emscripten";
 import { createVm } from "../src/runtime";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
-import { installTools } from "../src/tool-bridge";
+import { executeLocally, installLocalTools } from "./local-tools";
 import { rejectionOf } from "./rejection";
 
 const add: SandboxTool = async (args) => {
@@ -201,7 +201,7 @@ describe("async tool bridge", () => {
     using vm = await createVm();
     using scope = new Scope();
     let calls = 0;
-    const bridge = installTools(
+    const bridge = installLocalTools(
       vm,
       {
         echo: (args) => {
@@ -224,7 +224,7 @@ describe("async tool bridge", () => {
     for (const method of ["newString", "callFunction"] as const) {
       using vm = await createVm();
       using scope = new Scope();
-      const bridge = installTools(vm, { answer: () => ToolResult.success(42) }, scope);
+      const bridge = installLocalTools(vm, { answer: () => ToolResult.success(42) }, scope);
       const failure = new Error("VM infrastructure failed");
       using fault = spyOn(vm, method).mockImplementation(() => {
         throw failure;
@@ -242,7 +242,11 @@ describe("async tool bridge", () => {
   test("propagates VM failures while rejecting an explicit tool failure", async () => {
     using vm = await createVm();
     using scope = new Scope();
-    const bridge = installTools(vm, { fail: () => ToolResult.failure("Public failure") }, scope);
+    const bridge = installLocalTools(
+      vm,
+      { fail: () => ToolResult.failure("Public failure") },
+      scope,
+    );
     const failure = new Error("VM infrastructure failed");
     using fault = spyOn(vm, "newError").mockImplementation(() => {
       throw failure;
@@ -261,7 +265,7 @@ describe("async tool bridge", () => {
     expect(
       (
         await rejectionOf(
-          execute("tools.answer(); while (true) await Promise.resolve();", {
+          executeLocally("tools.answer(); while (true) await Promise.resolve();", {
             answer: () => {
               // Inject only after VM setup, so the failure exercises bridge settlement.
               const fault = spyOn(QuickJSContext.prototype, "newString").mockImplementation(() => {

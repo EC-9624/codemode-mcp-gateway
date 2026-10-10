@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Parser } from "acorn";
 import { execute } from "../src/sandbox";
+import { executeLocally } from "./local-tools";
 import { rejectionOf } from "./rejection";
 
 describe("sandbox", () => {
@@ -86,7 +87,7 @@ describe("sandbox", () => {
     using parser = spyOn(Parser, "parse").mockImplementation(() => {
       throw failure;
     });
-    expect((await rejectionOf(execute("return 3;"))).reason).toBe(failure);
+    expect((await rejectionOf(executeLocally("return 3;"))).reason).toBe(failure);
     expect(parser).toHaveBeenCalledTimes(1);
     parser.mockRestore();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
