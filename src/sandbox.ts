@@ -8,7 +8,7 @@ export { ToolResult, type SandboxTool } from "./tool-bridge";
 const TIMEOUT_MS = 1000;
 const JOBS_PER_TURN = 100;
 
-type SandboxResult =
+export type SandboxResult =
   | { ok: true; value: unknown }
   | { ok: false; error: { kind: "script" | "timeout"; message: string } };
 

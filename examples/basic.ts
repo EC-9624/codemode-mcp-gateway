@@ -1,4 +1,5 @@
 import { execute, ToolResult } from "../src/sandbox";
+import { executeInWorker } from "../src/worker-execution";
 
 console.log(await execute("return 1 + 2;"));
 console.log(await execute('throw new Error("An example failure");'));
@@ -20,3 +21,5 @@ console.log(
     },
   }),
 );
+
+console.log(await executeInWorker("return { answer: 42 };"));
