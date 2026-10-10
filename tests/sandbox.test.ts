@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as acorn from "acorn";
 import { execute } from "../src/sandbox";
 
 describe("sandbox", () => {
@@ -64,27 +65,47 @@ describe("sandbox", () => {
     }
   });
 
-  test("rejects asynchronous return values instead of silently returning an empty object", async () => {
-    expect(await execute("return Promise.resolve(3);")).toEqual({
-      ok: false,
-      error: {
-        kind: "script",
-        message: "Async results are not supported yet. Return a synchronous value.",
-      },
-    });
-  });
-
-  test("rejects object and function thenables", async () => {
+  test("reports thrown promises without consuming the caller's error handle", async () => {
     for (const code of [
-      "return { then() {} };",
-      "const value = () => 3; value.then = () => {}; return value;",
+      "throw Promise.resolve(3);",
+      "throw new Promise(() => {});",
+      'throw Promise.reject(new Error("inner"));',
+      "throw Promise.reject(Promise.resolve(3));",
     ]) {
       expect(await execute(code)).toEqual({
         ok: false,
-        error: {
-          kind: "script",
-          message: "Async results are not supported yet. Return a synchronous value.",
-        },
+        error: { kind: "script", message: "Script threw a value without an error message." },
+      });
+    }
+    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+  });
+
+  test("propagates unexpected parser failures instead of reporting a script error", async () => {
+    const failure = new Error("Parser infrastructure failed");
+    using parser = spyOn(acorn, "parse").mockImplementation(() => {
+      throw failure;
+    });
+    await expect(execute("return 3;")).rejects.toBe(failure);
+    expect(parser).toHaveBeenCalledTimes(1);
+    parser.mockRestore();
+    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+  });
+
+  test("awaits asynchronous return values", async () => {
+    expect(await execute("return Promise.resolve(3);")).toEqual({
+      ok: true,
+      value: 3,
+    });
+  });
+
+  test("awaits object and function thenables", async () => {
+    for (const code of [
+      "return { then(resolve) { resolve(3); } };",
+      "const value = () => 3; value.then = resolve => resolve(3); return value;",
+    ]) {
+      expect(await execute(code)).toEqual({
+        ok: true,
+        value: 3,
       });
     }
   });
@@ -141,7 +162,7 @@ describe("sandbox", () => {
   test("interrupts infinite computation and permits the next execution", async () => {
     expect(await execute("while (true) {} ")).toEqual({
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1-second computation limit." },
+      error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
     });
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
