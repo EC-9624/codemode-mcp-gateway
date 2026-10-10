@@ -7,7 +7,7 @@ describe("guest prelude boundary", () => {
       await execute(
         `return [
           typeof hostTools, typeof stringify, typeof parse, typeof decodeResult,
-          typeof ResultError, typeof AsyncFunction, typeof compile, typeof run
+          typeof ConversionError, typeof AsyncFunction, typeof compile, typeof run
         ];`,
         { answer: () => ToolResult.success(42) },
       ),

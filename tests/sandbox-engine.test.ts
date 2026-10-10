@@ -1,7 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
-import { type QuickJSContext, type QuickJSDeferredPromise, type Scope } from "quickjs-emscripten";
+import { type QuickJSDeferredPromise } from "quickjs-emscripten";
 import { ToolResult, type SandboxResult } from "../src/sandbox";
 import { executeEngine } from "../src/sandbox-engine";
+import { expectDisposedExecution, type ExecutionResources } from "./disposal";
 import { installLocalTools } from "./local-tools";
 
 for (const scenario of [
@@ -20,15 +21,15 @@ for (const scenario of [
     code: "tools.read(); while (true) {}",
     expected: {
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     },
   },
 ] satisfies { name: string; code: string; expected: SandboxResult }[]) {
   test(`disposes the VM, runtime, bridge scope, and tool promises after ${scenario.name}`, async () => {
-    const resources: { vm: QuickJSContext; scope: Scope }[] = [];
+    const resources: ExecutionResources[] = [];
     const promises: QuickJSDeferredPromise[] = [];
     using cleanup = new DisposableStack();
-    const result = await executeEngine(scenario.code, (vm, scope) => {
+    const result = await executeEngine(scenario.code, 100, (vm, scope) => {
       resources.push({ vm, scope });
       const newPromise = vm.newPromise.bind(vm);
       // Observe real deferred handles; results alone cannot prove their disposal.
@@ -42,13 +43,8 @@ for (const scenario of [
     });
 
     expect(result).toEqual(scenario.expected);
-    expect(resources).toHaveLength(1);
+    expectDisposedExecution(resources);
     expect(promises).toHaveLength(1);
-    for (const { vm, scope } of resources) {
-      expect(scope.alive).toBe(false);
-      expect(vm.alive).toBe(false);
-      expect(vm.runtime.alive).toBe(false);
-    }
     for (const promise of promises) {
       expect(promise.alive).toBe(false);
       expect(promise.handle.alive).toBe(false);

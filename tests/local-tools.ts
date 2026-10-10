@@ -3,8 +3,12 @@ import { executeEngine } from "../src/sandbox-engine";
 import { callTool, serializeToolResult, type SandboxTool } from "../src/tool";
 import { installGuestToolBridge } from "../src/guest-tool-bridge";
 
-export function executeLocally(code: string, tools: Readonly<Record<string, SandboxTool>> = {}) {
-  return executeEngine(code, (vm, scope) => installLocalTools(vm, tools, scope));
+export function executeLocally(
+  code: string,
+  tools: Readonly<Record<string, SandboxTool>> = {},
+  timeoutMs = 1000,
+) {
+  return executeEngine(code, timeoutMs, (vm, scope) => installLocalTools(vm, tools, scope));
 }
 
 /** Worker transport would hide the VM handles and original exceptions these tests inspect. */

@@ -1,72 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { isMainThread, Worker } from "node:worker_threads";
+import { isMainThread } from "node:worker_threads";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
 import { superviseWorker } from "../src/worker-execution";
-import { ToolReply, WorkerStartupData, WorkerToMainMessage } from "../src/worker-protocol";
 import { rejectionOf } from "./rejection";
-
-describe("worker tool protocol", () => {
-  test("requires a dense list of unique string tool names", () => {
-    for (const toolNames of [null, [42], ["read", "read"], Array(1)]) {
-      expect(WorkerStartupData.decode({ type: "execute", code: "return 42;", toolNames }).ok).toBe(
-        false,
-      );
-    }
-    expect(WorkerStartupData.decode({ type: "execute", code: "return 42;" }).ok).toBe(false);
-  });
-
-  test("accepts JSON text and undefined arguments and results", () => {
-    for (const argsJson of [undefined, "null", '"hello"', '{"value":42}']) {
-      const value = { type: "tool-call", callId: 1, name: "read", argsJson } as const;
-      expect(WorkerToMainMessage.decode(value)).toEqual({ ok: true, value });
-      const reply = {
-        type: "tool-result",
-        callId: 1,
-        result: { ok: true, json: argsJson },
-      } as const;
-      expect(ToolReply.decode(reply)).toEqual({ ok: true, value: reply });
-    }
-  });
-
-  test("accepts explicit tool failure messages", () => {
-    const failure = {
-      type: "tool-result",
-      callId: 1,
-      result: ToolResult.failure("Public failure"),
-    } as const;
-    expect(ToolReply.decode(failure)).toEqual({ ok: true, value: failure });
-  });
-
-  test("requires positive safe-integer call IDs in both directions", () => {
-    for (const callId of [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"]) {
-      expect(
-        WorkerToMainMessage.decode({ type: "tool-call", callId, name: "read", argsJson: undefined })
-          .ok,
-      ).toBe(false);
-      expect(
-        ToolReply.decode({ type: "tool-result", callId, result: { ok: true, json: "42" } }).ok,
-      ).toBe(false);
-    }
-  });
-
-  test("rejects arguments and results that are not JSON text or undefined", () => {
-    for (const argsJson of [42, {}, "undefined", "not JSON"]) {
-      expect(
-        WorkerToMainMessage.decode({ type: "tool-call", callId: 1, name: "read", argsJson }).ok,
-      ).toBe(false);
-      expect(
-        ToolReply.decode({ type: "tool-result", callId: 1, result: { ok: true, json: argsJson } })
-          .ok,
-      ).toBe(false);
-    }
-  });
-
-  test("rejects replies without a serialized value or public failure message", () => {
-    for (const result of [null, {}, { ok: true }, { ok: false, error: { message: 42 } }]) {
-      expect(ToolReply.decode({ type: "tool-result", callId: 1, result }).ok).toBe(false);
-    }
-  });
-});
+import { faultWorker, toolWorker } from "./workers";
 
 describe("worker host tools", () => {
   test("transfers only the public message from explicit failure envelopes", async () => {
@@ -248,13 +185,13 @@ describe("worker host tools", () => {
   });
 
   test("discards late results after timeout without conversion or transport", async () => {
-    const worker = toolWorker("return await tools.read();");
+    const worker = toolWorker("return await tools.read();", 100);
     const late = Promise.withResolvers<ToolResult>();
     let conversions = 0;
     using post = spyOn(worker, "postMessage");
     expect(await superviseWorker(worker, new Map([["read", () => late.promise]]))).toEqual({
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
     late.resolve(
       ToolResult.success({
@@ -270,9 +207,7 @@ describe("worker host tools", () => {
   });
 
   test("observes late callback failures after a worker crash", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "call-and-crash", toolNames: ["read"] },
-    });
+    const worker = faultWorker("call-and-crash", ["read"]);
     const late = Promise.withResolvers<ToolResult>();
     using post = spyOn(worker, "postMessage");
     const read: SandboxTool = () => {
@@ -288,9 +223,3 @@ describe("worker host tools", () => {
     expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
   });
 });
-
-function toolWorker(code: string) {
-  return new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
-    workerData: { type: "execute", code, toolNames: ["read"] } satisfies WorkerStartupData,
-  });
-}

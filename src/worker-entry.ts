@@ -17,7 +17,7 @@ async function run(startup: WorkerStartupData, port: MessagePort): Promise<Worke
   // Posting the response stays outside the catch, so transport failures are not retried.
   try {
     using cleanup = new DisposableStack();
-    const result = await executeEngine(startup.code, (vm, scope) =>
+    const result = await executeEngine(startup.code, startup.timeoutMs, (vm, scope) =>
       connectGuestToolsToMainThread(vm, startup.toolNames, port, scope, cleanup),
     );
     return { type: "completed", result };

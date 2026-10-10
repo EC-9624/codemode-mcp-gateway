@@ -4,18 +4,18 @@ import { createVm } from "./runtime";
 import { type ToolBridge } from "./guest-tool-bridge";
 import { type SandboxResult } from "./sandbox-result";
 
-const TIMEOUT_MS = 1000;
 const JOBS_PER_TURN = 100;
 
 /** Worker-local engine. Bridge handles belong to the execution's scope. */
 export async function executeEngine(
   code: string,
+  timeoutMs: number,
   installBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
 ): Promise<SandboxResult> {
   using vm = await createVm();
   using bridgeScope = new Scope();
   const bridge = installBridge(vm, bridgeScope);
-  const result = await executeScript(vm, code, bridge);
+  const result = await executeScript(vm, code, timeoutMs, bridge);
   // Error conversion can run guest getters after the job loop's last failure check.
   const failure = bridge.failure;
   if (!failure.ok) throw failure.error;
@@ -25,45 +25,49 @@ export async function executeEngine(
 async function executeScript(
   vm: QuickJSContext,
   code: string,
+  timeoutMs: number,
   bridge: ToolBridge,
 ): Promise<SandboxResult> {
   const runtime = vm.runtime;
-  using deadline = createDeadline();
+  using deadline = createDeadline(timeoutMs);
+  // Infrastructure failures throw; an expired deadline stops execution with a timeout result.
+  const checkpoint = (): SandboxResult | undefined => {
+    const failure = bridge.failure;
+    if (!failure.ok) throw failure.error;
+    if (!deadline.passed()) return undefined;
+    return {
+      ok: false,
+      error: { kind: "timeout", message: `Execution exceeded the ${timeoutMs} ms limit.` },
+    };
+  };
 
-  runtime.setInterruptHandler(() => !bridge.failure.ok || performance.now() >= deadline.expiresAt);
+  runtime.setInterruptHandler(() => !bridge.failure.ok || deadline.passed());
 
   const submission = prepareScript(code);
-  if (performance.now() >= deadline.expiresAt) return timeoutResult();
+  const parsed = checkpoint();
+  if (parsed) return parsed;
   if (!submission.ok) {
     return { ok: false, error: { kind: "script", message: submission.message } };
   }
   using evaluated = startScript(vm, submission.source);
-  const initialFailure = bridge.failure;
-  if (!initialFailure.ok) throw initialFailure.error;
-
-  if (evaluated.error) {
-    if (performance.now() >= deadline.expiresAt) return timeoutResult();
-    return scriptFailure(vm, evaluated.error);
-  }
+  // An interrupted start surfaces as an error; the checkpoint classifies it first.
+  const started = checkpoint();
+  if (started) return started;
+  if (evaluated.error) return scriptFailure(vm, evaluated.error);
 
   while (true) {
-    const failure = bridge.failure;
-    if (!failure.ok) throw failure.error;
-    if (performance.now() >= deadline.expiresAt) return timeoutResult();
+    const turn = checkpoint();
+    if (turn) return turn;
 
     // Resolving a guest promise queues work; QuickJS does not run it for us.
     using jobs = runtime.executePendingJobs(JOBS_PER_TURN);
-    const jobFailure = bridge.failure;
-    if (!jobFailure.ok) throw jobFailure.error;
-    if (performance.now() >= deadline.expiresAt) return timeoutResult();
-    if (jobs.error) {
-      return scriptFailure(vm, jobs.error);
-    }
+    const pumped = checkpoint();
+    if (pumped) return pumped;
+    if (jobs.error) return scriptFailure(vm, jobs.error);
 
     const state = vm.getPromiseState(evaluated.value);
     if (state.type === "rejected") {
       using error = state.error;
-      if (performance.now() >= deadline.expiresAt) return timeoutResult();
       return scriptFailure(vm, error);
     }
 
@@ -97,23 +101,16 @@ async function executeScript(
   }
 }
 
-function createDeadline() {
-  const expiresAt = performance.now() + TIMEOUT_MS;
+function createDeadline(timeoutMs: number) {
+  const expiresAt = performance.now() + timeoutMs;
   const expiration = Promise.withResolvers<void>();
-  const timer = setTimeout(expiration.resolve, TIMEOUT_MS);
+  const timer = setTimeout(expiration.resolve, timeoutMs);
   return {
-    expiresAt,
     expired: expiration.promise,
+    passed: () => performance.now() >= expiresAt,
     [Symbol.dispose]() {
       clearTimeout(timer);
     },
-  };
-}
-
-function timeoutResult(): SandboxResult {
-  return {
-    ok: false,
-    error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
   };
 }
 
@@ -166,7 +163,7 @@ const PRELUDE_SOURCE = `((hostTools) => {
     "use strict";
     const stringify = JSON.stringify;
     const parse = JSON.parse;
-    const ResultError = TypeError;
+    const ConversionError = TypeError;
     const decodeResult = async (call) => {
       const json = await call;
       return json === undefined ? undefined : parse(json);
@@ -178,7 +175,7 @@ const PRELUDE_SOURCE = `((hostTools) => {
       tools[name] = (args) => {
         const json = stringify(args);
         if (json === undefined && args !== undefined) {
-          throw new ResultError("Tool arguments are not JSON-serializable.");
+          throw new ConversionError("Tool arguments are not JSON-serializable.");
         }
         return decodeResult(invoke(json));
       };
@@ -189,7 +186,7 @@ const PRELUDE_SOURCE = `((hostTools) => {
       const value = await script(tools);
       const json = stringify(value);
       if (json === undefined && value !== undefined) {
-        throw new ResultError("Return value is not JSON-serializable.");
+        throw new ConversionError("Return value is not JSON-serializable.");
       }
       return json ?? "null";
     };

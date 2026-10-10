@@ -1,8 +1,6 @@
 import { type QuickJSContext, type QuickJSDeferredPromise, type Scope } from "quickjs-emscripten";
 import { type SerializedToolResult } from "./tool";
 
-export { ToolResult, type SandboxTool } from "./tool";
-
 export type ToolBridge = {
   pendingCalls: ReadonlySet<Promise<void>>;
   readonly failure: { ok: true } | { ok: false; error: unknown };

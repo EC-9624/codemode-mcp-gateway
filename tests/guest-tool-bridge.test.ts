@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { type QuickJSContext, Scope } from "quickjs-emscripten";
+import { Scope } from "quickjs-emscripten";
 import { createVm } from "../src/runtime";
 import { execute, ToolResult, type SandboxTool } from "../src/sandbox";
 import { executeEngine } from "../src/sandbox-engine";
+import { expectDisposedExecution, type ExecutionResources } from "./disposal";
 import { installLocalTools } from "./local-tools";
 import { rejectionOf } from "./rejection";
 
@@ -314,8 +315,8 @@ describe("guest tool bridge", () => {
       let allocations = 0;
       let calls = 0;
       let guestErrors = 0;
-      const resources: { vm: QuickJSContext; scope: Scope }[] = [];
-      const completion = executeEngine(code, (vm, scope) => {
+      const resources: ExecutionResources[] = [];
+      const completion = executeEngine(code, 1000, (vm, scope) => {
         resources.push({ vm, scope });
         const fault = spyOn(vm, "newPromise").mockImplementation(() => {
           allocations += 1;
@@ -345,12 +346,7 @@ describe("guest tool bridge", () => {
       expect(allocations).toBe(1);
       expect(calls).toBe(0);
       expect(guestErrors).toBe(0);
-      expect(resources).toHaveLength(1);
-      for (const { vm, scope } of resources) {
-        expect(vm.alive).toBe(false);
-        expect(vm.runtime.alive).toBe(false);
-        expect(scope.alive).toBe(false);
-      }
+      expectDisposedExecution(resources);
     });
   }
 
@@ -409,9 +405,10 @@ describe("guest tool bridge", () => {
   test("propagates infrastructure failures even while guest jobs keep arriving", async () => {
     const failure = new Error("VM allocation failed");
     using cleanup = new DisposableStack();
-    const resources: { vm: QuickJSContext; scope: Scope }[] = [];
+    const resources: ExecutionResources[] = [];
     const completion = executeEngine(
       "tools.answer(); while (true) await Promise.resolve();",
+      1000,
       (vm, scope) => {
         resources.push({ vm, scope });
         return installLocalTools(
@@ -431,12 +428,7 @@ describe("guest tool bridge", () => {
       },
     );
     expect((await rejectionOf(completion)).reason).toBe(failure);
-    expect(resources).toHaveLength(1);
-    for (const { vm, scope } of resources) {
-      expect(vm.alive).toBe(false);
-      expect(vm.runtime.alive).toBe(false);
-      expect(scope.alive).toBe(false);
-    }
+    expectDisposedExecution(resources);
     cleanup.dispose();
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
@@ -516,9 +508,9 @@ describe("guest tool bridge", () => {
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
-    expect(await execute("while (true) await Promise.resolve();")).toEqual({
+    expect(await execute("while (true) await Promise.resolve();", {}, { timeoutMs: 100 })).toEqual({
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
     expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
       ok: true,
@@ -561,12 +553,14 @@ describe("guest tool bridge", () => {
   test("includes unawaited host calls in the deadline", async () => {
     const late = Promise.withResolvers<number>();
     expect(
-      await execute("tools.wait(); return 3;", {
-        wait: async () => ToolResult.success(await late.promise),
-      }),
+      await execute(
+        "tools.wait(); return 3;",
+        { wait: async () => ToolResult.success(await late.promise) },
+        { timeoutMs: 100 },
+      ),
     ).toEqual({
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
     late.resolve(3);
     await Bun.sleep(0);
@@ -576,12 +570,14 @@ describe("guest tool bridge", () => {
     for (const fail of [false, true]) {
       const late = Promise.withResolvers<number>();
       expect(
-        await execute("return await tools.wait();", {
-          wait: async () => ToolResult.success(await late.promise),
-        }),
+        await execute(
+          "return await tools.wait();",
+          { wait: async () => ToolResult.success(await late.promise) },
+          { timeoutMs: 100 },
+        ),
       ).toEqual({
         ok: false,
-        error: { kind: "timeout", message: "Execution exceeded the 1-second limit." },
+        error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
       });
       if (fail) late.reject(new Error("Late private failure"));
       else late.resolve(3);

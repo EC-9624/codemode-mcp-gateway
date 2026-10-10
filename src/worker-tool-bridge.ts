@@ -1,5 +1,6 @@
 import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
+import { listen } from "./listener";
 import { type SerializedToolResult } from "./tool";
 import { installGuestToolBridge } from "./guest-tool-bridge";
 import { ToolReply, type WorkerToMainMessage } from "./worker-protocol";
@@ -15,14 +16,11 @@ export function connectGuestToolsToMainThread(
   const pendingReplies = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
   let nextCallId = 1;
 
+  // The guest bridge stops invoking once it records a failure, so no failure check is needed here.
   const bridge = installGuestToolBridge(
     context,
     toolNames,
     (name, argsJson) => {
-      const failure = bridge.failure;
-
-      if (!failure.ok) return Promise.reject(failure.error);
-
       if (!Number.isSafeInteger(nextCallId)) throw new Error("Sandbox tool call IDs exhausted.");
 
       const callId = nextCallId++;
@@ -37,7 +35,12 @@ export function connectGuestToolsToMainThread(
     scope,
   );
 
-  const onMessage = (data: unknown) => {
+  cleanup.defer(() => {
+    for (const pendingReply of pendingReplies.values())
+      pendingReply.reject(new Error("Sandbox tool transport closed."));
+    pendingReplies.clear();
+  });
+  listen(cleanup, port, "message", (data: unknown) => {
     if (!bridge.failure.ok) return;
     const decodedReply = ToolReply.decode(data);
     if (!decodedReply.ok) {
@@ -51,27 +54,12 @@ export function connectGuestToolsToMainThread(
     }
     pendingReplies.delete(decodedReply.value.callId);
     pendingReply.resolve(decodedReply.value.result);
-  };
-  const onMessageError = () =>
-    bridge.fail(new Error("Sandbox tool reply could not be deserialized."));
-  const onClose = () => bridge.fail(new Error("Sandbox tool transport closed before completion."));
-
-  cleanup.defer(() => {
-    for (const pendingReply of pendingReplies.values())
-      pendingReply.reject(new Error("Sandbox tool transport closed."));
-    pendingReplies.clear();
   });
-  cleanup.defer(() => {
-    port.off("message", onMessage);
-  });
-  port.on("message", onMessage);
-  cleanup.defer(() => {
-    port.off("messageerror", onMessageError);
-  });
-  port.on("messageerror", onMessageError);
-  cleanup.defer(() => {
-    port.off("close", onClose);
-  });
-  port.on("close", onClose);
+  listen(cleanup, port, "messageerror", () =>
+    bridge.fail(new Error("Sandbox tool reply could not be deserialized.")),
+  );
+  listen(cleanup, port, "close", () =>
+    bridge.fail(new Error("Sandbox tool transport closed before completion.")),
+  );
   return bridge;
 }

@@ -1,20 +1,39 @@
 import { Worker } from "node:worker_threads";
+import { listen } from "./listener";
 import { type SandboxResult } from "./sandbox-result";
 import { callTool, serializeToolResult, type SandboxTool } from "./tool";
-import { type ToolReply, type WorkerStartupData, WorkerToMainMessage } from "./worker-protocol";
+import {
+  isTimeoutMs,
+  MAX_TIMEOUT_MS,
+  type ToolReply,
+  type WorkerStartupData,
+  WorkerToMainMessage,
+} from "./worker-protocol";
 
 type WorkerCompletion = { ok: true; result: SandboxResult } | { ok: false; error: unknown };
 
-export async function runSandbox(
+export type ExecuteOptions = {
+  /** Guest deadline in milliseconds, measured after the worker creates the VM. Defaults to 1000. */
+  timeoutMs?: number;
+};
+
+/** Execute a JavaScript async function body in a fresh worker with host-owned tools. */
+export async function execute(
   code: string,
   tools: Readonly<Record<string, SandboxTool>> = {},
+  options: ExecuteOptions = {},
 ): Promise<SandboxResult> {
+  const timeoutMs = options.timeoutMs ?? 1000;
+  if (!isTimeoutMs(timeoutMs)) {
+    throw new RangeError(`timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}.`);
+  }
   const registry = new Map(Object.entries(tools));
   const worker = new Worker(new URL("./worker-entry.ts", import.meta.url), {
     workerData: {
       type: "execute",
       code,
       toolNames: [...registry.keys()],
+      timeoutMs,
     } satisfies WorkerStartupData,
   });
   return await superviseWorker(worker, registry);
@@ -58,16 +77,13 @@ export async function superviseWorker(
       lastCallId = call.callId;
       const dispatch = async () => {
         // Domain validation belongs to the callback; the protocol only checks JSON syntax.
-        const args: unknown = call.argsJson === undefined ? undefined : JSON.parse(call.argsJson);
-        const result = await callTool(tool, args);
+        const result = await callTool(tool, call.args);
         // Converting a late result would run getters/toJSON after execution has ended.
-        if (!active) return;
-        const serialized = serializeToolResult(result);
         if (!active) return;
         worker.postMessage({
           type: "tool-result",
           callId: call.callId,
-          result: serialized,
+          result: serializeToolResult(result),
         } satisfies ToolReply);
       };
       // Catching dispatch as a tool failure would let guests recover from broken transport.
@@ -83,14 +99,9 @@ export async function superviseWorker(
   const onError = () => {
     fail(new Error("Sandbox worker failed. Internal error details are not transferred."));
   };
-  const onMessageError = () => {
-    fail(new Error("Sandbox worker response could not be deserialized."));
-  };
-  const onExit = () => {
-    fail(new Error("Sandbox worker closed before completion."));
-  };
 
   // Keep an error listener until termination settles: EventEmitter throws unhandled errors.
+  // It is registered before termination is deferred, so its removal runs last.
   cleanup.defer(() => {
     worker.off("error", onError);
   });
@@ -101,19 +112,13 @@ export async function superviseWorker(
     active = false;
   });
   worker.on("error", onError);
-  // Register removal before adding, so partial listener setup also unwinds.
-  cleanup.defer(() => {
-    worker.off("message", onMessage);
+  listen(cleanup, worker, "message", onMessage);
+  listen(cleanup, worker, "messageerror", () => {
+    fail(new Error("Sandbox worker response could not be deserialized."));
   });
-  worker.on("message", onMessage);
-  cleanup.defer(() => {
-    worker.off("messageerror", onMessageError);
+  listen(cleanup, worker, "exit", () => {
+    fail(new Error("Sandbox worker closed before completion."));
   });
-  worker.on("messageerror", onMessageError);
-  cleanup.defer(() => {
-    worker.off("exit", onExit);
-  });
-  worker.on("exit", onExit);
   // Await inside the cleanup scope; returning the promise would terminate early.
   const outcome = await completion.promise;
   if (!outcome.ok) throw outcome.error;
