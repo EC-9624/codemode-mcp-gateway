@@ -22,20 +22,25 @@ export function installGuestToolBridge(
   const pendingCalls = new Set<Promise<void>>();
   const failureSignal = Promise.withResolvers<void>();
   let failure: ToolBridge["failure"] = { ok: true };
+
   const fail = (error: unknown) => {
     if (!failure.ok) return;
     failure = { ok: false, error };
     failureSignal.resolve();
   };
+
   using toolObject = context.newObject(context.null);
 
   for (const name of toolNames) {
     using callback = context.newFunction(name, (args = context.undefined) => {
       if (!failure.ok) return context.undefined;
+
       let json: string | undefined;
       let deferred: QuickJSDeferredPromise;
+
       try {
         const noArgs = context.typeof(args) === "undefined";
+
         if (!noArgs && context.typeof(args) !== "string") {
           return { error: context.newError("Tool arguments must be JSON text or undefined.") };
         }

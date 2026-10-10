@@ -17,6 +17,7 @@ export type WorkerStartupData = {
   code: string;
   toolNames: string[];
   timeoutMs: number;
+  interruptBuffer?: SharedArrayBuffer;
 };
 
 export const WorkerStartupData = {
@@ -26,7 +27,10 @@ export const WorkerStartupData = {
       value.type === "execute" &&
       typeof value.code === "string" &&
       isToolNames(value.toolNames) &&
-      isTimeoutMs(value.timeoutMs)
+      isTimeoutMs(value.timeoutMs) &&
+      (value.interruptBuffer === undefined ||
+        (value.interruptBuffer instanceof SharedArrayBuffer &&
+          value.interruptBuffer.byteLength === Int32Array.BYTES_PER_ELEMENT))
     ) {
       return {
         ok: true,
@@ -35,6 +39,9 @@ export const WorkerStartupData = {
           code: value.code,
           toolNames: value.toolNames,
           timeoutMs: value.timeoutMs,
+          ...(value.interruptBuffer === undefined
+            ? {}
+            : { interruptBuffer: value.interruptBuffer }),
         },
       };
     }

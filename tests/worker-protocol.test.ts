@@ -35,6 +35,27 @@ describe("worker startup data", () => {
     }
     expect(WorkerStartupData.decode({ ...request, timeoutMs: 2 ** 31 - 1 }).ok).toBe(true);
   });
+
+  test("accepts an optional shared interrupt flag without copying its memory", () => {
+    const interruptBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const decoded = WorkerStartupData.decode({ ...request, interruptBuffer });
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.value.interruptBuffer).toBe(interruptBuffer);
+  });
+
+  test("rejects interrupt flags that are not one shared 32-bit word", () => {
+    for (const interruptBuffer of [
+      null,
+      42,
+      new ArrayBuffer(4),
+      new SharedArrayBuffer(0),
+      new SharedArrayBuffer(8),
+      new Int32Array(new SharedArrayBuffer(4)),
+    ]) {
+      expect(WorkerStartupData.decode({ ...request, interruptBuffer }).ok).toBe(false);
+    }
+  });
 });
 
 describe("worker messages", () => {

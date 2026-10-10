@@ -36,6 +36,9 @@ await execute("return await tools.answer();", {
 
 await execute("while (true) {}", {}, { timeoutMs: 100 });
 // { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." } }
+
+await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 });
+// { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." } }
 ```
 
 Input is the body of an async function, not an expression or a module. Each call
@@ -50,8 +53,14 @@ rather than throwing validation errors. Guests receive ordinary values or
 catchable promise rejections. Failure-shaped data wrapped in `success` remains
 ordinary data.
 
-`timeoutMs` defaults to 1000 and must be an integer from 1 to 2147483647; other
-values reject with a `RangeError` before a worker starts.
+`timeoutMs` defaults to 1000. Optional `totalTimeoutMs` adds a parent deadline
+covering startup through acceptance of completion. Both budgets must be integers
+from 1 to 2147483647; invalid budgets reject with a `RangeError` before a worker
+starts. Either deadline can win; neither must be larger than the other. Omitting
+`totalTimeoutMs` retains the guest-only deadline.
+
+The total budget is not a hard response-latency cap: synchronous main-thread work
+can delay enforcement, and worker termination is awaited after an outcome is chosen.
 
 ### Catalog and discovery
 
@@ -115,7 +124,7 @@ in a flat `src/` directory.
 ```text
 Main app
   sandbox.ts: public exports
-  worker-execution.ts: execute(...) and the worker supervisor
+  worker-execution.ts: execute(...), parent deadline, and the worker supervisor
   tool.ts: callback invocation and result serialization
   tool-catalog.ts: metadata and discovery
        |
@@ -158,15 +167,15 @@ timers and I/O between batches.
 
 | Owner                        | Resources                                                            |
 | ---------------------------- | -------------------------------------------------------------------- |
-| Main-thread supervisor       | Worker lifecycle, listeners, and callback dispatch                   |
+| Main-thread supervisor       | Worker lifecycle, listeners, parent timer/interrupt flag, dispatch   |
 | Worker entry's cleanup stack | Transport listeners and pending remote replies                       |
 | Engine                       | QuickJS context and runtime, deadline, and bridge scope              |
 | Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope |
 | Main app's catalog           | Callback bindings and metadata; no VM or worker resources            |
 
-- `using` disposes each resource in reverse declaration order on every exit path.
+- On normal scope exit or unwinding, `using` disposes resources in reverse declaration order.
   QuickJS handles point into WASM memory; host garbage collection does not
-  release them.
+  release them. Forced worker termination may skip this worker-side cleanup.
 - `createVm` transfers the context, which owns its runtime, only after setup
   succeeds. A factory-local `using` would dispose it before the caller could use it.
 - Promise resolvers outlive the callback that creates them, so the bridge `Scope`
@@ -240,6 +249,37 @@ executable methods are never shared between host and guest.
   and tool installation. A worker timer wakes idle execution; the QuickJS interrupt
   handler stops running guest computation.
 
+### Parent-supervised deadline
+
+`totalTimeoutMs` records a separate monotonic deadline before registry snapshotting
+and worker construction. The parent owns its timer and a one-word shared interrupt
+flag. The flag is supplied only to trusted worker code; it is never exposed to the guest.
+
+```text
+validate budgets -> record parent deadline -> construct worker -> supervise
+  -> on messages and callback settlements: check the clock before continuing
+  -> on expiry: select total-timeout result, close dispatch, set shared flag
+  -> clear parent timer, remove normal listeners, request worker termination
+  -> await termination, remove error listener, return timeout (or reject cleanup failure)
+```
+
+- Checking the clock during message handling prevents a queued completion or call
+  from winning just because the timer callback has not run yet. Decoding and host
+  result conversion are checked afterward too, because synchronous work can overrun.
+- An outcome accepted before expiry remains final even if termination finishes
+  after the deadline. Late replies and worker events cannot replace it.
+- The QuickJS interrupt handler reads the flag with `Atomics.load`, so it can
+  observe parent interruption during synchronous guest computation without waiting
+  for a port message. An idle worker is shut down through termination.
+- Bun exposes `worker.terminate()`, not a public shared interrupt flag; the shared
+  flag here belongs to this application. In the pinned Bun version, termination
+  requests a native VM stop and its promise is tied to the worker's `close` event.
+  Neither a hard shutdown latency nor execution of worker-side cleanup is promised.
+- Tests independently exercise shared-flag interruption, busy worker startup,
+  guest computation, stalled startup, host waits, late events, and termination
+  failures. Potentially stuck workers run in a subprocess with an outer test timeout;
+  that subprocess must also exit after recovery and a successful execution.
+
 ### Guest boundary
 
 Trusted setup and submitted code are compiled separately inside QuickJS:
@@ -268,7 +308,8 @@ generators, and the guest-global `this` binding remain supported.
 
 - Startup data and both message directions have typed decoders that accept
   `unknown` and return explicit success/failure unions. Structured cloning carries
-  only envelopes and JSON text; no VM handles or functions cross threads.
+  envelopes, JSON text/derived result data, and the optional shared interrupt buffer;
+  no VM handles or functions cross threads. The buffer must contain one 32-bit word.
 - JSON text is validated before dispatch or guest settlement. The main thread
   parses tool arguments once while decoding.
 - Per-execution call IDs increase in dispatch order. The main thread rejects
@@ -285,13 +326,14 @@ generators, and the guest-global `this` binding remain supported.
 - Limits cover the guest heap (64 MiB), stack (1 MiB), and deadline, not total
   host/WASM memory or model-facing output size.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
-- Worker startup is not covered by the deadline. There is no parent watchdog, caller
-  `AbortSignal`, or hard response-latency guarantee; a stuck worker that neither
-  reports nor exits can leave execution pending. Bun's termination promise marks
-  the worker's `close` event, not proof that the thread has fully exited.
+- Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
+  a stuck worker that neither reports nor exits can leave execution pending.
+  There is no caller `AbortSignal` or hard response-latency guarantee; shutdown
+  still depends on Bun's termination behavior.
 - Synchronous host callbacks and result conversion run on the main thread and cannot
-  be interrupted. Source parsing is checked against the deadline after it returns.
-- Timeout or failure stops waiting and closes the VM, not the host operation.
+  be interrupted. The guest deadline checks source parsing after it returns;
+  the parent can request worker termination meanwhile.
+- Timeout or failure ends sandbox execution, not the host operation.
   Started operations may still finish or have side effects; there is no rollback,
   automatic retry, cancellation signal, or exactly-once guarantee.
 - No imports, TypeScript, persistent state, or MCP integration yet.
@@ -326,10 +368,13 @@ VM handles and original exceptions observable for ownership and fault tests.
 3. Private guest prelude and wrapper validation.
 4. Worker-backed execution.
 5. Worker-backed host tools, host-owned catalog, and discovery.
+6. Configurable guest deadlines and opt-in parent-supervised deadlines/interruption.
 
 Next:
 
-1. Parent-supervised deadlines, caller cancellation, and worker cleanup supervision.
-2. Schema-backed argument validation and one MCP upstream to the host catalog.
+1. Caller/tool cancellation, then retained call outcomes with unresolved calls marked uncertain.
+2. Configurable memory and bounds on source, calls, concurrency, payloads, and output.
+3. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
+4. Soak/fault testing, latency/memory measurements, and reference comparisons.
 
 Do not add a gateway framework before the sandbox behavior is understood.

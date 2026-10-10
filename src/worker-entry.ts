@@ -16,9 +16,16 @@ async function run(startup: WorkerStartupData, port: MessagePort): Promise<Worke
   // Only the failure category crosses this boundary; arbitrary causes stay worker-local.
   // Posting the response stays outside the catch, so transport failures are not retried.
   try {
+    // `using` disposes this stack on scope exit; cleanup runs in reverse order.
+    // Forced worker termination may skip cleanup.
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/using
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DisposableStack
     using cleanup = new DisposableStack();
-    const result = await executeEngine(startup.code, startup.timeoutMs, (vm, scope) =>
-      connectGuestToolsToMainThread(vm, startup.toolNames, port, scope, cleanup),
+    const result = await executeEngine(
+      startup.code,
+      startup.timeoutMs,
+      (vm, scope) => connectGuestToolsToMainThread(vm, startup.toolNames, port, scope, cleanup),
+      startup.interruptBuffer === undefined ? undefined : new Int32Array(startup.interruptBuffer),
     );
     return { type: "completed", result };
   } catch {

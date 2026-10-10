@@ -11,11 +11,12 @@ export async function executeEngine(
   code: string,
   timeoutMs: number,
   installBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
+  interrupt?: Int32Array<SharedArrayBuffer>,
 ): Promise<SandboxResult> {
   using vm = await createVm();
   using bridgeScope = new Scope();
   const bridge = installBridge(vm, bridgeScope);
-  const result = await executeScript(vm, code, timeoutMs, bridge);
+  const result = await executeScript(vm, code, timeoutMs, bridge, interrupt);
   // Error conversion can run guest getters after the job loop's last failure check.
   const failure = bridge.failure;
   if (!failure.ok) throw failure.error;
@@ -27,13 +28,23 @@ async function executeScript(
   code: string,
   timeoutMs: number,
   bridge: ToolBridge,
+  interrupt: Int32Array<SharedArrayBuffer> | undefined,
 ): Promise<SandboxResult> {
   const runtime = vm.runtime;
   using deadline = createDeadline(timeoutMs);
+  // QuickJS polls this shared flag via Atomics even while worker message handling is blocked.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics
+  const interrupted = () => interrupt !== undefined && Atomics.load(interrupt, 0) !== 0;
   // Infrastructure failures throw; an expired deadline stops execution with a timeout result.
   const checkpoint = (): SandboxResult | undefined => {
     const failure = bridge.failure;
     if (!failure.ok) throw failure.error;
+    if (interrupted()) {
+      return {
+        ok: false,
+        error: { kind: "timeout", message: "Execution interrupted by the parent." },
+      };
+    }
     if (!deadline.passed()) return undefined;
     return {
       ok: false,
@@ -41,7 +52,7 @@ async function executeScript(
     };
   };
 
-  runtime.setInterruptHandler(() => !bridge.failure.ok || deadline.passed());
+  runtime.setInterruptHandler(() => !bridge.failure.ok || interrupted() || deadline.passed());
 
   const submission = prepareScript(code);
   const parsed = checkpoint();

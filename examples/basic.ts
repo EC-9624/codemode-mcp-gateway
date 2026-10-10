@@ -22,6 +22,7 @@ console.log(
 );
 
 console.log(await execute("while (true) {}", {}, { timeoutMs: 100 }));
+console.log(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 }));
 
 const catalog = ToolCatalog.create({
   answer: {

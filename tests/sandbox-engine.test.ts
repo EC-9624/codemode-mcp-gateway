@@ -5,6 +5,35 @@ import { executeEngine } from "../src/sandbox-engine";
 import { expectDisposedExecution, type ExecutionResources } from "./disposal";
 import { installLocalTools } from "./local-tools";
 
+test("shared interruption disposes the VM, runtime, and bridge scope", async () => {
+  const resources: ExecutionResources[] = [];
+  const interrupt = new Int32Array(new SharedArrayBuffer(4));
+  expect(
+    await executeEngine(
+      "tools.read(); while (true) {}",
+      1000,
+      (vm, scope) => {
+        resources.push({ vm, scope });
+        return installLocalTools(
+          vm,
+          {
+            read: () => {
+              Atomics.store(interrupt, 0, 1);
+              return ToolResult.success(42);
+            },
+          },
+          scope,
+        );
+      },
+      interrupt,
+    ),
+  ).toEqual({
+    ok: false,
+    error: { kind: "timeout", message: "Execution interrupted by the parent." },
+  });
+  expectDisposedExecution(resources);
+});
+
 for (const scenario of [
   {
     name: "successful execution",

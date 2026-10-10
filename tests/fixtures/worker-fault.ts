@@ -32,6 +32,18 @@ switch (request.value.code) {
   case "idle":
     setInterval(() => {}, 1000);
     break;
+  case "startup-stall":
+    setInterval(() => {}, 1000);
+    await new Promise<void>(() => {});
+    break;
+  case "startup-loop":
+    parentPort.postMessage({
+      type: "tool-call",
+      callId: 1,
+      name: "read",
+      argsJson: undefined,
+    } satisfies WorkerToMainMessage);
+    while (true) {}
   case "call-and-crash":
     parentPort.postMessage({
       type: "tool-call",
