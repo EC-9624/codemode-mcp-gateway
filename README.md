@@ -148,10 +148,56 @@ is a boundary fix, not worker isolation or blanket built-in lockdown.
 - `src/tool.ts`: host callback contracts, private-error handling, and JSON conversion.
 - `src/tool-catalog.ts`: host-owned tool descriptions, schemas, callback bindings,
   and discovery callbacks.
-- `src/tool-bridge.ts`: installs guest callbacks and settles guest promises through
+- `src/guest-tool-bridge.ts`: installs guest callbacks and settles guest promises through
   JSON text. The same-thread adapter lives in `tests/local-tools.ts` for engine-level
   ownership and fault tests.
-- `src/remote-tools.ts`: correlates worker tool calls and host replies.
+- `src/worker-tool-bridge.ts`: connects the guest bridge to main-thread messages,
+  correlates calls with replies, and registers transport cleanup.
+
+### Execution boundaries and ownership
+
+**Guest** means JavaScript inside QuickJS. **Worker** means the Bun thread embedding
+QuickJS. **Main app** means the main thread holding tool implementations and the
+catalog. The worker is QuickJS's immediate host, so "host" alone can be ambiguous.
+
+```text
+Main app
+  sandbox.ts -> worker-execution.ts
+  tool-catalog.ts: metadata and discovery
+  tool.ts: actual callback invocation and result serialization
+       |
+       | worker messages: call IDs, names, JSON payloads
+       v
+Worker thread (Bun)
+  worker-entry.ts: assemble the engine and tool connection
+  worker-tool-bridge.ts: connectGuestToolsToMainThread(...)
+       |
+  sandbox-engine.ts: own VM, compile source, pump jobs, enforce deadline
+  guest-tool-bridge.ts: installGuestToolBridge(...)
+       |
+       | VM boundary: QuickJS handles and deferred promises
+       v
+QuickJS guest
+  private prelude: JSON conversion and public tools.<name> wrappers
+  submitted code: await tools.someTool(args)
+```
+
+Calls travel upward in this diagram; replies travel back down. Both bridge modules
+run as Bun code in the worker, outside QuickJS. The worker bridge installs the
+guest bridge as well as wiring the message port; it is not a standalone transport client.
+
+| Owner                        | Resources                                                            |
+| ---------------------------- | -------------------------------------------------------------------- |
+| Main-thread coordinator      | Worker lifecycle and callback dispatch                               |
+| Worker entry's cleanup stack | Transport listeners and pending remote requests                      |
+| Engine                       | QuickJS context/runtime, deadline, and bridge scope                  |
+| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope |
+| Main app's catalog           | Callback bindings and metadata; no VM or worker resources            |
+
+`worker-protocol.ts` and `sandbox-result.ts` define shared data contracts. The
+entry point determines the thread where a module runs; directory placement does
+not. Engine-level tests use `tests/local-tools.ts` to exercise the same guest bridge
+on the test thread. Source files stay in a flat `src/` directory.
 
 The worker-local engine's flow is deliberately small:
 
@@ -348,7 +394,7 @@ never the public wrapper. No callback functions or QuickJS handles cross threads
 
 ```text
 main: execute(code, tools) -> coordinator -> workerData { code, toolNames }
-worker: executeEngine -> installRemoteTools -> QuickJS guest
+worker: executeEngine -> connectGuestToolsToMainThread -> installGuestToolBridge -> QuickJS guest
 
 guest: await tools.answer(args)
   -> private wrapper serializes arguments

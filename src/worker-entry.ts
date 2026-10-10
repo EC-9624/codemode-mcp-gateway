@@ -1,5 +1,5 @@
 import { parentPort, workerData, type MessagePort } from "node:worker_threads";
-import { installRemoteTools } from "./remote-tools";
+import { connectGuestToolsToMainThread } from "./worker-tool-bridge";
 import { executeEngine } from "./sandbox-engine";
 import { WorkerRequest, type WorkerResponse } from "./worker-protocol";
 
@@ -18,7 +18,7 @@ async function run(request: WorkerRequest, port: MessagePort): Promise<WorkerRes
   try {
     using cleanup = new DisposableStack();
     const result = await executeEngine(request.code, (vm, scope) =>
-      installRemoteTools(vm, request.toolNames, port, scope, cleanup),
+      connectGuestToolsToMainThread(vm, request.toolNames, port, scope, cleanup),
     );
     return { type: "completed", result };
   } catch {

@@ -1,11 +1,11 @@
 import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { type SerializedToolResult } from "./tool";
-import { installToolBridge } from "./tool-bridge";
+import { installGuestToolBridge } from "./guest-tool-bridge";
 import { ToolReply, type WorkerResponse } from "./worker-protocol";
 
 /** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
-export function installRemoteTools(
+export function connectGuestToolsToMainThread(
   context: QuickJSContext,
   names: readonly string[],
   port: MessagePort,
@@ -14,7 +14,7 @@ export function installRemoteTools(
 ) {
   const pending = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
   let nextId = 1;
-  const bridge = installToolBridge(
+  const bridge = installGuestToolBridge(
     context,
     names,
     (name, argsJson) => {

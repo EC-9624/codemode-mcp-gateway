@@ -1,7 +1,7 @@
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { executeEngine } from "../src/sandbox-engine";
 import { callTool, serializeToolResult, type SandboxTool } from "../src/tool";
-import { installToolBridge } from "../src/tool-bridge";
+import { installGuestToolBridge } from "../src/guest-tool-bridge";
 
 export function executeLocally(code: string, tools: Readonly<Record<string, SandboxTool>> = {}) {
   return executeEngine(code, (vm, scope) => installLocalTools(vm, tools, scope));
@@ -14,7 +14,7 @@ export function installLocalTools(
   scope: Scope,
 ) {
   const registry = new Map(Object.entries(tools));
-  return installToolBridge(
+  return installGuestToolBridge(
     vm,
     [...registry.keys()],
     async (name, json) => {

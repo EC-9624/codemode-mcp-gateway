@@ -21,7 +21,7 @@ const add: SandboxTool = async (args) => {
   return ToolResult.success(args.a + args.b);
 };
 
-describe("async tool bridge", () => {
+describe("guest tool bridge", () => {
   test("awaits a real asynchronous host operation", async () => {
     expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
       ok: true,

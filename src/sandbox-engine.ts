@@ -1,7 +1,7 @@
 import { parse } from "acorn";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { createVm } from "./runtime";
-import { type ToolBridge } from "./tool-bridge";
+import { type ToolBridge } from "./guest-tool-bridge";
 import { type SandboxResult } from "./sandbox-result";
 
 const TIMEOUT_MS = 1000;

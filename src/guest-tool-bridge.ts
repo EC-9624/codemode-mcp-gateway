@@ -10,8 +10,12 @@ export type ToolBridge = {
   fail(error: unknown): void;
 };
 
-/** Invocation rejects only for infrastructure failures, never ordinary tool failures. */
-export function installToolBridge(
+/**
+ * Tool failures arrive as result values so guests can catch them.
+ * Invocation rejections signal infrastructure failure and must end execution,
+ * rather than become catchable guest errors.
+ */
+export function installGuestToolBridge(
   context: QuickJSContext,
   names: readonly string[],
   invoke: (name: string, json: string | undefined) => Promise<SerializedToolResult>,

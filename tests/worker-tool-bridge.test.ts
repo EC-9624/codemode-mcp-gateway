@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { MessageChannel } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
-import { installRemoteTools } from "../src/remote-tools";
+import { connectGuestToolsToMainThread } from "../src/worker-tool-bridge";
 import { executeEngine } from "../src/sandbox-engine";
 import { executeLocally } from "./local-tools";
 import { rejectionOf } from "./rejection";
@@ -18,7 +18,7 @@ test("worker-side posting failures bypass guest catch and release transport list
   });
   const result = await rejectionOf(
     executeEngine('try { return await tools.read(); } catch { return "caught"; }', (vm, scope) =>
-      installRemoteTools(vm, ["read"], port1, scope, cleanup),
+      connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
     ),
   );
   expect(result.reason).toBe(failure);
@@ -43,7 +43,7 @@ for (const [name, event, message] of [
     port2.once("message", () => port1.emit(event, new Error("Injected transport failure")));
     const result = await rejectionOf(
       executeEngine('try { return await tools.read(); } catch { return "caught"; }', (vm, scope) =>
-        installRemoteTools(vm, ["read"], port1, scope, cleanup),
+        connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
       ),
     );
     expect(result.reason).toBeInstanceOf(Error);
@@ -69,7 +69,7 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
   const result = await rejectionOf(
     executeEngine("return 42;", (vm, scope) => {
       resources.push({ vm, scope });
-      return installRemoteTools(vm, ["read"], port1, scope, cleanup);
+      return connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup);
     }),
   );
   expect(result.reason).toBe(failure);
