@@ -1,13 +1,12 @@
 import { execute, ToolResult } from "../../src/sandbox";
-import { superviseWorker, type WorkerDeadline } from "../../src/worker-execution";
-import { faultWorker, toolWorker } from "../workers";
+import { superviseWorker, type WorkerControl } from "../../src/worker-execution";
+import { faultWorker, toolWorker } from "../support/workers";
 
 // Run potentially stuck workers in a child process so a broken interrupt cannot hang bun:test.
 const startupDeadline = {
-  timeoutMs: 100,
-  expiresAt: performance.now() + 100,
+  deadline: { timeoutMs: 100, expiresAt: performance.now() + 100 },
   interrupt: new Int32Array(new SharedArrayBuffer(4)),
-} satisfies WorkerDeadline;
+} satisfies WorkerControl;
 
 let startupCalled = false;
 console.log(

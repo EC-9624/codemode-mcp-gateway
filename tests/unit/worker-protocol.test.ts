@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ToolResult } from "../src/sandbox";
-import { ToolReply, WorkerStartupData, WorkerToMainMessage } from "../src/worker-protocol";
+import { ToolResult } from "../../src/tool";
+import { ToolReply, WorkerStartupData, WorkerToMainMessage } from "../../src/worker-protocol";
 
 const request = {
   type: "execute",
@@ -84,6 +84,11 @@ describe("worker messages", () => {
       { type: "completed", result: { ok: "true", value: 42 } },
       { type: "completed", result: { ok: false, error: null } },
       { type: "completed", result: { ok: false, error: { kind: "other", message: "failed" } } },
+      // Only the parent can classify caller cancellation.
+      {
+        type: "completed",
+        result: { ok: false, error: { kind: "cancelled", message: "cancelled" } },
+      },
       { type: "completed", result: { ok: false, error: { kind: "script", message: 42 } } },
     ]) {
       expect(WorkerToMainMessage.decode(value)).toEqual({

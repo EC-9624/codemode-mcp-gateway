@@ -1,4 +1,4 @@
-import { type SandboxResult } from "./sandbox-result";
+import { type GuestResult } from "./sandbox-result";
 import { type SerializedToolResult } from "./tool";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
@@ -53,7 +53,7 @@ export const WorkerStartupData = {
 /** Messages as the worker posts them. */
 export type WorkerToMainMessage =
   | { type: "tool-call"; callId: number; name: string; argsJson: string | undefined }
-  | { type: "completed"; result: SandboxResult }
+  | { type: "completed"; result: GuestResult }
   | { type: "failed"; reason: "request" | "execution" };
 
 /** Decoding parses tool arguments once, so dispatch receives data rather than JSON text. */
@@ -85,7 +85,7 @@ export const WorkerToMainMessage = {
       return { ok: true, value: { type: "failed", reason: value.reason } };
     }
 
-    if (value.type === "completed" && isSandboxResult(value.result)) {
+    if (value.type === "completed" && isGuestResult(value.result)) {
       return { ok: true, value: { type: "completed", result: value.result } };
     }
 
@@ -158,7 +158,7 @@ function isSerializedToolResult(value: unknown): value is SerializedToolResult {
   return value.ok === false && isRecord(value.error) && typeof value.error.message === "string";
 }
 
-function isSandboxResult(value: unknown): value is SandboxResult {
+function isGuestResult(value: unknown): value is GuestResult {
   if (!isRecord(value)) return false;
 
   // The engine already performs JSON conversion; the generic result remains unknown.

@@ -10,7 +10,10 @@ export const ToolResult = {
   },
 } as const;
 
-export type SandboxTool = (args: unknown) => ToolResult | Promise<ToolResult>;
+/** Host-only execution context. Cancellation is cooperative; it does not undo side effects. */
+export type ToolContext = { readonly signal: AbortSignal };
+
+export type SandboxTool = (args: unknown, context: ToolContext) => ToolResult | Promise<ToolResult>;
 
 /** Raw structured cloning would bypass toJSON and change the guest's JSON semantics. */
 export type SerializedToolResult =
@@ -36,9 +39,13 @@ export function serializeToolResult(result: ToolResult): SerializedToolResult {
   return { ok: true, json: serialized };
 }
 
-export async function callTool(tool: SandboxTool, args: unknown): Promise<ToolResult> {
+export async function callTool(
+  tool: SandboxTool,
+  args: unknown,
+  context: ToolContext,
+): Promise<ToolResult> {
   try {
-    return await tool(args);
+    return await tool(args, context);
   } catch {
     return ToolResult.failure("Host tool failed.");
   }

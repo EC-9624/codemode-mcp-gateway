@@ -6,7 +6,7 @@ import { installGuestToolBridge } from "./guest-tool-bridge";
 import { ToolReply, type WorkerToMainMessage } from "./worker-protocol";
 
 /** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
-export function connectGuestToolsToMainThread(
+export function installWorkerToolBridge(
   context: QuickJSContext,
   toolNames: readonly string[],
   port: MessagePort,

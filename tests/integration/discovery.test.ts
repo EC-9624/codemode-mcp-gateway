@@ -1,82 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../src/sandbox";
-import { createDiscoveryTools, ToolCatalog } from "../src/tool-catalog";
+import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/sandbox";
 
 describe("host tool catalog", () => {
-  test("describes tools without invoking or exposing their implementations", () => {
-    let calls = 0;
-
-    const definition = {
-      description: "List customer invoices",
-      inputSchema: { type: "object", properties: { customerId: { type: "string" } } },
-      privateDetails: "Private adapter configuration",
-      execute: () => {
-        calls += 1;
-
-        return ToolResult.success([]);
-      },
-    };
-
-    const catalog = ToolCatalog.create({ listInvoices: definition });
-
-    const expected = {
-      name: "listInvoices",
-      description: "List customer invoices",
-      inputSchema: definition.inputSchema,
-    };
-
-    expect(catalog.describe("listInvoices")).toEqual(expected);
-    expect(catalog.search("invoices")).toEqual([expected]);
-    expect(calls).toBe(0);
-  });
-
-  test("ranks case-insensitive name and description matches by distinct query terms", () => {
-    const catalog = ToolCatalog.create({
-      listInvoices: { description: "List invoices", execute: () => ToolResult.success() },
-      customerInvoices: {
-        description: "Read customer invoices",
-        execute: () => ToolResult.success(),
-      },
-      customerProfiles: {
-        description: "Read customer profiles",
-        execute: () => ToolResult.success(),
-      },
-      sendEmail: { description: "Send a message", execute: () => ToolResult.success() },
-    });
-
-    expect(catalog.search("  CUSTOMER invoices customer ").map((tool) => tool.name)).toEqual([
-      "customerInvoices",
-      "listInvoices",
-      "customerProfiles",
-    ]);
-    expect(catalog.search("sendEmail").map((tool) => tool.name)).toEqual(["sendEmail"]);
-    expect(catalog.search(" ")).toEqual([]);
-    expect(catalog.search("unmatched")).toEqual([]);
-  });
-
-  test("preserves absent and boolean schema metadata", () => {
-    const catalog = ToolCatalog.create({
-      withoutSchema: { description: "No schema", execute: () => ToolResult.success() },
-      unrestricted: {
-        description: "Any input",
-        inputSchema: true,
-        execute: () => ToolResult.success(),
-      },
-      impossible: {
-        description: "No input permitted",
-        inputSchema: false,
-        execute: () => ToolResult.success(),
-      },
-    });
-
-    expect(catalog.describe("withoutSchema")).toEqual({
-      name: "withoutSchema",
-      description: "No schema",
-    });
-    expect(catalog.describe("unrestricted")?.inputSchema).toBe(true);
-    expect(catalog.describe("impossible")?.inputSchema).toBe(false);
-  });
-
   test("snapshots callback bindings and descriptive fields at creation", async () => {
     const definition = {
       description: "Original description",
@@ -181,19 +106,8 @@ describe("catalog discovery through the sandbox", () => {
     expect(calls).toBe(1);
   });
 
-  test("reports invalid discovery requests as public tool failures", async () => {
+  test("reports missing tools and unmatched searches through discovery", async () => {
     const discovery = createDiscoveryTools(ToolCatalog.create({}));
-    for (const args of [undefined, null, "query", {}, { query: 42 }, { query: " " }]) {
-      expect(discovery.searchTools(args)).toEqual(
-        ToolResult.failure("searchTools expects a non-empty query string in { query }."),
-      );
-    }
-
-    for (const args of [undefined, null, "name", {}, { name: 42 }]) {
-      expect(discovery.describeTool(args)).toEqual(
-        ToolResult.failure("describeTool expects a tool name string in { name }."),
-      );
-    }
 
     expect(
       await execute(

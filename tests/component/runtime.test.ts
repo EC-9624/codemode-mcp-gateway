@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createVm } from "../src/runtime";
+import { createVm } from "../../src/runtime";
 
 describe("runtime setup", () => {
   test("creates a fresh context and runtime for each call", async () => {

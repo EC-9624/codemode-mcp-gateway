@@ -1,5 +1,5 @@
 import { parentPort, workerData, type MessagePort } from "node:worker_threads";
-import { connectGuestToolsToMainThread } from "./worker-tool-bridge";
+import { installWorkerToolBridge } from "./worker-tool-bridge";
 import { executeEngine } from "./sandbox-engine";
 import { WorkerStartupData, type WorkerToMainMessage } from "./worker-protocol";
 
@@ -26,7 +26,7 @@ async function run(startup: WorkerStartupData, port: MessagePort): Promise<Worke
     const result = await executeEngine(
       startup.code,
       startup.timeoutMs,
-      (vm, scope) => connectGuestToolsToMainThread(vm, startup.toolNames, port, scope, cleanup),
+      (vm, scope) => installWorkerToolBridge(vm, startup.toolNames, port, scope, cleanup),
       startup.interruptBuffer === undefined ? undefined : new Int32Array(startup.interruptBuffer),
     );
 

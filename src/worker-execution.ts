@@ -17,12 +17,14 @@ export type ExecuteOptions = {
   timeoutMs?: number;
   /** Optional parent budget from before worker construction through completion acceptance. Cleanup follows. */
   totalTimeoutMs?: number;
+  /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
+  signal?: AbortSignal;
 };
 
-/** @internal The parent owns this deadline and writes the worker's shared interrupt flag. */
-export type WorkerDeadline = {
-  timeoutMs: number;
-  expiresAt: number;
+/** @internal Parent-owned controls; only the interrupt buffer crosses into the worker. */
+export type WorkerControl = {
+  deadline?: { timeoutMs: number; expiresAt: number };
+  signal?: AbortSignal;
   interrupt: Int32Array<SharedArrayBuffer>;
 };
 
@@ -42,18 +44,22 @@ export async function execute(
     throw new RangeError(`totalTimeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}.`);
   }
 
-  const deadline: WorkerDeadline | undefined =
-    totalTimeoutMs === undefined
-      ? undefined
-      : {
-          timeoutMs: totalTimeoutMs,
-          expiresAt: performance.now() + totalTimeoutMs,
-          // Shared flag: 0 = continue, 1 = request interruption.
-          // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
-          interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
-        };
+  const signal = options.signal;
+  if (signal?.aborted) return cancelled();
+
+  const control: WorkerControl = {
+    ...(totalTimeoutMs === undefined
+      ? {}
+      : { deadline: { timeoutMs: totalTimeoutMs, expiresAt: performance.now() + totalTimeoutMs } }),
+    ...(signal === undefined ? {} : { signal }),
+    // Shared flag: 0 = continue, 1 = request interruption.
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
+    interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+  };
 
   const registry = new Map(Object.entries(tools));
+  // Registry getters can synchronously cancel before a worker has been constructed.
+  if (signal?.aborted) return cancelled();
 
   const worker = new Worker(new URL("./worker-entry.ts", import.meta.url), {
     workerData: {
@@ -61,18 +67,18 @@ export async function execute(
       code,
       toolNames: [...registry.keys()],
       timeoutMs,
-      ...(deadline === undefined ? {} : { interruptBuffer: deadline.interrupt.buffer }),
+      interruptBuffer: control.interrupt.buffer,
     } satisfies WorkerStartupData,
   });
 
-  return await superviseWorker(worker, registry, deadline);
+  return await superviseWorker(worker, registry, control);
 }
 
 /** @internal Takes ownership of a fresh, single-execution worker, including termination. */
 export async function superviseWorker(
   worker: Worker,
   tools: ReadonlyMap<string, SandboxTool> = new Map(),
-  deadline?: WorkerDeadline,
+  control?: WorkerControl,
 ): Promise<SandboxResult> {
   // `await using` disposes this stack on scope exit, awaiting cleanup in reverse order.
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using
@@ -81,35 +87,65 @@ export async function superviseWorker(
 
   // Setup can throw before the wait is reached; rejecting here could leave an unobserved promise.
   const completion = Promise.withResolvers<WorkerCompletion>();
-  let active = true;
+  // A separate controller keeps caller reasons private and also handles timeout/failure.
+  // https://developer.mozilla.org/en-US/docs/Web/API/AbortController
+  const toolController = new AbortController();
+  const context = { signal: toolController.signal };
+  const deadline = control?.deadline;
+  const signal = control?.signal;
+  let state: "active" | "succeeded" | "stopped" = "active";
   let lastCallId = 0;
 
+  const stop = () => {
+    if (state === "active") state = "stopped";
+
+    if (control !== undefined) Atomics.store(control.interrupt, 0, 1);
+
+    // Abort listeners run synchronously. Close dispatch first and never forward caller reasons.
+    if (state === "stopped")
+      toolController.abort(new DOMException("Sandbox execution ended.", "AbortError"));
+  };
+
+  const finish = (outcome: WorkerCompletion) => {
+    if (state !== "active") return;
+
+    state = outcome.ok && outcome.result.ok ? "succeeded" : "stopped";
+    completion.resolve(outcome);
+    stop();
+  };
+
   const isActive = () => {
-    if (!active) return false;
+    if (state !== "active") return false;
 
-    if (deadline === undefined || performance.now() < deadline.expiresAt) return true;
-
-    active = false;
-    Atomics.store(deadline.interrupt, 0, 1);
-    completion.resolve({
-      ok: true,
-      result: {
-        ok: false,
-        error: {
-          kind: "timeout",
-          message: `Execution exceeded the ${deadline.timeoutMs} ms total limit.`,
+    // An already elapsed total deadline wins when cancellation is first observed.
+    if (deadline !== undefined && performance.now() >= deadline.expiresAt) {
+      finish({
+        ok: true,
+        result: {
+          ok: false,
+          error: {
+            kind: "timeout",
+            message: `Execution exceeded the ${deadline.timeoutMs} ms total limit.`,
+          },
         },
-      },
-    });
+      });
 
-    return false;
+      return false;
+    }
+
+    if (signal?.aborted) {
+      finish({ ok: true, result: cancelled() });
+
+      return false;
+    }
+
+    return true;
   };
 
   const fail = (error: unknown) => {
     if (!isActive()) return;
 
-    active = false;
-    completion.resolve({ ok: false, error });
+    finish({ ok: false, error });
   };
 
   const onMessage = (data: unknown) => {
@@ -126,8 +162,7 @@ export async function superviseWorker(
     }
 
     if (response.value.type === "completed") {
-      active = false;
-      completion.resolve({ ok: true, result: response.value.result });
+      finish({ ok: true, result: response.value.result });
 
       return;
     }
@@ -148,7 +183,7 @@ export async function superviseWorker(
         if (!isActive()) return;
 
         // Domain validation belongs to the callback; the protocol only checks JSON syntax.
-        const result = await callTool(tool, call.args);
+        const result = await callTool(tool, call.args, context);
         // Converting a late result would run getters/toJSON after execution has ended.
         if (!isActive()) return;
 
@@ -189,10 +224,7 @@ export async function superviseWorker(
   cleanup.defer(async () => {
     await worker.terminate();
   });
-  cleanup.defer(() => {
-    active = false;
-    if (deadline !== undefined) Atomics.store(deadline.interrupt, 0, 1);
-  });
+  cleanup.defer(stop);
 
   worker.on("error", onError);
   listen(cleanup, worker, "message", onMessage);
@@ -202,6 +234,18 @@ export async function superviseWorker(
   listen(cleanup, worker, "exit", () => {
     fail(new Error("Sandbox worker closed before completion."));
   });
+
+  if (signal !== undefined) {
+    const onAbort = () => {
+      isActive();
+    };
+
+    cleanup.defer(() => signal.removeEventListener("abort", onAbort));
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  // Also covers cancellation during worker construction or listener registration.
+  isActive();
 
   if (deadline !== undefined) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -222,4 +266,8 @@ export async function superviseWorker(
   if (!outcome.ok) throw outcome.error;
 
   return outcome.result;
+}
+
+function cancelled(): SandboxResult {
+  return { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } };
 }

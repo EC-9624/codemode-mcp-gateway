@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../src/sandbox";
+import { execute, ToolResult } from "../../src/sandbox";
 
 describe("guest prelude boundary", () => {
   test("does not put raw callbacks or codec helpers in the user function's scope", async () => {

@@ -1,8 +1,5 @@
-import { describe, expect, spyOn, test } from "bun:test";
-import { Parser } from "acorn";
-import { execute } from "../src/sandbox";
-import { executeLocally } from "./local-tools";
-import { rejectionOf } from "./rejection";
+import { describe, expect, test } from "bun:test";
+import { execute } from "../../src/sandbox";
 
 describe("sandbox", () => {
   test("executes a JavaScript function body", async () => {
@@ -83,19 +80,6 @@ describe("sandbox", () => {
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 
-  test("propagates unexpected parser failures instead of reporting a script error", async () => {
-    const failure = new Error("Parser infrastructure failed");
-
-    using parser = spyOn(Parser, "parse").mockImplementation(() => {
-      throw failure;
-    });
-
-    expect((await rejectionOf(executeLocally("return 3;"))).reason).toBe(failure);
-    expect(parser).toHaveBeenCalledTimes(1);
-    parser.mockRestore();
-    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
-  });
-
   test("awaits asynchronous return values", async () => {
     expect(await execute("return Promise.resolve(3);")).toEqual({
       ok: true,
@@ -165,36 +149,5 @@ describe("sandbox", () => {
     }
 
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
-  });
-
-  test("applies a custom deadline to infinite computation and permits the next execution", async () => {
-    const started = performance.now();
-    expect(await execute("while (true) {} ", {}, { timeoutMs: 100 })).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-    });
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeGreaterThanOrEqual(100);
-    expect(elapsed).toBeLessThan(1000);
-    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
-  });
-
-  test("applies the default one-second deadline", async () => {
-    const started = performance.now();
-    expect(await execute("while (true) {} ")).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1000 ms limit." },
-    });
-    expect(performance.now() - started).toBeGreaterThanOrEqual(1000);
-  });
-
-  test("rejects invalid deadlines with a RangeError", async () => {
-    for (const timeoutMs of [0, -1, 1.5, NaN, Infinity, 2 ** 31]) {
-      const failure = (await rejectionOf(execute("return 3;", {}, { timeoutMs }))).reason;
-      expect(failure).toBeInstanceOf(RangeError);
-      if (failure instanceof RangeError) {
-        expect(failure.message).toBe("timeoutMs must be an integer from 1 to 2147483647.");
-      }
-    }
   });
 });

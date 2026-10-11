@@ -2,7 +2,7 @@ import { parse } from "acorn";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { createVm } from "./runtime";
 import { type ToolBridge } from "./guest-tool-bridge";
-import { type SandboxResult } from "./sandbox-result";
+import { type GuestResult } from "./sandbox-result";
 
 const JOBS_PER_TURN = 100;
 
@@ -10,12 +10,12 @@ const JOBS_PER_TURN = 100;
 export async function executeEngine(
   code: string,
   timeoutMs: number,
-  installBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
+  installToolBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
   interrupt?: Int32Array<SharedArrayBuffer>,
-): Promise<SandboxResult> {
+): Promise<GuestResult> {
   using vm = await createVm();
   using bridgeScope = new Scope();
-  const bridge = installBridge(vm, bridgeScope);
+  const bridge = installToolBridge(vm, bridgeScope);
 
   const result = await executeScript(vm, code, timeoutMs, bridge, interrupt);
 
@@ -32,7 +32,7 @@ async function executeScript(
   timeoutMs: number,
   bridge: ToolBridge,
   interrupt: Int32Array<SharedArrayBuffer> | undefined,
-): Promise<SandboxResult> {
+): Promise<GuestResult> {
   const runtime = vm.runtime;
   using deadline = createDeadline(timeoutMs);
 
@@ -41,7 +41,7 @@ async function executeScript(
   const interrupted = () => interrupt !== undefined && Atomics.load(interrupt, 0) !== 0;
 
   // Infrastructure failures throw; an expired deadline stops execution with a timeout result.
-  const checkpoint = (): SandboxResult | undefined => {
+  const checkpoint = (): GuestResult | undefined => {
     const failure = bridge.failure;
     if (!failure.ok) throw failure.error;
 
@@ -225,7 +225,7 @@ const PRELUDE_SOURCE = `((hostTools) => {
     };
   })`;
 
-function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): SandboxResult {
+function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): GuestResult {
   // dump consumes promise handles (including nested promise reasons). A thrown
   // promise is an opaque thrown value, not a result to unwrap. Keep the caller's
   // handle borrowed and release only owned promise-state handles here.

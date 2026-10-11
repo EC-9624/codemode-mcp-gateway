@@ -1,13 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { execute } from "../src/sandbox";
-import { executeLocally } from "./local-tools";
-import { superviseWorker } from "../src/worker-execution";
-import { rejectionOf } from "./rejection";
-import { faultWorker } from "./workers";
+import { execute } from "../../src/sandbox";
+import { executeLocally } from "../support/local-tools";
+import { superviseWorker } from "../../src/worker-execution";
+import { rejectionOf } from "../support/rejection";
+import { faultWorker } from "../support/workers";
 
-describe("worker execution", () => {
+describe("worker supervisor", () => {
   test("worker transport preserves engine results for values, promises, and errors", async () => {
     for (const code of [
       "return 1 + 2;",
@@ -40,73 +39,8 @@ describe("worker execution", () => {
     }
   });
 
-  test("retains the private prelude boundary", async () => {
-    expect(
-      await execute("return [typeof hostTools, typeof run, tools === globalThis.tools];"),
-    ).toEqual({ ok: true, value: ["undefined", "undefined", true] });
-    const escaped = await execute("}); globalThis.escaped = true; (async () => {");
-    expect(escaped.ok).toBe(false);
-    if (!escaped.ok) expect(escaped.error.kind).toBe("script");
-  });
-
-  test("creates fresh guest state for each execution", async () => {
-    expect(
-      await execute("globalThis.marker = 3; Array.prototype.marker = 3; return marker;"),
-    ).toEqual({ ok: true, value: 3 });
-    expect(await execute("return [typeof marker, typeof Array.prototype.marker];")).toEqual({
-      ok: true,
-      value: ["undefined", "undefined"],
-    });
-  });
-
-  test("routes results to the correct concurrent execution", async () => {
-    expect(await Promise.all([1, 2, 3, 4].map((value) => execute(`return ${value};`)))).toEqual(
-      [1, 2, 3, 4].map((value) => ({ ok: true, value })),
-    );
-  });
-
-  test("keeps main-thread timers running during guest computation, not just worker startup", async () => {
-    const ticks: number[] = [];
-    const timer = setInterval(() => ticks.push(Date.now()), 10);
-    try {
-      const result = await execute(`
-        const started = Date.now();
-        while (Date.now() - started < 400) {}
-        return { started, ended: Date.now() };
-      `);
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      const value = result.value;
-      if (
-        typeof value !== "object" ||
-        value === null ||
-        !("started" in value) ||
-        typeof value.started !== "number" ||
-        !("ended" in value) ||
-        typeof value.ended !== "number"
-      )
-        throw new Error("Expected numeric guest computation timestamps.");
-
-      const started = value.started;
-      const ended = value.ended;
-      expect(ticks.some((tick) => tick > started + 50 && tick < ended - 50)).toBe(true);
-    } finally {
-      clearInterval(timer);
-    }
-  });
-
-  test("interrupts infinite guest computation and recovers", async () => {
-    expect(await execute("while (true) {} ", {}, { timeoutMs: 100 })).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-    });
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
-  });
-
   test("rejects invalid requests at the actual worker boundary", async () => {
-    const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
+    const worker = new Worker(new URL("../../src/worker-entry.ts", import.meta.url), {
       workerData: { type: "execute", code: 42 },
     });
 
@@ -120,7 +54,7 @@ describe("worker execution", () => {
   });
 
   test("rejects startup failures without returning a script error", async () => {
-    const worker = new Worker(new URL("./fixtures/missing-worker.ts", import.meta.url));
+    const worker = new Worker(new URL("../fixtures/missing-worker.ts", import.meta.url));
     const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
@@ -174,7 +108,7 @@ describe("worker execution", () => {
   });
 
   test("keeps actual worker infrastructure exception details out of the response", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-parser-fault.ts", import.meta.url), {
+    const worker = new Worker(new URL("../fixtures/worker-parser-fault.ts", import.meta.url), {
       workerData: { type: "execute", code: "return 42;", toolNames: [], timeoutMs: 1000 },
     });
 
@@ -203,7 +137,7 @@ describe("worker execution", () => {
   });
 
   test("keeps synchronous VM allocation failures private across the worker boundary", async () => {
-    const worker = new Worker(new URL("./fixtures/worker-allocation-fault.ts", import.meta.url), {
+    const worker = new Worker(new URL("../fixtures/worker-allocation-fault.ts", import.meta.url), {
       workerData: {
         type: "execute",
         code: "try { await tools.read(); } catch (error) { return error.message; }",
@@ -347,45 +281,6 @@ describe("worker execution", () => {
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
-
-  test("allows a process to exit after successful and failed guest executions", async () => {
-    const child = Bun.spawn(
-      [process.execPath, fileURLToPath(new URL("./fixtures/worker-process.ts", import.meta.url))],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-
-    const timer = setTimeout(() => child.kill(), 10000);
-    try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
-      expect(
-        stdout
-          .trim()
-          .split("\n")
-          .map((line) => {
-            const value: unknown = JSON.parse(line);
-
-            return value;
-          }),
-      ).toEqual([
-        { ok: true, value: 42 },
-        { ok: false, error: { kind: "script", message: "guest failure" } },
-        { ok: true, value: 7 },
-      ]);
-    } finally {
-      clearTimeout(timer);
-      child.kill();
-    }
-  }, 15000);
 });
 
 function expectNoExecutionListeners(worker: Worker) {

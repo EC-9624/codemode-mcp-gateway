@@ -52,7 +52,9 @@ supplied tools are exposed, on a frozen, null-prototype `tools` object that is
 both the function parameter and `globalThis.tools`. `process`, `Bun`, `require`,
 and `fetch` are not exposed.
 
-Tool callbacks receive `unknown` arguments and must validate their domain inputs.
+Tool callbacks receive `unknown` arguments and a host-only `ToolContext` containing
+an execution-scoped `signal`. Existing callbacks can ignore the second argument.
+Callbacks must validate their domain inputs.
 They return `ToolResult.success(value)` or `ToolResult.failure(publicMessage)`
 rather than throwing validation errors. Guests receive ordinary values or
 catchable promise rejections. Failure-shaped data wrapped in `success` remains
@@ -66,6 +68,40 @@ starts. Either deadline can win; neither must be larger than the other. Omitting
 
 The total budget is not a hard response-latency cap: synchronous main-thread work
 can delay enforcement, and worker termination is awaited after an outcome is chosen.
+
+### Cancellation
+
+Pass a caller signal to cancel execution. Tools can pass their separate execution
+signal to cancellable APIs such as `fetch`:
+
+```ts
+const controller = new AbortController();
+const completion = execute(
+  "return await tools.read();",
+  {
+    read: async (_args, { signal }) => {
+      const response = await fetch("https://example.com/data", { signal });
+
+      return ToolResult.success(await response.text());
+    },
+  },
+  { signal: controller.signal },
+);
+
+controller.abort();
+await completion;
+// { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } }
+```
+
+All calls in one execution share a tool signal. Cancellation, timeout, script
+failure, and worker infrastructure failure request tool cancellation. Successful
+guest completion leaves that signal un-aborted. Tools that subscribe manually
+should remove their listeners when their work finishes.
+
+Cancellation is cooperative: a tool can ignore the signal and may still complete
+or have side effects. Execution waits for worker termination, not for cancelled
+tools to settle. A cancelled result does not establish whether dispatched tools
+completed, and does not mean retrying them is safe.
 
 ### Catalog and discovery
 
@@ -129,7 +165,7 @@ in a flat `src/` directory.
 ```text
 Main app
   sandbox.ts: public exports
-  worker-execution.ts: execute(...), parent deadline, and the worker supervisor
+  worker-execution.ts: execute(...), deadlines/cancellation, and the worker supervisor
   tool.ts: callback invocation and result serialization
   tool-catalog.ts: metadata and discovery
        |
@@ -158,7 +194,7 @@ A tool call travels up and its reply travels back down:
 ```text
 guest: tools.add(args) -> prelude serializes arguments to JSON text
 worker: allocate call ID, post tool-call { callId, name, argsJson }
-main: decode and parse arguments once, validate the call, invoke the callback,
+main: decode and parse arguments once, validate the call, invoke callback(args, { signal }),
       serialize the ToolResult, post tool-result { callId, result }
 worker: decode reply, match call ID, resolve or reject the guest promise
 worker: pump QuickJS jobs -> prelude decodes the result -> guest resumes
@@ -170,13 +206,13 @@ timers and I/O between batches.
 
 ### Ownership
 
-| Owner                        | Resources                                                            |
-| ---------------------------- | -------------------------------------------------------------------- |
-| Main-thread supervisor       | Worker lifecycle, listeners, parent timer/interrupt flag, dispatch   |
-| Worker entry's cleanup stack | Transport listeners and pending remote replies                       |
-| Engine                       | QuickJS context and runtime, deadline, and bridge scope              |
-| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope |
-| Main app's catalog           | Callback bindings and metadata; no VM or worker resources            |
+| Owner                        | Resources                                                             |
+| ---------------------------- | --------------------------------------------------------------------- |
+| Main-thread supervisor       | Worker, listeners, parent timer/interrupt flag, tool abort controller |
+| Worker entry's cleanup stack | Transport listeners and pending remote replies                        |
+| Engine                       | QuickJS context and runtime, deadline, and bridge scope               |
+| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope  |
+| Main app's catalog           | Callback bindings and metadata; no VM or worker resources             |
 
 - On normal scope exit or unwinding, `using` disposes resources in reverse declaration order.
   QuickJS handles point into WASM memory; host garbage collection does not
@@ -200,10 +236,10 @@ timers and I/O between batches.
 
 ### Results and failures
 
-- Script errors and timeouts resolve to `SandboxResult` with kind `script` or
-  `timeout`. Thrown strings become the message; other values without a string
-  `message` produce a generic message. Thrown promises are opaque values, not
-  awaited or unwrapped.
+- Script errors, timeouts, and caller cancellation resolve to `SandboxResult` with
+  kind `script`, `timeout`, or `cancelled`. Thrown strings become the message;
+  other values without a string `message` produce a generic message. Thrown
+  promises are opaque values, not awaited or unwrapped.
 - `ToolResult.failure(message)` is the only way a host message reaches the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
@@ -257,8 +293,9 @@ executable methods are never shared between host and guest.
 ### Parent-supervised deadline
 
 `totalTimeoutMs` records a separate monotonic deadline before registry snapshotting
-and worker construction. The parent owns its timer and a one-word shared interrupt
-flag. The flag is supplied only to trusted worker code; it is never exposed to the guest.
+and worker construction. Every execution has a parent-owned one-word shared interrupt
+flag; the total budget adds a parent timer. The flag is supplied only to trusted worker
+code; it is never exposed to the guest.
 
 ```text
 validate budgets -> record parent deadline -> construct worker -> supervise
@@ -284,6 +321,32 @@ validate budgets -> record parent deadline -> construct worker -> supervise
   guest computation, stalled startup, host waits, late events, and termination
   failures. Potentially stuck workers run in a subprocess with an outer test timeout;
   that subprocess must also exit after recovery and a successful execution.
+
+### Cancellation and cleanup ordering
+
+```text
+validate budgets -> if already aborted: return cancelled
+  -> snapshot registry -> recheck cancellation -> create worker and supervise
+  -> caller abort: check total deadline, choose timeout or cancelled outcome
+  -> close dispatch -> set shared interrupt flag -> abort host-tool signal
+  -> remove caller/worker listeners and timer -> terminate worker
+  -> await termination -> remove worker error listener -> return outcome
+```
+
+- Invalid budgets reject even when the caller signal is already aborted. A
+  pre-aborted execution skips registry access and worker creation.
+- The first accepted outcome wins. If the total deadline has already elapsed when
+  cancellation is observed, the result is `timeout`; otherwise it is `cancelled`.
+  Later cancellation cannot replace a completed result or infrastructure failure.
+- Tool abort listeners run synchronously, so the supervisor closes dispatch and
+  selects its outcome before notifying them. Reentrant calls and late results are
+  discarded. A guest cannot catch caller cancellation and keep the execution alive.
+- Caller reasons are never inspected, serialized, or passed to tools. Tools receive
+  a generic `AbortError`; the worker receives only the shared interrupt flag.
+- Cleanup removes the caller's abort listener on success, cancellation, and failure,
+  including partial registration. Termination failure still rejects the host promise.
+- A synchronous main-thread callback, conversion, or tool abort listener can delay
+  cancellation and cleanup. There is no hard cancellation-latency guarantee.
 
 ### Guest boundary
 
@@ -333,14 +396,15 @@ generators, and the guest-global `this` binding remain supported.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
 - Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
   a stuck worker that neither reports nor exits can leave execution pending.
-  There is no caller `AbortSignal` or hard response-latency guarantee; shutdown
-  still depends on Bun's termination behavior.
+  The caller can cancel with `AbortSignal`, but there is no hard response-latency
+  guarantee; shutdown still depends on Bun's termination behavior.
 - Synchronous host callbacks and result conversion run on the main thread and cannot
   be interrupted. The guest deadline checks source parsing after it returns;
   the parent can request worker termination meanwhile.
-- Timeout or failure ends sandbox execution, not the host operation.
-  Started operations may still finish or have side effects; there is no rollback,
-  automatic retry, cancellation signal, or exactly-once guarantee.
+- Timeout, failure, or cancellation ends sandbox execution and requests cooperative
+  tool cancellation. Started operations may still finish or have side effects;
+  there is no rollback, automatic retry, or exactly-once guarantee. Per-call outcomes
+  are not yet retained in the result.
 - No imports, TypeScript, persistent state, or MCP integration yet.
 - This is a learning project, not a production-hardened sandbox.
 
@@ -362,9 +426,22 @@ bun run lint
 bun run typecheck
 ```
 
-Behavior tests use the public `execute`. Engine-level tests use
-`tests/local-tools.ts` to run the real guest bridge on the test thread, which keeps
-VM handles and original exceptions observable for ownership and fault tests.
+Tests are grouped by the boundary they verify:
+
+- `tests/unit/`: protocol decoding, catalog logic, and rejection helpers.
+- `tests/component/`: real QuickJS/bridge ownership, worker supervision, and fault injection.
+- `tests/integration/`: public `execute` behavior, discovery, deadlines, cancellation,
+  and subprocess lifecycle.
+- `tests/support/`: shared mechanics; `tests/fixtures/`: executable worker/process scenarios.
+
+`executeEngine` accepts `installToolBridge`. Production supplies
+`installWorkerToolBridge`; engine tests use `installLocalToolBridge` from
+`tests/support/local-tools.ts`. Both use the real `installGuestToolBridge`.
+The local adapter keeps VM handles and original exceptions observable.
+
+See [Testing conventions](tests/README.md) for placement, readability, and async
+ordering rules. `bun run test` runs every layer; `bun test ./tests/component` runs
+one layer. Typechecking includes all test helpers and fixtures.
 
 ## Milestones
 
@@ -374,10 +451,11 @@ VM handles and original exceptions observable for ownership and fault tests.
 4. Worker-backed execution.
 5. Worker-backed host tools, host-owned catalog, and discovery.
 6. Configurable guest deadlines and opt-in parent-supervised deadlines/interruption.
+7. Caller cancellation and cooperative host-tool cancellation.
 
 Next:
 
-1. Caller/tool cancellation, then retained call outcomes with unresolved calls marked uncertain.
+1. Retained call outcomes with unresolved dispatched calls marked uncertain.
 2. Configurable memory and bounds on source, calls, concurrency, payloads, and output.
 3. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
 4. Soak/fault testing, latency/memory measurements, and reference comparisons.

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { rejects } from "node:assert/strict";
-import { rejectionOf } from "./rejection";
+import { rejectionOf } from "../support/rejection";
 
 test("rejectionOf preserves arbitrary rejection reasons and their identity", async () => {
   for (const reason of [

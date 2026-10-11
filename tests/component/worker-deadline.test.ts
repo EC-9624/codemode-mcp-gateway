@@ -1,58 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { fileURLToPath } from "node:url";
-import { execute, ToolResult, type SandboxResult } from "../src/sandbox";
-import { superviseWorker, type WorkerDeadline } from "../src/worker-execution";
-import { rejectionOf } from "./rejection";
-import { faultWorker, toolWorker } from "./workers";
+import { execute, ToolResult, type SandboxResult } from "../../src/sandbox";
+import { superviseWorker, type WorkerControl } from "../../src/worker-execution";
+import { rejectionOf } from "../support/rejection";
+import { faultWorker, toolWorker } from "../support/workers";
 
 describe("parent deadline", () => {
-  for (const [name, totalTimeoutMs] of [
-    ["zero", 0],
-    ["negative", -1],
-    ["fractional", 1.5],
-    ["NaN", NaN],
-    ["infinite", Infinity],
-    ["overflowing", 2 ** 31],
-  ] as const) {
-    test(`rejects a ${name} total budget before reading tools`, async () => {
-      let reads = 0;
-
-      const failure = (
-        await rejectionOf(
-          execute(
-            "return 42;",
-            {
-              get read() {
-                reads++;
-
-                return () => ToolResult.success();
-              },
-            },
-            { totalTimeoutMs },
-          ),
-        )
-      ).reason;
-
-      expect(failure).toBeInstanceOf(RangeError);
-      if (failure instanceof RangeError) {
-        expect(failure.message).toBe("totalTimeoutMs must be an integer from 1 to 2147483647.");
-      }
-
-      expect(reads).toBe(0);
-    });
-  }
-
-  test("accepts the minimum total budget", async () => {
-    expect(await execute("while (true) {}", {}, { totalTimeoutMs: 1 })).toEqual(timeout(1));
-  });
-
-  test("preserves a guest timeout that arrives before the parent deadline", async () => {
-    expect(await execute("while (true) {}", {}, { timeoutMs: 50, totalTimeoutMs: 2000 })).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 50 ms limit." },
-    });
-  });
-
   test("expires while worker startup is stalled and recovers", async () => {
     const deadline = parentDeadline(100);
     const worker = faultWorker("startup-stall");
@@ -71,7 +23,7 @@ describe("parent deadline", () => {
 
   test("counts time elapsed before supervisor setup", async () => {
     const deadline = parentDeadline(100);
-    deadline.expiresAt = performance.now() - 1;
+    deadline.deadline.expiresAt = performance.now() - 1;
     const worker = faultWorker("idle");
 
     expect(await superviseWorker(worker, new Map(), deadline)).toEqual(timeout(100));
@@ -217,7 +169,7 @@ describe("parent deadline", () => {
 
     worker.emit("message", { type: "completed", result: { ok: true, value: 42 } });
     await terminating.promise;
-    await Bun.sleep(Math.max(0, deadline.expiresAt - performance.now()) + 20);
+    await Bun.sleep(Math.max(0, deadline.deadline.expiresAt - performance.now()) + 20);
 
     expect(settled).toBe(false);
 
@@ -287,62 +239,13 @@ describe("parent deadline", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
   });
-
-  test("interrupts busy workers, keeps the host responsive, and lets the process exit", async () => {
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        fileURLToPath(new URL("./fixtures/worker-deadline-process.ts", import.meta.url)),
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-
-    const timer = setTimeout(() => child.kill(), 5000);
-    try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-
-      const results = stdout
-        .trim()
-        .split("\n")
-        .map((line) => {
-          const value: unknown = JSON.parse(line);
-
-          return value;
-        });
-
-      expect(results).toEqual([
-        { result: timeout(100), called: true },
-        {
-          result: timeout(500),
-          called: true,
-          responsive: true,
-        },
-        {
-          ok: false,
-          error: { kind: "timeout", message: "Execution interrupted by the parent." },
-        },
-        { ok: true, value: 42 },
-      ]);
-    } finally {
-      clearTimeout(timer);
-      child.kill();
-    }
-  }, 10000);
 });
 
-function parentDeadline(timeoutMs: number): WorkerDeadline {
+function parentDeadline(timeoutMs: number) {
   return {
-    timeoutMs,
-    expiresAt: performance.now() + timeoutMs,
+    deadline: { timeoutMs, expiresAt: performance.now() + timeoutMs },
     interrupt: new Int32Array(new SharedArrayBuffer(4)),
-  };
+  } satisfies WorkerControl;
 }
 
 function timeout(timeoutMs: number) {

@@ -1,5 +1,5 @@
 export { type SandboxResult } from "./sandbox-result";
-export { ToolResult, type SandboxTool } from "./tool";
+export { ToolResult, type SandboxTool, type ToolContext } from "./tool";
 export {
   createDiscoveryTools,
   ToolCatalog,

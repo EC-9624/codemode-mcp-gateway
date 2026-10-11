@@ -1,10 +1,10 @@
 import { expect, spyOn, test } from "bun:test";
 import { MessageChannel } from "node:worker_threads";
-import { connectGuestToolsToMainThread } from "../src/worker-tool-bridge";
-import { executeEngine } from "../src/sandbox-engine";
-import { expectDisposedExecution, type ExecutionResources } from "./disposal";
-import { executeLocally } from "./local-tools";
-import { rejectionOf } from "./rejection";
+import { installWorkerToolBridge } from "../../src/worker-tool-bridge";
+import { executeEngine } from "../../src/sandbox-engine";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
+import { executeLocally } from "../support/local-tools";
+import { rejectionOf } from "../support/rejection";
 
 test("worker-side posting failures bypass guest catch and release transport listeners", async () => {
   using channel = openChannel();
@@ -20,7 +20,7 @@ test("worker-side posting failures bypass guest catch and release transport list
     executeEngine(
       'try { return await tools.read(); } catch { return "caught"; }',
       1000,
-      (vm, scope) => connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
+      (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
     ),
   );
 
@@ -47,7 +47,7 @@ for (const [name, event, message] of [
       executeEngine(
         'try { return await tools.read(); } catch { return "caught"; }',
         1000,
-        (vm, scope) => connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
+        (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
       ),
     );
 
@@ -77,7 +77,7 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
     executeEngine("return 42;", 1000, (vm, scope) => {
       resources.push({ vm, scope });
 
-      return connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup);
+      return installWorkerToolBridge(vm, ["read"], port1, scope, cleanup);
     }),
   );
 

@@ -1,0 +1,187 @@
+import { describe, expect, test } from "bun:test";
+import { getEventListeners } from "node:events";
+import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/sandbox";
+import { rejectionOf } from "../support/rejection";
+
+const cancelled = {
+  ok: false,
+  error: { kind: "cancelled", message: "Execution cancelled." },
+} satisfies SandboxResult;
+
+describe("caller cancellation", () => {
+  test("pre-aborted execution skips registry access and keeps the reason private", async () => {
+    const controller = new AbortController();
+    controller.abort(() => "Private cancellation reason");
+    let reads = 0;
+
+    const result = await execute(
+      "return await tools.read();",
+      {
+        get read() {
+          reads++;
+
+          return () => ToolResult.success();
+        },
+      },
+      { signal: controller.signal },
+    );
+
+    expect(result).toEqual(cancelled);
+    expect(reads).toBe(0);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+
+  test("validates budgets even when the caller has already cancelled", async () => {
+    const signal = AbortSignal.abort();
+
+    const failure = (await rejectionOf(execute("return 42;", {}, { signal, timeoutMs: 0 }))).reason;
+
+    expect(failure).toBeInstanceOf(RangeError);
+  });
+
+  test("observes cancellation from a registry getter", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+
+    const result = await execute(
+      "return await tools.read();",
+      {
+        get read() {
+          controller.abort();
+
+          return () => ToolResult.success(++calls);
+        },
+      },
+      { signal: controller.signal },
+    );
+
+    expect(result).toEqual(cancelled);
+    expect(calls).toBe(0);
+  });
+});
+
+describe("host tool cancellation", () => {
+  test("shares the signal across concurrent calls and lets cooperative tools settle", async () => {
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const signals: AbortSignal[] = [];
+    let stopped = 0;
+
+    const completion = execute(
+      "return await Promise.all([tools.read(), tools.read()]);",
+      {
+        read: async (_args, { signal }) => {
+          signals.push(signal);
+          const aborted = Promise.withResolvers<void>();
+          const onAbort = () => aborted.resolve();
+          using cleanup = new DisposableStack();
+          cleanup.defer(() => signal.removeEventListener("abort", onAbort));
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signals.length === 2) started.resolve();
+
+          await aborted.promise;
+          stopped++;
+
+          return ToolResult.failure("Stopped");
+        },
+      },
+      { signal: controller.signal },
+    );
+
+    await started.promise;
+    controller.abort();
+
+    expect(await completion).toEqual(cancelled);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    expect(stopped).toBe(2);
+    for (const signal of signals) {
+      expect(signal.aborted).toBe(true);
+      expect(getEventListeners(signal, "abort")).toHaveLength(0);
+    }
+  });
+
+  for (const [name, code, options, kind] of [
+    ["guest timeout", "return await tools.read();", { timeoutMs: 100 }, "timeout"],
+    [
+      "total timeout",
+      "return await tools.read();",
+      { timeoutMs: 10000, totalTimeoutMs: 500 },
+      "timeout",
+    ],
+    ["script failure", "tools.read(); throw new Error('failed');", {}, "script"],
+  ] as const) {
+    test(`requests tool cancellation on ${name}`, async () => {
+      const contexts: ToolContext[] = [];
+      const late = Promise.withResolvers<ToolResult>();
+      using cleanup = new DisposableStack();
+      cleanup.defer(() => late.resolve(ToolResult.success()));
+
+      const result = await execute(
+        code,
+        {
+          read: (_args, context) => {
+            contexts.push(context);
+
+            return late.promise;
+          },
+        },
+        options,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe(kind);
+
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]?.signal.aborted).toBe(true);
+    });
+  }
+
+  test("isolates concurrent executions and leaves successful tool signals un-aborted", async () => {
+    const controller = new AbortController();
+    const survivor = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const contexts: ToolContext[] = [];
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+
+    const first = execute(
+      "return await tools.read();",
+      {
+        read: (_args, context) => {
+          contexts.push(context);
+          started.resolve();
+
+          return late.promise;
+        },
+      },
+      { signal: controller.signal },
+    );
+
+    await started.promise;
+
+    const second = await execute(
+      "return await tools.read();",
+      {
+        read: (_args, context) => {
+          contexts.push(context);
+          controller.abort();
+
+          return ToolResult.success(42);
+        },
+      },
+      { signal: survivor.signal },
+    );
+
+    survivor.abort();
+
+    expect(await first).toEqual(cancelled);
+    expect(second).toEqual({ ok: true, value: 42 });
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]?.signal.aborted).toBe(true);
+    expect(contexts[1]?.signal.aborted).toBe(false);
+    expect(contexts[0]?.signal).not.toBe(contexts[1]?.signal);
+    expect(getEventListeners(survivor.signal, "abort")).toHaveLength(0);
+  });
+});

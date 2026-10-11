@@ -1,9 +1,27 @@
 import { expect, spyOn, test } from "bun:test";
 import { type QuickJSDeferredPromise } from "quickjs-emscripten";
-import { ToolResult, type SandboxResult } from "../src/sandbox";
-import { executeEngine } from "../src/sandbox-engine";
-import { expectDisposedExecution, type ExecutionResources } from "./disposal";
-import { installLocalTools } from "./local-tools";
+import { Parser } from "acorn";
+import { execute, ToolResult, type SandboxResult } from "../../src/sandbox";
+import { executeEngine } from "../../src/sandbox-engine";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
+import { executeLocally, installLocalToolBridge } from "../support/local-tools";
+import { rejectionOf } from "../support/rejection";
+
+test("propagates unexpected parser failures instead of reporting a script error", async () => {
+  const failure = new Error("Parser infrastructure failed");
+
+  using parser = spyOn(Parser, "parse").mockImplementation(() => {
+    throw failure;
+  });
+
+  const result = await rejectionOf(executeLocally("return 3;"));
+
+  expect(result.reason).toBe(failure);
+  expect(parser).toHaveBeenCalledTimes(1);
+
+  parser.mockRestore();
+  expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+});
 
 test("shared interruption disposes the VM, runtime, and bridge scope", async () => {
   const resources: ExecutionResources[] = [];
@@ -16,7 +34,7 @@ test("shared interruption disposes the VM, runtime, and bridge scope", async () 
       (vm, scope) => {
         resources.push({ vm, scope });
 
-        return installLocalTools(
+        return installLocalToolBridge(
           vm,
           {
             read: () => {
@@ -76,7 +94,7 @@ for (const scenario of [
 
       cleanup.defer(() => created.mockRestore());
 
-      return installLocalTools(vm, { read: () => ToolResult.success(42) }, scope);
+      return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
     });
 
     expect(result).toEqual(scenario.expected);

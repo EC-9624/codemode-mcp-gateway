@@ -152,6 +152,13 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use `bun:test`.
 - Test actual implementation and observable semantics.
+- Organize tests by boundary: `tests/unit/` for isolated logic, `tests/component/`
+  for focused subsystem/ownership tests, and `tests/integration/` for public
+  execution and process lifecycle. See `tests/README.md` for placement and examples.
+- Keep one behavior per test, with visible setup, action, and assertions. Use named
+  table cases for data variations; separate scenarios with different event sequences.
+- Share mechanical setup in `tests/support/`; keep scenario inputs, ordering, and
+  expected outcomes visible in the test. Executable fixtures belong in `tests/fixtures/`.
 - Name recovery tests as recovery tests; claims about disposal require assertions
   on the actual owned resources.
 - Assert listener lifetime and required ordering, rather than exact registration
@@ -159,7 +166,7 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 - Use explicit start/release gates for ordering contracts; use real timers when
   timing is the behavior under test.
 - Give independent contracts separate tests and table variations descriptive names.
-- Use `rejectionOf` from `tests/rejection.ts` when inspecting rejection reasons;
+- Use `rejectionOf` from `tests/support/rejection.ts` when inspecting rejection reasons;
   it fails on fulfillment rather than treating resolved values as failures.
 - Do not duplicate implementation logic inside tests.
 - Prefer real QuickJS execution over mocks.

@@ -26,6 +26,31 @@ console.log(
 console.log(await execute("while (true) {}", {}, { timeoutMs: 100 }));
 console.log(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 }));
 
+const controller = new AbortController();
+const started = Promise.withResolvers<void>();
+
+const cancelled = execute(
+  "return await tools.wait();",
+  {
+    wait: async (_args, { signal }) => {
+      const stopped = Promise.withResolvers<void>();
+      const onAbort = () => stopped.resolve();
+      using cleanup = new DisposableStack();
+      cleanup.defer(() => signal.removeEventListener("abort", onAbort));
+      signal.addEventListener("abort", onAbort, { once: true });
+      started.resolve();
+      await stopped.promise;
+
+      return ToolResult.failure("Stopped");
+    },
+  },
+  { signal: controller.signal },
+);
+
+await started.promise;
+controller.abort();
+console.log(await cancelled);
+
 const catalog = ToolCatalog.create({
   answer: {
     description: "Return the answer to the example question",
