@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/sandbox";
 import { superviseWorker, type WorkerControl } from "../../src/worker-execution";
-import { rejectionOf } from "../support/rejection";
+import { executionErrorOf } from "../support/execution-error";
 import { faultWorker, toolWorker } from "../support/workers";
 
 const cancelled = {
@@ -21,10 +21,10 @@ describe("worker cancellation", () => {
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
     controller.abort();
     expect(Atomics.load(control.interrupt, 0)).toBe(1);
-    expect(await completion).toEqual(cancelled);
+    expect((await completion).result).toEqual(cancelled);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectCleanedUp(worker, controller.signal);
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
   });
 
   test("observes an already-aborted signal when taking worker ownership", async () => {
@@ -32,7 +32,7 @@ describe("worker cancellation", () => {
     const control = cancellationControl(signal);
     const worker = faultWorker("idle");
 
-    expect(await superviseWorker(worker, new Map(), control)).toEqual(cancelled);
+    expect((await superviseWorker(worker, new Map(), control)).result).toEqual(cancelled);
     expect(Atomics.load(control.interrupt, 0)).toBe(1);
     expectCleanedUp(worker, signal);
   });
@@ -85,7 +85,11 @@ describe("worker cancellation", () => {
       }
 
       expect(reason).not.toBe(privateReason);
-      expect(await completion).toEqual(cancelled);
+      const report = await completion;
+      expect(report).toEqual({
+        result: cancelled,
+        calls: [{ callId: 1, name: "read", status: "uncertain" }],
+      });
 
       if (outcome === "failure") late.reject(new Error("Private late tool failure"));
       else
@@ -102,6 +106,7 @@ describe("worker cancellation", () => {
       await Bun.sleep(0);
 
       expect(conversions).toBe(0);
+      expect(report.calls).toEqual([{ callId: 1, name: "read", status: "uncertain" }]);
       expect(post).not.toHaveBeenCalled();
       expectCleanedUp(worker, controller.signal);
     });
@@ -139,7 +144,7 @@ describe("worker cancellation", () => {
     worker.emit("message", call);
     controller.abort();
 
-    expect(await completion).toEqual(cancelled);
+    expect((await completion).result).toEqual(cancelled);
     expect(calls).toBe(1);
     expectCleanedUp(worker, controller.signal);
   });
@@ -149,25 +154,28 @@ describe("worker cancellation", () => {
     const worker = toolWorker("return await tools.read();");
     using post = spyOn(worker, "postMessage");
 
-    expect(
-      await superviseWorker(
-        worker,
-        new Map([
-          [
-            "read",
-            () =>
-              ToolResult.success({
-                toJSON() {
-                  controller.abort();
+    const report = await superviseWorker(
+      worker,
+      new Map([
+        [
+          "read",
+          () =>
+            ToolResult.success({
+              toJSON() {
+                controller.abort();
 
-                  return 42;
-                },
-              }),
-          ],
-        ]),
-        cancellationControl(controller.signal),
-      ),
-    ).toEqual(cancelled);
+                return 42;
+              },
+            }),
+        ],
+      ]),
+      cancellationControl(controller.signal),
+    );
+
+    expect(report).toEqual({
+      result: cancelled,
+      calls: [{ callId: 1, name: "read", status: "uncertain" }],
+    });
     expect(post).not.toHaveBeenCalled();
     expectCleanedUp(worker, controller.signal);
   });
@@ -186,7 +194,7 @@ describe("worker cancellation", () => {
     controller.abort();
     control.deadline.expiresAt = performance.now() - 1;
 
-    expect(await completion).toEqual(cancelled);
+    expect((await completion).result).toEqual(cancelled);
     expectCleanedUp(worker, controller.signal);
   });
 
@@ -204,7 +212,7 @@ describe("worker cancellation", () => {
     control.deadline.expiresAt = performance.now() - 1;
     controller.abort();
 
-    expect(await completion).toEqual({
+    expect((await completion).result).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 10000 ms total limit." },
     });
@@ -252,7 +260,7 @@ describe("worker cancellation", () => {
     worker.emit("error", new Error("Private late worker error"));
     release.resolve();
 
-    expect(await completion).toEqual({ ok: true, value: 42 });
+    expect((await completion).result).toEqual({ ok: true, value: 42 });
     expect(terminate).toHaveBeenCalledTimes(1);
     expectCleanedUp(worker, controller.signal);
   });
@@ -296,7 +304,7 @@ describe("worker cancellation", () => {
     worker.emit("error", new Error("Private late worker error"));
     release.resolve();
 
-    expect(await completion).toEqual(cancelled);
+    expect((await completion).result).toEqual(cancelled);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectCleanedUp(worker, controller.signal);
   });
@@ -315,7 +323,7 @@ describe("worker cancellation", () => {
 
     controller.abort();
 
-    expect((await rejectionOf(completion)).reason).toBe(failure);
+    expect((await executionErrorOf(completion)).cause).toBe(failure);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectCleanedUp(worker, controller.signal);
   });
@@ -337,7 +345,8 @@ describe("worker cancellation", () => {
     using terminate = spyOn(worker, "terminate");
 
     expect(
-      (await rejectionOf(superviseWorker(worker, new Map(), cancellationControl(signal)))).reason,
+      (await executionErrorOf(superviseWorker(worker, new Map(), cancellationControl(signal))))
+        .cause,
     ).toBe(failure);
     expect(add).toHaveBeenCalledTimes(1);
     expect(terminate).toHaveBeenCalledTimes(1);
@@ -357,7 +366,7 @@ describe("worker cancellation", () => {
       },
     );
 
-    expect(await superviseWorker(worker, new Map(), cancellationControl(signal))).toEqual(
+    expect((await superviseWorker(worker, new Map(), cancellationControl(signal))).result).toEqual(
       cancelled,
     );
     expect(add).toHaveBeenCalledTimes(1);
@@ -372,7 +381,7 @@ describe("worker cancellation", () => {
     worker.emit("error", new Error("Private worker error"));
     controller.abort();
 
-    const failure = (await rejectionOf(completion)).reason;
+    const failure = (await executionErrorOf(completion)).cause;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toBe(
@@ -407,7 +416,7 @@ describe("worker cancellation", () => {
     worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
     worker.emit("error", new Error("Private worker error"));
 
-    expect((await rejectionOf(completion)).reason).toBeInstanceOf(Error);
+    expect((await executionErrorOf(completion)).cause).toBeInstanceOf(Error);
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.signal.aborted).toBe(true);
   });

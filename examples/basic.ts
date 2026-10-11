@@ -30,8 +30,9 @@ const controller = new AbortController();
 const started = Promise.withResolvers<void>();
 
 const cancelled = execute(
-  "return await tools.wait();",
+  "await tools.createInvoice(); return await tools.wait();",
   {
+    createInvoice: () => ToolResult.success({ id: "invoice-1" }),
     wait: async (_args, { signal }) => {
       const stopped = Promise.withResolvers<void>();
       const onAbort = () => stopped.resolve();

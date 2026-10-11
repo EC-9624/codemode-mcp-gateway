@@ -216,6 +216,6 @@ describe("guest tool bridge", () => {
     expectDisposedExecution(resources);
 
     cleanup.dispose();
-    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
   });
 });

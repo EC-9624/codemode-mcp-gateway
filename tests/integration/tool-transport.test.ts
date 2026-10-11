@@ -10,10 +10,11 @@ describe("host tool transport", () => {
       privateCallback: () => {},
     } as const;
 
-    const result = await execute(
-      "try { await tools.read(); } catch (error) { return error.message; }",
-      { read: () => failure },
-    );
+    const result = (
+      await execute("try { await tools.read(); } catch (error) { return error.message; }", {
+        read: () => failure,
+      })
+    ).result;
 
     expect(result).toEqual({ ok: true, value: "Public failure" });
   });
@@ -21,16 +22,18 @@ describe("host tool transport", () => {
   test("keeps callbacks and JSON conversion on the main thread", async () => {
     let conversions = 0;
 
-    const result = await execute("return await tools.read();", {
-      read: () =>
-        ToolResult.success({
-          toJSON() {
-            conversions += 1;
+    const result = (
+      await execute("return await tools.read();", {
+        read: () =>
+          ToolResult.success({
+            toJSON() {
+              conversions += 1;
 
-            return { mainThread: isMainThread, omitted: undefined, values: [undefined, NaN] };
-          },
-        }),
-    });
+              return { mainThread: isMainThread, omitted: undefined, values: [undefined, NaN] };
+            },
+          }),
+      })
+    ).result;
 
     expect(result).toEqual({ ok: true, value: { mainThread: true, values: [null, null] } });
     expect(conversions).toBe(1);
@@ -40,18 +43,20 @@ describe("host tool transport", () => {
     const second = Promise.withResolvers<void>();
     const order: number[] = [];
 
-    const result = await execute("return await Promise.all([tools.read(1), tools.read(2)]);", {
-      read: async (args) => {
-        if (args === 1) await second.promise;
+    const result = (
+      await execute("return await Promise.all([tools.read(1), tools.read(2)]);", {
+        read: async (args) => {
+          if (args === 1) await second.promise;
 
-        if (typeof args !== "number") return ToolResult.failure("Expected a number");
+          if (typeof args !== "number") return ToolResult.failure("Expected a number");
 
-        order.push(args);
-        if (args === 2) second.resolve();
+          order.push(args);
+          if (args === 2) second.resolve();
 
-        return ToolResult.success(args);
-      },
-    });
+          return ToolResult.success(args);
+        },
+      })
+    ).result;
 
     expect(result).toEqual({ ok: true, value: [1, 2] });
     expect(order).toEqual([2, 1]);
@@ -65,10 +70,12 @@ describe("host tool transport", () => {
       ]),
     );
 
-    const result = await execute(
-      "return await Promise.all([tools.__proto__(), tools.constructor(), tools.toString()]);",
-      tools,
-    );
+    const result = (
+      await execute(
+        "return await Promise.all([tools.__proto__(), tools.constructor(), tools.toString()]);",
+        tools,
+      )
+    ).result;
 
     expect(result).toEqual({ ok: true, value: ["__proto__", "constructor", "toString"] });
   });
@@ -79,13 +86,15 @@ describe("host tool transport", () => {
     const completion = execute("return await tools.read();", tools);
     tools.read = () => ToolResult.success(2);
 
-    expect(await completion).toEqual({ ok: true, value: 1 });
+    expect((await completion).result).toEqual({ ok: true, value: 1 });
   });
 
   test("preserves undefined tool results rather than turning them into null", async () => {
-    const result = await execute("return (await tools.read()) === undefined;", {
-      read: () => ToolResult.success(),
-    });
+    const result = (
+      await execute("return (await tools.read()) === undefined;", {
+        read: () => ToolResult.success(),
+      })
+    ).result;
 
     expect(result).toEqual({ ok: true, value: true });
   });

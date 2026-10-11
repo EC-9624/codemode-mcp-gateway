@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { execute, ToolResult, type SandboxResult } from "../../src/sandbox";
 import { superviseWorker, type WorkerControl } from "../../src/worker-execution";
-import { rejectionOf } from "../support/rejection";
+import { executionErrorOf } from "../support/execution-error";
 import { faultWorker, toolWorker } from "../support/workers";
 
 describe("parent deadline", () => {
@@ -10,12 +10,12 @@ describe("parent deadline", () => {
     const worker = faultWorker("startup-stall");
     using terminate = spyOn(worker, "terminate");
 
-    expect(await superviseWorker(worker, new Map(), deadline)).toEqual(timeout(100));
+    expect((await superviseWorker(worker, new Map(), deadline)).result).toEqual(timeout(100));
     expect(Atomics.load(deadline.interrupt, 0)).toBe(1);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
 
-    expect(await execute("return 42;", {}, { totalTimeoutMs: 2000 })).toEqual({
+    expect((await execute("return 42;", {}, { totalTimeoutMs: 2000 })).result).toEqual({
       ok: true,
       value: 42,
     });
@@ -26,7 +26,7 @@ describe("parent deadline", () => {
     deadline.deadline.expiresAt = performance.now() - 1;
     const worker = faultWorker("idle");
 
-    expect(await superviseWorker(worker, new Map(), deadline)).toEqual(timeout(100));
+    expect((await superviseWorker(worker, new Map(), deadline)).result).toEqual(timeout(100));
     expect(Atomics.load(deadline.interrupt, 0)).toBe(1);
     expectNoExecutionListeners(worker);
   });
@@ -50,7 +50,7 @@ describe("parent deadline", () => {
       Bun.sleepSync(40);
       worker.emit("message", response);
 
-      expect(await completion).toEqual(timeout(20));
+      expect((await completion).result).toEqual(timeout(20));
       expect(calls).toBe(0);
       expectNoExecutionListeners(worker);
     });
@@ -86,7 +86,7 @@ describe("parent deadline", () => {
 
       worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
 
-      expect(await completion).toEqual(timeout(20));
+      expect((await completion).result).toEqual(timeout(20));
       expect(conversions).toBe(phase === "callback" ? 0 : 1);
       expect(post).not.toHaveBeenCalled();
     });
@@ -104,20 +104,22 @@ describe("parent deadline", () => {
       using post = spyOn(worker, "postMessage");
 
       expect(
-        await superviseWorker(
-          worker,
-          new Map([
-            [
-              "read",
-              () => {
-                calls++;
+        (
+          await superviseWorker(
+            worker,
+            new Map([
+              [
+                "read",
+                () => {
+                  calls++;
 
-                return late.promise;
-              },
-            ],
-          ]),
-          deadline,
-        ),
+                  return late.promise;
+                },
+              ],
+            ]),
+            deadline,
+          )
+        ).result,
       ).toEqual(timeout(250));
       expect(calls).toBe(1);
 
@@ -176,7 +178,7 @@ describe("parent deadline", () => {
     worker.emit("error", new Error("Private late worker failure"));
     release.resolve();
 
-    expect(await completion).toEqual({ ok: true, value: 42 });
+    expect((await completion).result).toEqual({ ok: true, value: 42 });
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
   });
@@ -218,7 +220,7 @@ describe("parent deadline", () => {
 
     release.resolve();
 
-    expect(await completion).toEqual(timeout(20));
+    expect((await completion).result).toEqual(timeout(20));
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
   });
@@ -233,9 +235,9 @@ describe("parent deadline", () => {
     const failure = new Error("Worker termination failed");
     using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
 
-    expect((await rejectionOf(superviseWorker(worker, new Map(), parentDeadline(20)))).reason).toBe(
-      failure,
-    );
+    expect(
+      (await executionErrorOf(superviseWorker(worker, new Map(), parentDeadline(20)))).cause,
+    ).toBe(failure);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
   });

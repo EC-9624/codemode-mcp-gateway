@@ -1,4 +1,6 @@
 export { type SandboxResult } from "./sandbox-result";
+export { SandboxExecutionError, type CallOutcome, type ExecutionReport } from "./execution-report";
+export { type SerializedToolResult } from "./tool";
 export { ToolResult, type SandboxTool, type ToolContext } from "./tool";
 export {
   createDiscoveryTools,

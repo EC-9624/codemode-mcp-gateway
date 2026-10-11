@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { execute, ToolResult, type SandboxTool } from "../../src/sandbox";
 import { superviseWorker } from "../../src/worker-execution";
-import { rejectionOf } from "../support/rejection";
+import { executionErrorOf } from "../support/execution-error";
 import { faultWorker, toolWorker } from "../support/workers";
 
 describe("worker host tools", () => {
@@ -13,13 +13,14 @@ describe("worker host tools", () => {
       throw failure;
     });
 
-    expect(
-      (
-        await rejectionOf(
-          superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
-        )
-      ).reason,
-    ).toBe(failure);
+    const error = await executionErrorOf(
+      superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+    );
+
+    expect(error.cause).toBe(failure);
+    expect(error.calls).toEqual([
+      { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
+    ]);
     expect(post).toHaveBeenCalledTimes(1);
   });
 
@@ -33,10 +34,10 @@ describe("worker host tools", () => {
       using post = spyOn(worker, "postMessage").mockImplementation(() => send(reply));
 
       const failure = (
-        await rejectionOf(
+        await executionErrorOf(
           superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
         )
-      ).reason;
+      ).cause;
 
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error)
@@ -56,8 +57,10 @@ describe("worker host tools", () => {
     });
 
     const failure = (
-      await rejectionOf(superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])))
-    ).reason;
+      await executionErrorOf(
+        superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+      )
+    ).cause;
 
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error)
@@ -90,7 +93,10 @@ describe("worker host tools", () => {
       );
 
       worker.emit("message", call);
-      expect((await rejectionOf(completion)).reason).toBeInstanceOf(Error);
+      const error = await executionErrorOf(completion);
+
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.calls).toEqual([]);
       expect(calls).toBe(0);
     });
   }
@@ -117,7 +123,7 @@ describe("worker host tools", () => {
     const call = { type: "tool-call", callId: 1, name: "read", argsJson: undefined };
     worker.emit("message", call);
     worker.emit("message", call);
-    expect((await rejectionOf(completion)).reason).toBeInstanceOf(Error);
+    expect((await executionErrorOf(completion)).cause).toBeInstanceOf(Error);
     expect(calls).toBe(1);
     late.resolve(ToolResult.success());
   });
@@ -127,10 +133,12 @@ describe("worker host tools", () => {
     const late = Promise.withResolvers<ToolResult>();
     let conversions = 0;
     using post = spyOn(worker, "postMessage");
-    expect(await superviseWorker(worker, new Map([["read", () => late.promise]]))).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-    });
+    expect((await superviseWorker(worker, new Map([["read", () => late.promise]]))).result).toEqual(
+      {
+        ok: false,
+        error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+      },
+    );
     late.resolve(
       ToolResult.success({
         toJSON() {
@@ -156,13 +164,15 @@ describe("worker host tools", () => {
       return late.promise;
     };
 
-    const failure = (await rejectionOf(superviseWorker(worker, new Map([["read", read]])))).reason;
+    const failure = (await executionErrorOf(superviseWorker(worker, new Map([["read", read]]))))
+      .cause;
+
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).not.toContain("Private fixture");
 
     late.reject(new Error("Private late failure"));
     await Bun.sleep(0);
     expect(post).toHaveBeenCalledTimes(1);
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
   });
 });

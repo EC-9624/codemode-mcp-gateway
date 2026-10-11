@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 import { execute } from "../../src/sandbox";
 import { executeLocally } from "../support/local-tools";
 import { superviseWorker } from "../../src/worker-execution";
-import { rejectionOf } from "../support/rejection";
+import { executionErrorOf } from "../support/execution-error";
 import { faultWorker } from "../support/workers";
 
 describe("worker supervisor", () => {
@@ -35,7 +35,7 @@ describe("worker supervisor", () => {
       "return [typeof process, typeof Bun, typeof require, typeof fetch];",
       "return Object.keys(tools);",
     ]) {
-      expect(await execute(code)).toEqual(await executeLocally(code));
+      expect((await execute(code)).result).toEqual(await executeLocally(code));
     }
   });
 
@@ -55,11 +55,11 @@ describe("worker supervisor", () => {
 
   test("rejects startup failures without returning a script error", async () => {
     const worker = new Worker(new URL("../fixtures/missing-worker.ts", import.meta.url));
-    const failure = (await rejectionOf(superviseWorker(worker))).reason;
+    const failure = (await executionErrorOf(superviseWorker(worker))).cause;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
 
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
   });
 
   for (const [scenario, message] of [
@@ -72,7 +72,7 @@ describe("worker supervisor", () => {
     test(`rejects ${scenario} and releases the worker`, async () => {
       const worker = faultWorker(scenario);
       using terminate = spyOn(worker, "terminate");
-      const failure = (await rejectionOf(superviseWorker(worker))).reason;
+      const failure = (await executionErrorOf(superviseWorker(worker))).cause;
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error) {
         expect(failure.message).toContain(message);
@@ -81,7 +81,7 @@ describe("worker supervisor", () => {
 
       expectNoExecutionListeners(worker);
       expect(terminate).toHaveBeenCalledTimes(1);
-      expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+      expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
     });
   }
 
@@ -102,7 +102,7 @@ describe("worker supervisor", () => {
       return code;
     });
 
-    expect(await superviseWorker(worker)).toEqual({ ok: true, value: 42 });
+    expect((await superviseWorker(worker)).result).toEqual({ ok: true, value: 42 });
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -112,14 +112,14 @@ describe("worker supervisor", () => {
       workerData: { type: "execute", code: "return 42;", toolNames: [], timeoutMs: 1000 },
     });
 
-    const failure = (await rejectionOf(superviseWorker(worker))).reason;
+    const failure = (await executionErrorOf(superviseWorker(worker))).cause;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
       expect(failure.message).not.toContain("Private parser infrastructure details");
     }
 
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
   });
 
   test("cleans up after response deserialization errors", async () => {
@@ -128,7 +128,7 @@ describe("worker supervisor", () => {
     const completion = superviseWorker(worker);
     // A real structured-clone failure on receipt is not reliably constructible.
     worker.emit("messageerror", new Error("Injected deserialization failure"));
-    const failure = (await rejectionOf(completion)).reason;
+    const failure = (await executionErrorOf(completion)).cause;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("could not be deserialized");
 
@@ -146,7 +146,7 @@ describe("worker supervisor", () => {
       },
     });
 
-    const failure = (await rejectionOf(superviseWorker(worker))).reason;
+    const failure = (await executionErrorOf(superviseWorker(worker))).cause;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
@@ -154,7 +154,7 @@ describe("worker supervisor", () => {
     }
 
     expectNoExecutionListeners(worker);
-    expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
+    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
   });
 
   for (const errorPhase of ["listener setup", "termination"]) {
@@ -190,7 +190,7 @@ describe("worker supervisor", () => {
         return await terminateWorker();
       });
 
-      expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
+      expect((await executionErrorOf(superviseWorker(worker))).cause).toBe(failure);
       // Unhandled promise rejections fail bun:test; allow the rejection checkpoint to run.
       await Bun.sleep(0);
       expect(workerErrorObserved).toBe(true);
@@ -209,7 +209,7 @@ describe("worker supervisor", () => {
     });
     const failure = new Error("Worker termination failed");
     using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
-    expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
+    expect((await executionErrorOf(superviseWorker(worker))).cause).toBe(failure);
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -244,7 +244,7 @@ describe("worker supervisor", () => {
     expect(worker.listenerCount("error")).toBe(1);
     worker.emit("error", new Error("Private late worker failure"));
     release.resolve();
-    expect(await completion).toEqual({ ok: true, value: 42 });
+    expect((await completion).result).toEqual({ ok: true, value: 42 });
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -276,7 +276,7 @@ describe("worker supervisor", () => {
       return code;
     });
 
-    expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
+    expect((await executionErrorOf(superviseWorker(worker))).cause).toBe(failure);
     expect(add).toHaveBeenCalledWith("messageerror", expect.any(Function));
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);

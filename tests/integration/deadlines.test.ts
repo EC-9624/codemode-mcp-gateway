@@ -6,7 +6,7 @@ describe("guest deadline", () => {
   test("applies a custom deadline to infinite computation and permits the next execution", async () => {
     const started = performance.now();
 
-    const result = await execute("while (true) {} ", {}, { timeoutMs: 100 });
+    const { result } = await execute("while (true) {} ", {}, { timeoutMs: 100 });
     const elapsed = performance.now() - started;
 
     expect(result).toEqual({
@@ -15,13 +15,13 @@ describe("guest deadline", () => {
     });
     expect(elapsed).toBeGreaterThanOrEqual(100);
     expect(elapsed).toBeLessThan(1000);
-    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
   });
 
   test("applies the default one-second deadline", async () => {
     const started = performance.now();
 
-    const result = await execute("while (true) {} ");
+    const { result } = await execute("while (true) {} ");
 
     expect(result).toEqual({
       ok: false,
@@ -85,7 +85,7 @@ describe("total deadline", () => {
   }
 
   test("accepts the minimum total budget", async () => {
-    const result = await execute("while (true) {}", {}, { totalTimeoutMs: 1 });
+    const { result } = await execute("while (true) {}", {}, { totalTimeoutMs: 1 });
 
     expect(result).toEqual({
       ok: false,
@@ -94,7 +94,11 @@ describe("total deadline", () => {
   });
 
   test("preserves a guest timeout that arrives before the parent deadline", async () => {
-    const result = await execute("while (true) {}", {}, { timeoutMs: 50, totalTimeoutMs: 2000 });
+    const { result } = await execute(
+      "while (true) {}",
+      {},
+      { timeoutMs: 50, totalTimeoutMs: 2000 },
+    );
 
     expect(result).toEqual({
       ok: false,

@@ -42,11 +42,14 @@ cannot pass solely because both paths agree.
 test("returns cancelled when the caller aborts before startup", async () => {
   const signal = AbortSignal.abort();
 
-  const result = await execute("return 42;", {}, { signal });
+  const report = await execute("return 42;", {}, { signal });
 
-  expect(result).toEqual({
-    ok: false,
-    error: { kind: "cancelled", message: "Execution cancelled." },
+  expect(report).toEqual({
+    result: {
+      ok: false,
+      error: { kind: "cancelled", message: "Execution cancelled." },
+    },
+    calls: [],
   });
 });
 ```
@@ -63,6 +66,8 @@ test("returns cancelled when the caller aborts before startup", async () => {
   in subprocesses with outer watchdogs.
 - Scope spies and resource cleanup with `using`, `await using`, or `try/finally`.
   Release pending gates on failure paths. Avoid shared mutable test state.
+- Use `rejectionOf` for arbitrary rejection reasons and `executionErrorOf` when
+  asserting the public `SandboxExecutionError` contract and inspecting its cause/calls.
 - `installLocalToolBridge` is a test adapter over the real guest bridge. It provides
   visibility into handles and original errors; worker/cancellation guarantees must
   be checked through the supervisor or public execution path.

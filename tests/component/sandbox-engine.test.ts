@@ -20,7 +20,7 @@ test("propagates unexpected parser failures instead of reporting a script error"
   expect(parser).toHaveBeenCalledTimes(1);
 
   parser.mockRestore();
-  expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+  expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
 });
 
 test("shared interruption disposes the VM, runtime, and bridge scope", async () => {

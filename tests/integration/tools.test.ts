@@ -20,7 +20,7 @@ const add: SandboxTool = async (args) => {
 
 describe("sandbox tool calls", () => {
   test("awaits a real asynchronous host operation", async () => {
-    expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
+    expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result).toEqual({
       ok: true,
       value: 3,
     });
@@ -28,7 +28,8 @@ describe("sandbox tool calls", () => {
 
   test("also bridges synchronous host callbacks", async () => {
     expect(
-      await execute("return await tools.answer();", { answer: () => ToolResult.success(42) }),
+      (await execute("return await tools.answer();", { answer: () => ToolResult.success(42) }))
+        .result,
     ).toEqual({
       ok: true,
       value: 42,
@@ -36,7 +37,9 @@ describe("sandbox tool calls", () => {
   });
 
   test("reports uncaught tool argument validation failures as script errors", async () => {
-    expect(await execute('return await tools.add({ a: "wrong", b: 2 });', { add })).toEqual({
+    expect(
+      (await execute('return await tools.add({ a: "wrong", b: 2 });', { add })).result,
+    ).toEqual({
       ok: false,
       error: { kind: "script", message: "add expects numeric a and b." },
     });
@@ -44,43 +47,49 @@ describe("sandbox tool calls", () => {
 
   test("lets the script catch public host errors and continue", async () => {
     expect(
-      await execute(
-        `try {
+      (
+        await execute(
+          `try {
           await tools.fail();
         } catch (error) {
           return { error: error.message, value: await tools.add({ a: 1, b: 2 }) };
         }`,
-        {
-          add,
-          fail: async () => {
-            await Bun.sleep(1);
+          {
+            add,
+            fail: async () => {
+              await Bun.sleep(1);
 
-            return ToolResult.failure("An expected failure");
+              return ToolResult.failure("An expected failure");
+            },
           },
-        },
-      ),
+        )
+      ).result,
     ).toEqual({ ok: true, value: { error: "An expected failure", value: 3 } });
   });
 
   test("does not expose private host error messages or stacks", async () => {
     expect(
-      await execute("return await tools.fail();", {
-        fail: () => {
-          throw new Error("Private host diagnostics");
-        },
-      }),
+      (
+        await execute("return await tools.fail();", {
+          fail: () => {
+            throw new Error("Private host diagnostics");
+          },
+        })
+      ).result,
     ).toEqual({ ok: false, error: { kind: "script", message: "Host tool failed." } });
   });
 
   test("keeps arbitrary asynchronous host rejections private", async () => {
     for (const error of [new Error("Private host diagnostics"), "Private string", null]) {
       expect(
-        await execute("return await tools.fail();", {
-          fail: async () => {
-            await Bun.sleep(0);
-            throw error;
-          },
-        }),
+        (
+          await execute("return await tools.fail();", {
+            fail: async () => {
+              await Bun.sleep(0);
+              throw error;
+            },
+          })
+        ).result,
       ).toEqual({ ok: false, error: { kind: "script", message: "Host tool failed." } });
     }
   });
@@ -88,20 +97,23 @@ describe("sandbox tool calls", () => {
   test("does not interpret failure-shaped tool data as a bridge failure", async () => {
     const value = { ok: false, error: { message: "Ordinary data" } };
     expect(
-      await execute("return await tools.read();", { read: () => ToolResult.success(value) }),
+      (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
+        .result,
     ).toEqual({ ok: true, value });
   });
 
   test("dispatches once when the same promise is awaited twice", async () => {
     let calls = 0;
     expect(
-      await execute("const call = tools.answer(); return [await call, await call];", {
-        answer: () => {
-          calls += 1;
+      (
+        await execute("const call = tools.answer(); return [await call, await call];", {
+          answer: () => {
+            calls += 1;
 
-          return ToolResult.success(3);
-        },
-      }),
+            return ToolResult.success(3);
+          },
+        })
+      ).result,
     ).toEqual({ ok: true, value: [3, 3] });
     expect(calls).toBe(1);
   });
@@ -110,16 +122,18 @@ describe("sandbox tool calls", () => {
     const bothStarted = Promise.withResolvers<void>();
     let started = 0;
     expect(
-      await execute("return await Promise.all([tools.echo(1), tools.echo(2)]);", {
-        echo: async (args) => {
-          started += 1;
-          if (started === 2) bothStarted.resolve();
+      (
+        await execute("return await Promise.all([tools.echo(1), tools.echo(2)]);", {
+          echo: async (args) => {
+            started += 1;
+            if (started === 2) bothStarted.resolve();
 
-          await bothStarted.promise;
+            await bothStarted.promise;
 
-          return ToolResult.success(args);
-        },
-      }),
+            return ToolResult.success(args);
+          },
+        })
+      ).result,
     ).toEqual({ ok: true, value: [1, 2] });
     expect(started).toBe(2);
   });
@@ -158,7 +172,7 @@ describe("sandbox tool calls", () => {
       expect(settled).toBe(false);
       expect(completed).toBe(false);
       release.resolve();
-      expect(await completion).toEqual({ ok: true, value: scenario.value });
+      expect((await completion).result).toEqual({ ok: true, value: scenario.value });
       expect(completed).toBe(true);
     });
   }
@@ -203,7 +217,7 @@ describe("sandbox tool calls", () => {
     expect(settled).toBe(false);
     expect(completed).toBe(false);
     releaseLoser.resolve();
-    expect(await completion).toEqual({ ok: true, value: 1 });
+    expect((await completion).result).toEqual({ ok: true, value: 1 });
     expect(completed).toBe(true);
     expect(calls).toBe(1);
   });
@@ -211,9 +225,11 @@ describe("sandbox tool calls", () => {
   test("round-trips JSON without sharing host object identity", async () => {
     const source = { nested: { value: 3 } };
     expect(
-      await execute("const value = await tools.read(); value.nested.value = 4; return value;", {
-        read: () => ToolResult.success(source),
-      }),
+      (
+        await execute("const value = await tools.read(); value.nested.value = 4; return value;", {
+          read: () => ToolResult.success(source),
+        })
+      ).result,
     ).toEqual({ ok: true, value: { nested: { value: 4 } } });
     expect(source.nested.value).toBe(3);
   });
@@ -221,13 +237,15 @@ describe("sandbox tool calls", () => {
   test("passes absent tool arguments as undefined", async () => {
     let argument: unknown = "not called";
     expect(
-      await execute("return await tools.echo();", {
-        echo: (args) => {
-          argument = args;
+      (
+        await execute("return await tools.echo();", {
+          echo: (args) => {
+            argument = args;
 
-          return ToolResult.success(args);
-        },
-      }),
+            return ToolResult.success(args);
+          },
+        })
+      ).result,
     ).toEqual({
       ok: true,
       value: null,
@@ -237,31 +255,37 @@ describe("sandbox tool calls", () => {
 
   test("preserves argument and result conversion after guest JSON mutation", async () => {
     expect(
-      await execute(
-        `JSON.stringify = () => "broken";
+      (
+        await execute(
+          `JSON.stringify = () => "broken";
          JSON.parse = () => "broken";
          return await tools.add({ a: 1, b: 2 });`,
-        { add },
-      ),
+          { add },
+        )
+      ).result,
     ).toEqual({ ok: true, value: 3 });
   });
 
   test("keeps global tools usable and does not depend on guest Promise.then", async () => {
     expect(
-      await execute(
-        `Promise.prototype.then = () => { throw new Error("Modified then"); };
+      (
+        await execute(
+          `Promise.prototype.then = () => { throw new Error("Modified then"); };
          return await globalThis.tools.add({ a: 1, b: 2 });`,
-        { add },
-      ),
+          { add },
+        )
+      ).result,
     ).toEqual({ ok: true, value: 3 });
   });
 
   test("keeps JSON text distinct from the string value it encodes", async () => {
     const value = 'Hello "mcm"\n日本語';
     expect(
-      await execute(`return await tools.echo(${JSON.stringify(value)});`, {
-        echo: (args) => ToolResult.success(args),
-      }),
+      (
+        await execute(`return await tools.echo(${JSON.stringify(value)});`, {
+          echo: (args) => ToolResult.success(args),
+        })
+      ).result,
     ).toEqual({ ok: true, value });
   });
 
@@ -279,7 +303,7 @@ describe("sandbox tool calls", () => {
       "return await tools.echo(() => 3);",
       "const value = {}; value.self = value; return await tools.echo(value);",
     ]) {
-      const result = await execute(code, { echo });
+      const result = (await execute(code, { echo })).result;
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe("script");
     }
@@ -292,7 +316,8 @@ describe("sandbox tool calls", () => {
     cycle.self = cycle;
     for (const value of [1n, () => 3, cycle]) {
       expect(
-        await execute("return await tools.read();", { read: () => ToolResult.success(value) }),
+        (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
+          .result,
       ).toEqual({
         ok: false,
         error: { kind: "script", message: "Tool result is not JSON-serializable." },
@@ -314,7 +339,8 @@ describe("sandbox tool calls", () => {
       },
     ]) {
       expect(
-        await execute("return await tools.read();", { read: () => ToolResult.success(value) }),
+        (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
+          .result,
       ).toEqual({
         ok: false,
         error: { kind: "script", message: "Tool result is not JSON-serializable." },
@@ -324,17 +350,19 @@ describe("sandbox tool calls", () => {
 
   test("only exposes supplied tools and no inherited host functions", async () => {
     expect(
-      await execute("return [Object.keys(tools), typeof tools.toString, typeof tools.hidden];", {
-        add,
-      }),
+      (
+        await execute("return [Object.keys(tools), typeof tools.toString, typeof tools.hidden];", {
+          add,
+        })
+      ).result,
     ).toEqual({ ok: true, value: [["add"], "undefined", "undefined"] });
-    const result = await execute("return await tools.hidden();", { add });
+    const result = (await execute("return await tools.hidden();", { add })).result;
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("script");
   });
 
   test("reports guest promises that cannot make progress", async () => {
-    expect(await execute("return await new Promise(() => {});")).toEqual({
+    expect((await execute("return await new Promise(() => {});")).result).toEqual({
       ok: false,
       error: {
         kind: "script",
@@ -344,11 +372,13 @@ describe("sandbox tool calls", () => {
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
-    expect(await execute("while (true) await Promise.resolve();", {}, { timeoutMs: 100 })).toEqual({
+    expect(
+      (await execute("while (true) await Promise.resolve();", {}, { timeoutMs: 100 })).result,
+    ).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
-    expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
+    expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result).toEqual({
       ok: true,
       value: 3,
     });
@@ -356,20 +386,22 @@ describe("sandbox tool calls", () => {
 
   test("receives tool replies while guest jobs keep arriving", async () => {
     expect(
-      await execute(
-        `let done = false;
+      (
+        await execute(
+          `let done = false;
          const call = tools.wait().then(() => { done = true; });
          while (!done) await Promise.resolve();
          await call;
          return done;`,
-        {
-          wait: async () => {
-            await Bun.sleep(5);
+          {
+            wait: async () => {
+              await Bun.sleep(5);
 
-            return ToolResult.success();
+              return ToolResult.success();
+            },
           },
-        },
-      ),
+        )
+      ).result,
     ).toEqual({ ok: true, value: true });
   });
 
@@ -386,17 +418,21 @@ describe("sandbox tool calls", () => {
       ),
     );
 
-    expect(results).toEqual(Array.from({ length: 10 }, (_, value) => ({ ok: true, value })));
+    expect(results.map((report) => report.result)).toEqual(
+      Array.from({ length: 10 }, (_, value) => ({ ok: true, value })),
+    );
   });
 
   test("includes unawaited host calls in the deadline", async () => {
     const late = Promise.withResolvers<number>();
     expect(
-      await execute(
-        "tools.wait(); return 3;",
-        { wait: async () => ToolResult.success(await late.promise) },
-        { timeoutMs: 100 },
-      ),
+      (
+        await execute(
+          "tools.wait(); return 3;",
+          { wait: async () => ToolResult.success(await late.promise) },
+          { timeoutMs: 100 },
+        )
+      ).result,
     ).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
@@ -409,11 +445,13 @@ describe("sandbox tool calls", () => {
     for (const fail of [false, true]) {
       const late = Promise.withResolvers<number>();
       expect(
-        await execute(
-          "return await tools.wait();",
-          { wait: async () => ToolResult.success(await late.promise) },
-          { timeoutMs: 100 },
-        ),
+        (
+          await execute(
+            "return await tools.wait();",
+            { wait: async () => ToolResult.success(await late.promise) },
+            { timeoutMs: 100 },
+          )
+        ).result,
       ).toEqual({
         ok: false,
         error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
@@ -422,7 +460,7 @@ describe("sandbox tool calls", () => {
       else late.resolve(3);
 
       await Bun.sleep(0);
-      expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
+      expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result).toEqual({
         ok: true,
         value: 3,
       });
@@ -432,19 +470,23 @@ describe("sandbox tool calls", () => {
   test("reports script failure without waiting for unrelated callbacks", async () => {
     const late = Promise.withResolvers<number>();
     expect(
-      await execute('tools.wait(); throw new Error("Script failed");', {
-        wait: async () => ToolResult.success(await late.promise),
-      }),
+      (
+        await execute('tools.wait(); throw new Error("Script failed");', {
+          wait: async () => ToolResult.success(await late.promise),
+        })
+      ).result,
     ).toEqual({ ok: false, error: { kind: "script", message: "Script failed" } });
     late.resolve(3);
     await Bun.sleep(0);
-    expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
+    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
   });
 
   test("continues executing tools after repeated success and validation failure", async () => {
     for (let index = 0; index < 10; index += 1) {
-      expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).ok).toBe(true);
-      expect((await execute("return await tools.add(null);", { add })).ok).toBe(false);
+      expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result.ok).toBe(
+        true,
+      );
+      expect((await execute("return await tools.add(null);", { add })).result.ok).toBe(false);
     }
   });
 });

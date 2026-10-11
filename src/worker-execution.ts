@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { createCallLog, SandboxExecutionError, type ExecutionReport } from "./execution-report";
 import { listen } from "./listener";
 import { type SandboxResult } from "./sandbox-result";
 import { callTool, serializeToolResult, type SandboxTool } from "./tool";
@@ -28,12 +29,12 @@ export type WorkerControl = {
   interrupt: Int32Array<SharedArrayBuffer>;
 };
 
-/** Execute a JavaScript async function body in a fresh worker with host-owned tools. */
+/** Run in a fresh worker. Reports retain parent-observed calls; infrastructure errors carry them too. */
 export async function execute(
   code: string,
   tools: Readonly<Record<string, SandboxTool>> = {},
   options: ExecuteOptions = {},
-): Promise<SandboxResult> {
+): Promise<ExecutionReport> {
   const timeoutMs = options.timeoutMs ?? 1000;
   if (!isTimeoutMs(timeoutMs)) {
     throw new RangeError(`timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}.`);
@@ -45,7 +46,7 @@ export async function execute(
   }
 
   const signal = options.signal;
-  if (signal?.aborted) return cancelled();
+  if (signal?.aborted) return { result: cancelled(), calls: [] };
 
   const control: WorkerControl = {
     ...(totalTimeoutMs === undefined
@@ -57,19 +58,30 @@ export async function execute(
     interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
   };
 
-  const registry = new Map(Object.entries(tools));
-  // Registry getters can synchronously cancel before a worker has been constructed.
-  if (signal?.aborted) return cancelled();
+  let registry: Map<string, SandboxTool>;
+  try {
+    registry = new Map(Object.entries(tools));
+  } catch (cause) {
+    throw new SandboxExecutionError([], cause);
+  }
 
-  const worker = new Worker(new URL("./worker-entry.ts", import.meta.url), {
-    workerData: {
-      type: "execute",
-      code,
-      toolNames: [...registry.keys()],
-      timeoutMs,
-      interruptBuffer: control.interrupt.buffer,
-    } satisfies WorkerStartupData,
-  });
+  // Registry getters can synchronously cancel before a worker has been constructed.
+  if (signal?.aborted) return { result: cancelled(), calls: [] };
+
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("./worker-entry.ts", import.meta.url), {
+      workerData: {
+        type: "execute",
+        code,
+        toolNames: [...registry.keys()],
+        timeoutMs,
+        interruptBuffer: control.interrupt.buffer,
+      } satisfies WorkerStartupData,
+    });
+  } catch (cause) {
+    throw new SandboxExecutionError([], cause);
+  }
 
   return await superviseWorker(worker, registry, control);
 }
@@ -79,6 +91,23 @@ export async function superviseWorker(
   worker: Worker,
   tools: ReadonlyMap<string, SandboxTool> = new Map(),
   control?: WorkerControl,
+): Promise<ExecutionReport> {
+  const calls = createCallLog();
+  try {
+    const result = await runWorker(worker, tools, control, calls);
+
+    return { result, calls: calls.close() };
+  } catch (cause) {
+    // Catch outside the ownership scope so failed termination also carries the snapshot.
+    throw new SandboxExecutionError(calls.close(), cause);
+  }
+}
+
+async function runWorker(
+  worker: Worker,
+  tools: ReadonlyMap<string, SandboxTool>,
+  control: WorkerControl | undefined,
+  calls: ReturnType<typeof createCallLog>,
 ): Promise<SandboxResult> {
   // `await using` disposes this stack on scope exit, awaiting cleanup in reverse order.
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using
@@ -99,6 +128,8 @@ export async function superviseWorker(
   const stop = () => {
     if (state === "active") state = "stopped";
 
+    calls.close();
+
     if (control !== undefined) Atomics.store(control.interrupt, 0, 1);
 
     // Abort listeners run synchronously. Close dispatch first and never forward caller reasons.
@@ -110,6 +141,7 @@ export async function superviseWorker(
     if (state !== "active") return;
 
     state = outcome.ok && outcome.result.ok ? "succeeded" : "stopped";
+    calls.close();
     completion.resolve(outcome);
     stop();
   };
@@ -182,6 +214,7 @@ export async function superviseWorker(
       const dispatch = async () => {
         if (!isActive()) return;
 
+        calls.dispatch(call.callId, call.name);
         // Domain validation belongs to the callback; the protocol only checks JSON syntax.
         const result = await callTool(tool, call.args, context);
         // Converting a late result would run getters/toJSON after execution has ended.
@@ -191,6 +224,7 @@ export async function superviseWorker(
         // Host getters/toJSON cannot be interrupted and may exhaust the parent budget.
         if (!isActive()) return;
 
+        calls.complete(call.callId, serialized);
         worker.postMessage({
           type: "tool-result",
           callId: call.callId,

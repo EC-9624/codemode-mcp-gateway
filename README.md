@@ -29,20 +29,23 @@ manually, especially test setup, execution, and assertions.
 import { execute, ToolResult } from "./src/sandbox";
 
 await execute("return 1 + 2;");
-// { ok: true, value: 3 }
+// { result: { ok: true, value: 3 }, calls: [] }
 
 await execute('throw new Error("Something failed");');
-// { ok: false, error: { kind: "script", message: "Something failed" } }
+// { result: { ok: false, error: { kind: "script", message: "Something failed" } }, calls: [] }
 
 await execute("return await tools.answer();", {
   answer: async () => ToolResult.success(42),
 });
-// { ok: true, value: 42 }
+// {
+//   result: { ok: true, value: 42 },
+//   calls: [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
+// }
 
-await execute("while (true) {}", {}, { timeoutMs: 100 });
+(await execute("while (true) {}", {}, { timeoutMs: 100 })).result;
 // { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." } }
 
-await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 });
+(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 })).result;
 // { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." } }
 ```
 
@@ -69,6 +72,80 @@ starts. Either deadline can win; neither must be larger than the other. Omitting
 The total budget is not a hard response-latency cap: synchronous main-thread work
 can delay enforcement, and worker termination is awaited after an outcome is chosen.
 
+### Execution reports and retained calls
+
+`execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
+Callers migrating from the earlier API read `report.result` for the execution outcome.
+The worker-local engine still returns `GuestResult`; only the parent owns call records.
+
+Each call record has an execution-local `callId`, tool `name`, and one of:
+
+- `completed`: the parent recorded a serialized public response before selecting
+  the execution outcome. `result` is `{ ok: true, json: string | undefined }` or
+  `{ ok: false, error: { message: string } }`.
+- `uncertain`: the parent started invocation but had not recorded its response
+  when execution stopped. The operation may still finish or have side effects.
+
+Completed means an observed response, not guest receipt or proof of an external
+transaction. Even a failed response, including the generic response for a thrown
+callback, does not establish that no side effects occurred. Cancellation or
+deadline expiry during result conversion leaves the call uncertain.
+
+Records remain in invocation order, even when replies arrive out of order. Calls
+rejected before invocation, including malformed requests, do not appear. Call
+arguments and raw host objects are not retained. Success bodies are the same JSON
+text prepared for the guest; retention never repeats `toJSON`. Undefined tool
+results retain a present `json: undefined` field (ordinary JSON export omits it).
+
+Call outcomes are exposed through `readonly` TypeScript types. The sandbox stops
+updating the snapshot when the parent selects the execution outcome, before
+notifying tool abort listeners or awaiting worker termination. Late settlements cannot change it and
+are discarded before conversion. These records are in-memory observations, not a
+durable audit log or a guarantee of safe retry.
+
+For example, cancellation after invoice creation but during a second tool call:
+
+```ts
+const report = {
+  result: {
+    ok: false,
+    error: { kind: "cancelled", message: "Execution cancelled." },
+  },
+  calls: [
+    {
+      callId: 1,
+      name: "createInvoice",
+      status: "completed",
+      result: { ok: true, json: '{"id":"invoice-1"}' },
+    },
+    { callId: 2, name: "wait", status: "uncertain" },
+  ],
+};
+```
+
+`bun run example` demonstrates this sequence using an explicit start gate.
+
+Registry setup, worker construction, supervision, and cleanup failures reject with
+host-only `SandboxExecutionError`. Its `calls` carries the same snapshot and its
+`cause` preserves the original host-side failure. If execution and cleanup both
+throw, the cause retains the disposal `SuppressedError` chain. Invalid budgets
+continue to reject with `RangeError` before execution.
+
+```ts
+import { execute, SandboxExecutionError } from "./src/sandbox";
+
+try {
+  const report = await execute("return 42;");
+  console.log(report.result, report.calls);
+} catch (error) {
+  if (error instanceof SandboxExecutionError) {
+    console.error(error.calls, error.cause); // Host-only diagnostics.
+  }
+
+  throw error;
+}
+```
+
 ### Cancellation
 
 Pass a caller signal to cancel execution. Tools can pass their separate execution
@@ -90,7 +167,7 @@ const completion = execute(
 
 controller.abort();
 await completion;
-// { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } }
+// { result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } }, calls: [] }
 ```
 
 All calls in one execution share a tool signal. Cancellation, timeout, script
@@ -166,6 +243,7 @@ in a flat `src/` directory.
 Main app
   sandbox.ts: public exports
   worker-execution.ts: execute(...), deadlines/cancellation, and the worker supervisor
+  execution-report.ts: call records, snapshots, and host infrastructure errors
   tool.ts: callback invocation and result serialization
   tool-catalog.ts: metadata and discovery
        |
@@ -194,8 +272,9 @@ A tool call travels up and its reply travels back down:
 ```text
 guest: tools.add(args) -> prelude serializes arguments to JSON text
 worker: allocate call ID, post tool-call { callId, name, argsJson }
-main: decode and parse arguments once, validate the call, invoke callback(args, { signal }),
-      serialize the ToolResult, post tool-result { callId, result }
+main: decode and parse arguments once, validate the call, record dispatch,
+      invoke callback(args, { signal }), serialize the ToolResult,
+      record completed response, post tool-result { callId, result }
 worker: decode reply, match call ID, resolve or reject the guest promise
 worker: pump QuickJS jobs -> prelude decodes the result -> guest resumes
 ```
@@ -204,15 +283,28 @@ Resolving a guest promise queues continuations; `runtime.executePendingJobs()`
 runs them. The job pump processes at most 100 jobs per turn and yields to host
 timers and I/O between batches.
 
+Execution report flow:
+
+```text
+parent accepts completion / cancellation / timeout / infrastructure failure
+  -> close dispatch and snapshot call outcomes
+       recorded responses -> completed
+       unresolved dispatched calls -> uncertain
+  -> request interruption; abort tool signal on unsuccessful execution
+  -> await worker cleanup
+       success -> return { result, calls }
+       infrastructure or cleanup failure -> reject SandboxExecutionError(calls, cause)
+```
+
 ### Ownership
 
-| Owner                        | Resources                                                             |
-| ---------------------------- | --------------------------------------------------------------------- |
-| Main-thread supervisor       | Worker, listeners, parent timer/interrupt flag, tool abort controller |
-| Worker entry's cleanup stack | Transport listeners and pending remote replies                        |
-| Engine                       | QuickJS context and runtime, deadline, and bridge scope               |
-| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope  |
-| Main app's catalog           | Callback bindings and metadata; no VM or worker resources             |
+| Owner                        | Resources                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| Main-thread supervisor       | Worker, listeners, parent timer/interrupt flag, tool abort controller, call records |
+| Worker entry's cleanup stack | Transport listeners and pending remote replies                                      |
+| Engine                       | QuickJS context and runtime, deadline, and bridge scope                             |
+| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope                |
+| Main app's catalog           | Callback bindings and metadata; no VM or worker resources                           |
 
 - On normal scope exit or unwinding, `using` disposes resources in reverse declaration order.
   QuickJS handles point into WASM memory; host garbage collection does not
@@ -236,7 +328,7 @@ timers and I/O between batches.
 
 ### Results and failures
 
-- Script errors, timeouts, and caller cancellation resolve to `SandboxResult` with
+- Script errors, timeouts, and caller cancellation resolve in `report.result` with
   kind `script`, `timeout`, or `cancelled`. Thrown strings become the message;
   other values without a string `message` produce a generic message. Thrown
   promises are opaque values, not awaited or unwrapped.
@@ -249,9 +341,10 @@ timers and I/O between batches.
   against the VM.
 - Within the worker, infrastructure failures keep their original cause. Across the
   worker boundary, the worker sends only a controlled failure category and the
-  supervisor rejects with a new error; worker exception messages, stacks, and
-  identity are not transferred. Exceptions from local worker construction and
-  termination propagate directly.
+  supervisor uses a new controlled error as `SandboxExecutionError.cause`; worker
+  exception messages, stacks, and identity are not transferred. Local registry,
+  construction, transport, and termination failures retain their identity in the
+  host-only cause instead of being forwarded to the guest.
 - Synchronous guest-bridge exceptions are recorded before the SDK can turn them
   into catchable guest errors. The interrupt handler observes the failure, and the
   engine checks it after guest execution, job pumping, and error conversion, so
@@ -300,9 +393,9 @@ code; it is never exposed to the guest.
 ```text
 validate budgets -> record parent deadline -> construct worker -> supervise
   -> on messages and callback settlements: check the clock before continuing
-  -> on expiry: select total-timeout result, close dispatch, set shared flag
+  -> on expiry: select total-timeout result, close dispatch/call snapshot, set shared flag
   -> clear parent timer, remove normal listeners, request worker termination
-  -> await termination, remove error listener, return timeout (or reject cleanup failure)
+  -> await termination, remove error listener, return report (or reject cleanup failure with calls)
 ```
 
 - Checking the clock during message handling prevents a queued completion or call
@@ -325,12 +418,12 @@ validate budgets -> record parent deadline -> construct worker -> supervise
 ### Cancellation and cleanup ordering
 
 ```text
-validate budgets -> if already aborted: return cancelled
+validate budgets -> if already aborted: return cancelled report with no calls
   -> snapshot registry -> recheck cancellation -> create worker and supervise
   -> caller abort: check total deadline, choose timeout or cancelled outcome
-  -> close dispatch -> set shared interrupt flag -> abort host-tool signal
+  -> close dispatch and call snapshot -> set shared interrupt flag -> abort host-tool signal
   -> remove caller/worker listeners and timer -> terminate worker
-  -> await termination -> remove worker error listener -> return outcome
+  -> await termination -> remove worker error listener -> return report
 ```
 
 - Invalid budgets reject even when the caller signal is already aborted. A
@@ -403,8 +496,9 @@ generators, and the guest-global `this` binding remain supported.
   the parent can request worker termination meanwhile.
 - Timeout, failure, or cancellation ends sandbox execution and requests cooperative
   tool cancellation. Started operations may still finish or have side effects;
-  there is no rollback, automatic retry, or exactly-once guarantee. Per-call outcomes
-  are not yet retained in the result.
+  there is no rollback, automatic retry, or exactly-once guarantee. Retained call
+  outcomes describe only parent observations at execution completion; unresolved
+  dispatched calls remain uncertain. Call count and retained bytes are not yet bounded.
 - No imports, TypeScript, persistent state, or MCP integration yet.
 - This is a learning project, not a production-hardened sandbox.
 
@@ -452,12 +546,12 @@ one layer. Typechecking includes all test helpers and fixtures.
 5. Worker-backed host tools, host-owned catalog, and discovery.
 6. Configurable guest deadlines and opt-in parent-supervised deadlines/interruption.
 7. Caller cancellation and cooperative host-tool cancellation.
+8. Parent-owned execution reports with retained completed/uncertain call outcomes.
 
 Next:
 
-1. Retained call outcomes with unresolved dispatched calls marked uncertain.
-2. Configurable memory and bounds on source, calls, concurrency, payloads, and output.
-3. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
-4. Soak/fault testing, latency/memory measurements, and reference comparisons.
+1. Configurable memory and bounds on source, calls, concurrency, payloads, and output.
+2. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
+3. Soak/fault testing, latency/memory measurements, and reference comparisons.
 
 Do not add a gateway framework before the sandbox behavior is understood.

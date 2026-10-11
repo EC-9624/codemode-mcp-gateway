@@ -14,7 +14,7 @@ describe("caller cancellation", () => {
     controller.abort(() => "Private cancellation reason");
     let reads = 0;
 
-    const result = await execute(
+    const { result } = await execute(
       "return await tools.read();",
       {
         get read() {
@@ -43,7 +43,7 @@ describe("caller cancellation", () => {
     const controller = new AbortController();
     let calls = 0;
 
-    const result = await execute(
+    const { result } = await execute(
       "return await tools.read();",
       {
         get read() {
@@ -91,7 +91,7 @@ describe("host tool cancellation", () => {
     await started.promise;
     controller.abort();
 
-    expect(await completion).toEqual(cancelled);
+    expect((await completion).result).toEqual(cancelled);
     expect(signals).toHaveLength(2);
     expect(signals[0]).toBe(signals[1]);
     expect(stopped).toBe(2);
@@ -117,7 +117,7 @@ describe("host tool cancellation", () => {
       using cleanup = new DisposableStack();
       cleanup.defer(() => late.resolve(ToolResult.success()));
 
-      const result = await execute(
+      const { result } = await execute(
         code,
         {
           read: (_args, context) => {
@@ -176,8 +176,8 @@ describe("host tool cancellation", () => {
 
     survivor.abort();
 
-    expect(await first).toEqual(cancelled);
-    expect(second).toEqual({ ok: true, value: 42 });
+    expect((await first).result).toEqual(cancelled);
+    expect(second.result).toEqual({ ok: true, value: 42 });
     expect(contexts).toHaveLength(2);
     expect(contexts[0]?.signal.aborted).toBe(true);
     expect(contexts[1]?.signal.aborted).toBe(false);

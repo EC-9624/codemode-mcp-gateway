@@ -11,20 +11,22 @@ const startupDeadline = {
 let startupCalled = false;
 console.log(
   JSON.stringify({
-    result: await superviseWorker(
-      faultWorker("startup-loop", ["read"]),
-      new Map([
-        [
-          "read",
-          () => {
-            startupCalled = true;
+    result: (
+      await superviseWorker(
+        faultWorker("startup-loop", ["read"]),
+        new Map([
+          [
+            "read",
+            () => {
+              startupCalled = true;
 
-            return ToolResult.success();
-          },
-        ],
-      ]),
-      startupDeadline,
-    ),
+              return ToolResult.success();
+            },
+          ],
+        ]),
+        startupDeadline,
+      )
+    ).result,
     called: startupCalled,
   }),
 );
@@ -34,7 +36,7 @@ const timer = setInterval(() => ticks++, 10);
 let startedTicks = 0;
 let called = false;
 try {
-  const result = await execute(
+  const { result } = await execute(
     "tools.started(); while (true) {}",
     {
       started: () => {
@@ -63,21 +65,25 @@ const interrupt = new Int32Array(new SharedArrayBuffer(4));
 const worker = toolWorker("tools.read(); while (true) {}", 10000, interrupt.buffer);
 console.log(
   JSON.stringify(
-    await superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          () => {
-            Atomics.store(interrupt, 0, 1);
+    (
+      await superviseWorker(
+        worker,
+        new Map([
+          [
+            "read",
+            () => {
+              Atomics.store(interrupt, 0, 1);
 
-            return ToolResult.success();
-          },
-        ],
-      ]),
-    ),
+              return ToolResult.success();
+            },
+          ],
+        ]),
+      )
+    ).result,
   ),
 );
 
 // An uncleared parent timer would keep this child alive after successful completion.
-console.log(JSON.stringify(await execute("return 42;", {}, { totalTimeoutMs: 2 ** 31 - 1 })));
+console.log(
+  JSON.stringify((await execute("return 42;", {}, { totalTimeoutMs: 2 ** 31 - 1 })).result),
+);
