@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { execute } from "../../src/sandbox";
 import { executeLocally } from "../support/local-tools";
 import { superviseWorker } from "../../src/worker-execution";
@@ -109,7 +110,13 @@ describe("worker supervisor", () => {
 
   test("keeps actual worker infrastructure exception details out of the response", async () => {
     const worker = new Worker(new URL("../fixtures/worker-parser-fault.ts", import.meta.url), {
-      workerData: { type: "execute", code: "return 42;", toolNames: [], timeoutMs: 1000 },
+      workerData: {
+        ...DEFAULT_LIMITS,
+        type: "execute",
+        code: "return 42;",
+        toolNames: [],
+        timeoutMs: 1000,
+      },
     });
 
     const failure = (await executionErrorOf(superviseWorker(worker))).cause;
@@ -139,6 +146,7 @@ describe("worker supervisor", () => {
   test("keeps synchronous VM allocation failures private across the worker boundary", async () => {
     const worker = new Worker(new URL("../fixtures/worker-allocation-fault.ts", import.meta.url), {
       workerData: {
+        ...DEFAULT_LIMITS,
         type: "execute",
         code: "try { await tools.read(); } catch (error) { return error.message; }",
         toolNames: ["read"],

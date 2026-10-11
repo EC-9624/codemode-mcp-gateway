@@ -1,5 +1,6 @@
 import { type GuestResult } from "./sandbox-result";
 import { type SerializedToolResult } from "./tool";
+import { isByteLimit, MAX_STACK_SIZE_BYTES } from "./execution-limits";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -17,6 +18,8 @@ export type WorkerStartupData = {
   code: string;
   toolNames: string[];
   timeoutMs: number;
+  memoryLimitBytes: number;
+  maxStackSizeBytes: number;
   interruptBuffer?: SharedArrayBuffer;
 };
 
@@ -28,6 +31,8 @@ export const WorkerStartupData = {
       typeof value.code === "string" &&
       isToolNames(value.toolNames) &&
       isTimeoutMs(value.timeoutMs) &&
+      isByteLimit(value.memoryLimitBytes) &&
+      isByteLimit(value.maxStackSizeBytes, MAX_STACK_SIZE_BYTES) &&
       (value.interruptBuffer === undefined ||
         (value.interruptBuffer instanceof SharedArrayBuffer &&
           value.interruptBuffer.byteLength === Int32Array.BYTES_PER_ELEMENT))
@@ -39,6 +44,8 @@ export const WorkerStartupData = {
           code: value.code,
           toolNames: value.toolNames,
           timeoutMs: value.timeoutMs,
+          memoryLimitBytes: value.memoryLimitBytes,
+          maxStackSizeBytes: value.maxStackSizeBytes,
           ...(value.interruptBuffer === undefined
             ? {}
             : { interruptBuffer: value.interruptBuffer }),

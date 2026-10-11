@@ -26,6 +26,15 @@ console.log(
 console.log(await execute("while (true) {}", {}, { timeoutMs: 100 }));
 console.log(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 }));
 
+console.log(await execute("return 42;", {}, { maxSourceBytes: 5 }));
+console.log(
+  await execute(
+    "return new ArrayBuffer(1024).byteLength;",
+    {},
+    { memoryLimitBytes: 8 * 1024 * 1024 },
+  ),
+);
+
 const controller = new AbortController();
 const started = Promise.withResolvers<void>();
 

@@ -1,6 +1,6 @@
 import { parse } from "acorn";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
-import { createVm } from "./runtime";
+import { createVm, type VmLimits } from "./runtime";
 import { type ToolBridge } from "./guest-tool-bridge";
 import { type GuestResult } from "./sandbox-result";
 
@@ -9,15 +9,15 @@ const JOBS_PER_TURN = 100;
 /** Worker-local engine. Bridge handles belong to the execution's scope. */
 export async function executeEngine(
   code: string,
-  timeoutMs: number,
+  options: VmLimits & { timeoutMs: number },
   installToolBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
   interrupt?: Int32Array<SharedArrayBuffer>,
 ): Promise<GuestResult> {
-  using vm = await createVm();
+  using vm = await createVm(options);
   using bridgeScope = new Scope();
   const bridge = installToolBridge(vm, bridgeScope);
 
-  const result = await executeScript(vm, code, timeoutMs, bridge, interrupt);
+  const result = await executeScript(vm, code, options.timeoutMs, bridge, interrupt);
 
   // Error conversion can run guest getters after the job loop's last failure check.
   const failure = bridge.failure;
@@ -70,7 +70,13 @@ async function executeScript(
     return { ok: false, error: { kind: "script", message: submission.message } };
   }
 
-  using evaluated = startScript(vm, submission.source);
+  using runner = prepareRunner(vm);
+  const prepared = checkpoint();
+  if (prepared) return prepared;
+
+  if (runner.error) throw new Error("Sandbox prelude initialization failed.");
+
+  using evaluated = startScript(vm, submission.source, runner.value);
   // An interrupted start surfaces as an error; the checkpoint classifies it first.
   const started = checkpoint();
   if (started) return started;
@@ -171,24 +177,24 @@ function prepareScript(
   return { ok: true, source };
 }
 
-function startScript(vm: QuickJSContext, source: string) {
+function prepareRunner(vm: QuickJSContext) {
   // Disposing an error result here would invalidate the handle the caller must inspect.
   const factory = vm.evalCode(PRELUDE_SOURCE, "sandbox-prelude.js");
   if (factory.error) return factory;
 
   using factoryHandle = factory.value;
   using hostTools = vm.getProp(vm.global, "tools");
-  const runner = vm.callFunction(factoryHandle, vm.undefined, hostTools);
-  if (runner.error) return runner;
 
-  using run = runner.value;
+  return vm.callFunction(factoryHandle, vm.undefined, hostTools);
+}
 
+function startScript(vm: QuickJSContext, source: string, runner: QuickJSHandle) {
   const compiled = vm.evalCode(source, "sandbox.js");
   if (compiled.error) return compiled;
 
   using script = compiled.value;
 
-  return vm.callFunction(run, vm.undefined, script);
+  return vm.callFunction(runner, vm.undefined, script);
 }
 
 // Compiling user code inside this closure would expose raw callbacks and captured codecs.

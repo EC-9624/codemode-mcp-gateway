@@ -72,6 +72,68 @@ starts. Either deadline can win; neither must be larger than the other. Omitting
 The total budget is not a hard response-latency cap: synchronous main-thread work
 can delay enforcement, and worker termination is awaited after an outcome is chosen.
 
+### Resource limits
+
+All settings are optional, flat fields on `ExecuteOptions`. Override only what you need:
+
+```ts
+await execute(code, tools);
+await execute(code, tools, { memoryLimitBytes: 128 * 1024 * 1024 });
+```
+
+| Option              | Default             | Applies to                                       |
+| ------------------- | ------------------- | ------------------------------------------------ |
+| `memoryLimitBytes`  | 64 MiB (`67108864`) | QuickJS guest heap allocation                    |
+| `maxStackSizeBytes` | 1 MiB (`1048576`)   | QuickJS stack guard                              |
+| `maxSourceBytes`    | 256 KiB (`262144`)  | Submitted function body, measured in UTF-8 bytes |
+
+Omitted fields use their defaults. Each value must be a positive integer.
+Memory and source limits allow up to 2147483647 bytes; the stack limit allows up to
+4 MiB (`4194304`), leaving headroom below the pinned WASM build's 5 MiB stack.
+Invalid values reject with `RangeError` before registry access or worker
+startup, even when the caller signal is already aborted. Zero, negative values,
+and infinity do not disable limits.
+
+After validating options, pre-aborted cancellation wins. Otherwise oversized source
+returns this report before reading tools, creating the worker, or parsing code:
+
+```ts
+await execute("return 42;", {}, { maxSourceBytes: 5 });
+// {
+//   result: {
+//     ok: false,
+//     error: {
+//       kind: "limit", resource: "source", maximum: 5,
+//       message: "Source exceeds the 5 byte limit."
+//     }
+//   },
+//   calls: []
+// }
+```
+
+The source limit counts the supplied body, including comments and whitespace,
+but excludes the private wrapper/prelude. UTF-8 bytes differ from JavaScript
+string length for non-ASCII text. Byte measurement does not allocate an encoded
+copy of the source.
+
+```text
+resolve defaults -> validate options -> check pre-aborted cancellation
+  -> measure source bytes -> reject oversized source with no calls
+  -> snapshot tools -> start worker with resolved memory/stack limits
+  -> worker validates startup data -> configure VM -> execute
+```
+
+VM memory and stack limits apply to each fresh execution. Guest allocation and
+recursion errors retain ordinary JavaScript behavior: scripts can catch them;
+uncaught errors become `script` results. Failures in VM/bridge/prelude setup or execution
+machinery still reject with `SandboxExecutionError`. Error text is not used to
+guess a structured memory/stack limit failure. Very small limits can prevent
+sandbox setup from completing.
+
+These settings do not cap total host/WASM memory or enlarge the WASM build's
+physical stack. Source admission happens before the execution deadlines start;
+guest parsing remains covered by `timeoutMs` and the optional parent deadline.
+
 ### Execution reports and retained calls
 
 `execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
@@ -274,7 +336,8 @@ QuickJS guest
   submitted code: await tools.someTool(args)
 ```
 
-Supporting modules: `runtime.ts` creates a VM with memory and stack limits;
+Supporting modules: `execution-limits.ts` defines byte-limit defaults and validation;
+`runtime.ts` creates a VM with memory and stack limits;
 `worker-protocol.ts` and `sandbox-result.ts` define shared data contracts;
 `listener.ts` registers listeners whose removal is owned by a cleanup stack.
 
@@ -343,6 +406,9 @@ parent accepts completion / cancellation / timeout / infrastructure failure
   kind `script`, `timeout`, or `cancelled`. Thrown strings become the message;
   other values without a string `message` produce a generic message. Thrown
   promises are opaque values, not awaited or unwrapped.
+- Oversized source resolves with `kind: "limit"`, `resource: "source"`, the byte
+  maximum, and no calls. Source admission belongs to the parent; workers cannot
+  report a source-limit result or caller cancellation.
 - `ToolResult.failure(message)` is the only way a host message reaches the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
@@ -402,7 +468,7 @@ flag; the total budget adds a parent timer. The flag is supplied only to trusted
 code; it is never exposed to the guest.
 
 ```text
-validate budgets -> record parent deadline -> construct worker -> supervise
+validate options -> admit source -> record parent deadline -> construct worker -> supervise
   -> on messages and callback settlements: check the clock before continuing
   -> on expiry: select total-timeout result, close dispatch/call snapshot, set shared flag
   -> clear parent timer, remove normal listeners, request worker termination
@@ -429,15 +495,15 @@ validate budgets -> record parent deadline -> construct worker -> supervise
 ### Cancellation and cleanup ordering
 
 ```text
-validate budgets -> if already aborted: return cancelled report with no calls
-  -> snapshot registry -> recheck cancellation -> create worker and supervise
+validate options -> if already aborted: return cancelled report with no calls
+  -> admit source -> snapshot registry -> recheck cancellation -> create worker and supervise
   -> caller abort: check total deadline, choose timeout or cancelled outcome
   -> close dispatch and call snapshot -> set shared interrupt flag -> abort host-tool signal
   -> remove caller/worker listeners and timer -> terminate worker
   -> await termination -> remove worker error listener -> return report
 ```
 
-- Invalid budgets reject even when the caller signal is already aborted. A
+- Invalid budgets or byte limits reject even when the caller signal is already aborted. A
   pre-aborted execution skips registry access and worker creation.
 - The first accepted outcome wins. If the total deadline has already elapsed when
   cancellation is observed, the result is `timeout`; otherwise it is `cancelled`.
@@ -495,8 +561,9 @@ generators, and the guest-global `this` binding remain supported.
 
 - This is thread separation, not an OS or process sandbox. The trusted worker has
   Bun privileges; guest code runs only inside QuickJS.
-- Limits cover the guest heap (64 MiB), stack (1 MiB), and deadline, not total
-  host/WASM memory or model-facing output size.
+- Configurable limits cover guest heap (default 64 MiB), stack (default 1 MiB),
+  submitted source (default 256 KiB), and deadlines, not total host/WASM memory or
+  model-facing output size.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
 - Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
   a stuck worker that neither reports nor exits can leave execution pending.
@@ -559,10 +626,11 @@ one layer. Typechecking includes all test helpers and fixtures.
 6. Configurable guest deadlines and opt-in parent-supervised deadlines/interruption.
 7. Caller cancellation and cooperative host-tool cancellation.
 8. Parent-owned execution reports with completed responses and explicit call interruption reasons.
+9. Optional memory, stack, and UTF-8 source limits with defaults and pre-startup admission.
 
 Next:
 
-1. Configurable memory and bounds on source, calls, concurrency, payloads, and output.
+1. Bounds on calls, concurrency, payloads, output, and retained responses.
 2. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
 3. Soak/fault testing, latency/memory measurements, and reference comparisons.
 

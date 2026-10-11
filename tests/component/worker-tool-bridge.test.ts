@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { MessageChannel } from "node:worker_threads";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { installWorkerToolBridge } from "../../src/worker-tool-bridge";
 import { executeEngine } from "../../src/sandbox-engine";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
@@ -19,7 +20,7 @@ test("worker-side posting failures bypass guest catch and release transport list
   const result = await rejectionOf(
     executeEngine(
       'try { return await tools.read(); } catch { return "caught"; }',
-      1000,
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
       (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
     ),
   );
@@ -46,7 +47,7 @@ for (const [name, event, message] of [
     const result = await rejectionOf(
       executeEngine(
         'try { return await tools.read(); } catch { return "caught"; }',
-        1000,
+        { ...DEFAULT_LIMITS, timeoutMs: 1000 },
         (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
       ),
     );
@@ -74,7 +75,7 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
   });
 
   const result = await rejectionOf(
-    executeEngine("return 42;", 1000, (vm, scope) => {
+    executeEngine("return 42;", { ...DEFAULT_LIMITS, timeoutMs: 1000 }, (vm, scope) => {
       resources.push({ vm, scope });
 
       return installWorkerToolBridge(vm, ["read"], port1, scope, cleanup);

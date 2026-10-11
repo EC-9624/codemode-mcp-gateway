@@ -7,6 +7,8 @@ const request = {
   code: "return 42;",
   toolNames: [],
   timeoutMs: 1000,
+  memoryLimitBytes: 64 * 1024 * 1024,
+  maxStackSizeBytes: 1024 * 1024,
 } satisfies WorkerStartupData;
 
 describe("worker startup data", () => {
@@ -26,7 +28,13 @@ describe("worker startup data", () => {
     }
 
     expect(
-      WorkerStartupData.decode({ type: "execute", code: "return 42;", timeoutMs: 1000 }).ok,
+      WorkerStartupData.decode({
+        type: "execute",
+        code: "return 42;",
+        timeoutMs: 1000,
+        memoryLimitBytes: request.memoryLimitBytes,
+        maxStackSizeBytes: request.maxStackSizeBytes,
+      }).ok,
     ).toBe(false);
   });
 
@@ -46,6 +54,21 @@ describe("worker startup data", () => {
 
     expect(decoded.value.interruptBuffer).toBe(interruptBuffer);
   });
+
+  for (const [name, maximum] of [
+    ["memoryLimitBytes", 2147483647],
+    ["maxStackSizeBytes", 4194304],
+  ] as const) {
+    test(`requires a resolved positive byte limit for ${name}`, () => {
+      for (const value of [undefined, null, 0, -1, 1.5, NaN, Infinity, 2 ** 31, "1000"]) {
+        expect(WorkerStartupData.decode({ ...request, [name]: value }).ok).toBe(false);
+      }
+
+      expect(WorkerStartupData.decode({ ...request, [name]: 1 }).ok).toBe(true);
+      expect(WorkerStartupData.decode({ ...request, [name]: maximum }).ok).toBe(true);
+      expect(WorkerStartupData.decode({ ...request, [name]: maximum + 1 }).ok).toBe(false);
+    });
+  }
 
   test("rejects interrupt flags that are not one shared 32-bit word", () => {
     for (const interruptBuffer of [
@@ -88,6 +111,13 @@ describe("worker messages", () => {
       {
         type: "completed",
         result: { ok: false, error: { kind: "cancelled", message: "cancelled" } },
+      },
+      {
+        type: "completed",
+        result: {
+          ok: false,
+          error: { kind: "limit", resource: "source", maximum: 1, message: "too large" },
+        },
       },
       { type: "completed", result: { ok: false, error: { kind: "script", message: 42 } } },
     ]) {

@@ -25,7 +25,7 @@ async function run(startup: WorkerStartupData, port: MessagePort): Promise<Worke
 
     const result = await executeEngine(
       startup.code,
-      startup.timeoutMs,
+      startup,
       (vm, scope) => installWorkerToolBridge(vm, startup.toolNames, port, scope, cleanup),
       startup.interruptBuffer === undefined ? undefined : new Int32Array(startup.interruptBuffer),
     );

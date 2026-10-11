@@ -1,7 +1,14 @@
 import { Worker } from "node:worker_threads";
+import { Buffer } from "node:buffer";
+import {
+  DEFAULT_LIMITS,
+  isByteLimit,
+  MAX_LIMIT_BYTES,
+  MAX_STACK_SIZE_BYTES,
+} from "./execution-limits";
 import { createCallLog, SandboxExecutionError, type ExecutionReport } from "./execution-report";
 import { listen } from "./listener";
-import { type SandboxResult } from "./sandbox-result";
+import { type GuestResult, type SandboxResult } from "./sandbox-result";
 import { callTool, serializeToolResult, type SandboxTool } from "./tool";
 import {
   isTimeoutMs,
@@ -11,7 +18,9 @@ import {
   WorkerToMainMessage,
 } from "./worker-protocol";
 
-type WorkerCompletion = { ok: true; result: SandboxResult } | { ok: false; error: unknown };
+type WorkerCompletion =
+  | { ok: true; result: GuestResult | ReturnType<typeof cancelled> }
+  | { ok: false; error: unknown };
 
 export type ExecuteOptions = {
   /** Guest deadline in milliseconds, measured after the worker creates the VM. Defaults to 1000. */
@@ -20,6 +29,12 @@ export type ExecuteOptions = {
   totalTimeoutMs?: number;
   /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
   signal?: AbortSignal;
+  /** QuickJS guest heap limit in bytes. Defaults to 64 MiB. */
+  memoryLimitBytes?: number;
+  /** QuickJS stack limit in bytes, at most 4 MiB. Defaults to 1 MiB. */
+  maxStackSizeBytes?: number;
+  /** Submitted source limit in UTF-8 bytes, before worker startup. Defaults to 256 KiB. */
+  maxSourceBytes?: number;
 };
 
 /** @internal Parent-owned controls; only the interrupt buffer crosses into the worker. */
@@ -45,8 +60,43 @@ export async function execute(
     throw new RangeError(`totalTimeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}.`);
   }
 
+  const limits = {
+    memoryLimitBytes:
+      options.memoryLimitBytes === undefined
+        ? DEFAULT_LIMITS.memoryLimitBytes
+        : options.memoryLimitBytes,
+    maxStackSizeBytes:
+      options.maxStackSizeBytes === undefined
+        ? DEFAULT_LIMITS.maxStackSizeBytes
+        : options.maxStackSizeBytes,
+    maxSourceBytes:
+      options.maxSourceBytes === undefined ? DEFAULT_LIMITS.maxSourceBytes : options.maxSourceBytes,
+  };
+
+  for (const [name, value] of Object.entries(limits)) {
+    const maximum = name === "maxStackSizeBytes" ? MAX_STACK_SIZE_BYTES : MAX_LIMIT_BYTES;
+    if (!isByteLimit(value, maximum)) {
+      throw new RangeError(`${name} must be an integer from 1 to ${maximum}.`);
+    }
+  }
+
   const signal = options.signal;
   if (signal?.aborted) return { result: cancelled(), calls: [] };
+
+  if (Buffer.byteLength(code, "utf8") > limits.maxSourceBytes) {
+    return {
+      result: {
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "source",
+          maximum: limits.maxSourceBytes,
+          message: `Source exceeds the ${limits.maxSourceBytes} byte limit.`,
+        },
+      },
+      calls: [],
+    };
+  }
 
   const control: WorkerControl = {
     ...(totalTimeoutMs === undefined
@@ -76,6 +126,8 @@ export async function execute(
         code,
         toolNames: [...registry.keys()],
         timeoutMs,
+        memoryLimitBytes: limits.memoryLimitBytes,
+        maxStackSizeBytes: limits.maxStackSizeBytes,
         interruptBuffer: control.interrupt.buffer,
       } satisfies WorkerStartupData,
     });
@@ -308,6 +360,9 @@ async function runWorker(
   return outcome.result;
 }
 
-function cancelled(): SandboxResult {
-  return { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } };
+function cancelled() {
+  return {
+    ok: false,
+    error: { kind: "cancelled", message: "Execution cancelled." },
+  } satisfies SandboxResult;
 }

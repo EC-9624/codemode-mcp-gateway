@@ -1,15 +1,15 @@
 import { getQuickJS, type QuickJSContext } from "quickjs-emscripten";
+import { DEFAULT_LIMITS, type ExecutionLimits } from "./execution-limits";
 
-const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
-const STACK_LIMIT_BYTES = 1024 * 1024;
+export type VmLimits = Pick<ExecutionLimits, "memoryLimitBytes" | "maxStackSizeBytes">;
 
 /** Create a fresh context that owns its runtime; the caller owns disposal. */
-export async function createVm(): Promise<QuickJSContext> {
+export async function createVm(limits: VmLimits = DEFAULT_LIMITS): Promise<QuickJSContext> {
   const quickJS = await getQuickJS();
   const vm = quickJS.newContext();
   try {
-    vm.runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
-    vm.runtime.setMaxStackSize(STACK_LIMIT_BYTES);
+    vm.runtime.setMemoryLimit(limits.memoryLimitBytes);
+    vm.runtime.setMaxStackSize(limits.maxStackSizeBytes);
 
     return vm;
   } catch (error) {

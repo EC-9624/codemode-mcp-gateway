@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Scope } from "quickjs-emscripten";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { createVm } from "../../src/runtime";
 import { execute, ToolResult } from "../../src/sandbox";
 import { executeEngine } from "../../src/sandbox-engine";
@@ -77,39 +78,43 @@ describe("guest tool bridge", () => {
       let guestErrors = 0;
       const resources: ExecutionResources[] = [];
 
-      const completion = executeEngine(code, 1000, (vm, scope) => {
-        resources.push({ vm, scope });
+      const completion = executeEngine(
+        code,
+        { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+        (vm, scope) => {
+          resources.push({ vm, scope });
 
-        const fault = spyOn(vm, "newPromise").mockImplementation(() => {
-          allocations += 1;
-          throw failure;
-        });
+          const fault = spyOn(vm, "newPromise").mockImplementation(() => {
+            allocations += 1;
+            throw failure;
+          });
 
-        const newError = vm.newError.bind(vm);
+          const newError = vm.newError.bind(vm);
 
-        const errors = spyOn(vm, "newError").mockImplementation(
-          (...args: Parameters<typeof vm.newError>) => {
-            guestErrors += 1;
+          const errors = spyOn(vm, "newError").mockImplementation(
+            (...args: Parameters<typeof vm.newError>) => {
+              guestErrors += 1;
 
-            return newError(...args);
-          },
-        );
-
-        cleanup.defer(() => fault.mockRestore());
-        cleanup.defer(() => errors.mockRestore());
-
-        return installLocalToolBridge(
-          vm,
-          {
-            read: () => {
-              calls += 1;
-
-              return ToolResult.success(42);
+              return newError(...args);
             },
-          },
-          scope,
-        );
-      });
+          );
+
+          cleanup.defer(() => fault.mockRestore());
+          cleanup.defer(() => errors.mockRestore());
+
+          return installLocalToolBridge(
+            vm,
+            {
+              read: () => {
+                calls += 1;
+
+                return ToolResult.success(42);
+              },
+            },
+            scope,
+          );
+        },
+      );
 
       expect((await rejectionOf(completion)).reason).toBe(failure);
       expect(allocations).toBe(1);
@@ -189,7 +194,7 @@ describe("guest tool bridge", () => {
 
     const completion = executeEngine(
       "tools.answer(); while (true) await Promise.resolve();",
-      1000,
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
       (vm, scope) => {
         resources.push({ vm, scope });
 

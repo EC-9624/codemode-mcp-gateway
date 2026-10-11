@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { type WorkerStartupData } from "../../src/worker-protocol";
 
 /** Starts the real worker entry with a valid request that exposes `read`. */
@@ -9,6 +10,8 @@ export function toolWorker(code: string, timeoutMs = 1000, interruptBuffer?: Sha
       code,
       toolNames: ["read"],
       timeoutMs,
+      memoryLimitBytes: DEFAULT_LIMITS.memoryLimitBytes,
+      maxStackSizeBytes: DEFAULT_LIMITS.maxStackSizeBytes,
       ...(interruptBuffer === undefined ? {} : { interruptBuffer }),
     } satisfies WorkerStartupData,
   });
@@ -22,6 +25,8 @@ export function faultWorker(scenario: string, toolNames: string[] = []) {
       code: scenario,
       toolNames,
       timeoutMs: 1000,
+      memoryLimitBytes: DEFAULT_LIMITS.memoryLimitBytes,
+      maxStackSizeBytes: DEFAULT_LIMITS.maxStackSizeBytes,
     } satisfies WorkerStartupData,
   });
 }

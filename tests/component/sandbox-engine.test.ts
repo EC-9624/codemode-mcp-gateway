@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { type QuickJSDeferredPromise } from "quickjs-emscripten";
 import { Parser } from "acorn";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { execute, ToolResult, type SandboxResult } from "../../src/sandbox";
 import { executeEngine } from "../../src/sandbox-engine";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
@@ -30,7 +31,7 @@ test("shared interruption disposes the VM, runtime, and bridge scope", async () 
   expect(
     await executeEngine(
       "tools.read(); while (true) {}",
-      1000,
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
       (vm, scope) => {
         resources.push({ vm, scope });
 
@@ -51,6 +52,85 @@ test("shared interruption disposes the VM, runtime, and bridge scope", async () 
   ).toEqual({
     ok: false,
     error: { kind: "timeout", message: "Execution interrupted by the parent." },
+  });
+  expectDisposedExecution(resources);
+});
+
+test.each([
+  ["memory", { memoryLimitBytes: 1 }],
+  ["stack", { maxStackSizeBytes: 1024 }],
+] as const)(
+  "disposes execution resources after %s-limited prelude compilation fails",
+  async (_name, limits) => {
+    const resources: ExecutionResources[] = [];
+
+    const failure = await rejectionOf(
+      executeEngine(
+        "return 42;",
+        { ...DEFAULT_LIMITS, ...limits, timeoutMs: 1000 },
+        (vm, scope) => {
+          resources.push({ vm, scope });
+
+          return installLocalToolBridge(vm, {}, scope);
+        },
+      ),
+    );
+
+    expect(failure.reason).toBeInstanceOf(Error);
+    if (failure.reason instanceof Error) {
+      expect(failure.reason.message).toBe("Sandbox prelude initialization failed.");
+    }
+
+    expectDisposedExecution(resources);
+  },
+);
+
+test("rejects prelude factory invocation failure and disposes execution resources", async () => {
+  const resources: ExecutionResources[] = [];
+
+  const failure = await rejectionOf(
+    executeEngine("return 42;", { ...DEFAULT_LIMITS, timeoutMs: 1000 }, (vm, scope) => {
+      resources.push({ vm, scope });
+
+      // Fail a prelude dependency after compilation, before submitted code runs.
+      using prepared = vm.evalCode(
+        'Object.keys = () => { throw new Error("Private prelude failure"); };',
+      );
+
+      expect(prepared.error).toBeUndefined();
+
+      return installLocalToolBridge(vm, {}, scope);
+    }),
+  );
+
+  expect(failure.reason).toBeInstanceOf(Error);
+  if (failure.reason instanceof Error) {
+    expect(failure.reason.message).toBe("Sandbox prelude initialization failed.");
+  }
+
+  expectDisposedExecution(resources);
+});
+
+test("preserves timeout classification during prelude initialization", async () => {
+  const resources: ExecutionResources[] = [];
+
+  const result = await executeEngine(
+    "return 42;",
+    { ...DEFAULT_LIMITS, timeoutMs: 100 },
+    (vm, scope) => {
+      resources.push({ vm, scope });
+      // Keep the prelude busy until the real guest deadline interrupts it.
+      using prepared = vm.evalCode("Object.keys = () => { while (true) {} };");
+
+      expect(prepared.error).toBeUndefined();
+
+      return installLocalToolBridge(vm, {}, scope);
+    },
+  );
+
+  expect(result).toEqual({
+    ok: false,
+    error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
   });
   expectDisposedExecution(resources);
 });
@@ -80,22 +160,26 @@ for (const scenario of [
     const promises: QuickJSDeferredPromise[] = [];
     using cleanup = new DisposableStack();
 
-    const result = await executeEngine(scenario.code, 100, (vm, scope) => {
-      resources.push({ vm, scope });
-      const newPromise = vm.newPromise.bind(vm);
+    const result = await executeEngine(
+      scenario.code,
+      { ...DEFAULT_LIMITS, timeoutMs: 100 },
+      (vm, scope) => {
+        resources.push({ vm, scope });
+        const newPromise = vm.newPromise.bind(vm);
 
-      // Observe real deferred handles; results alone cannot prove their disposal.
-      const created = spyOn(vm, "newPromise").mockImplementation(() => {
-        const promise = newPromise();
-        promises.push(promise);
+        // Observe real deferred handles; results alone cannot prove their disposal.
+        const created = spyOn(vm, "newPromise").mockImplementation(() => {
+          const promise = newPromise();
+          promises.push(promise);
 
-        return promise;
-      });
+          return promise;
+        });
 
-      cleanup.defer(() => created.mockRestore());
+        cleanup.defer(() => created.mockRestore());
 
-      return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
-    });
+        return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
+      },
+    );
 
     expect(result).toEqual(scenario.expected);
     expectDisposedExecution(resources);

@@ -1,4 +1,5 @@
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
+import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { executeEngine } from "../../src/sandbox-engine";
 import { callTool, serializeToolResult, type SandboxTool } from "../../src/tool";
 import { installGuestToolBridge } from "../../src/guest-tool-bridge";
@@ -8,7 +9,9 @@ export function executeLocally(
   tools: Readonly<Record<string, SandboxTool>> = {},
   timeoutMs = 1000,
 ) {
-  return executeEngine(code, timeoutMs, (vm, scope) => installLocalToolBridge(vm, tools, scope));
+  return executeEngine(code, { ...DEFAULT_LIMITS, timeoutMs }, (vm, scope) =>
+    installLocalToolBridge(vm, tools, scope),
+  );
 }
 
 /** Worker transport would hide the VM handles and original exceptions these tests inspect. */
