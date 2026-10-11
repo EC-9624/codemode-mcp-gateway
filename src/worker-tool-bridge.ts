@@ -4,6 +4,8 @@ import { listen } from "./listener";
 import { type SerializedToolResult } from "./tool";
 import { installGuestToolBridge } from "./guest-tool-bridge";
 import { ToolReply, type WorkerToMainMessage } from "./worker-protocol";
+import { DEFAULT_LIMITS } from "./execution-limits";
+import { type ToolCallLimits } from "./tool-call-budget";
 
 /** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
 export function installWorkerToolBridge(
@@ -12,11 +14,12 @@ export function installWorkerToolBridge(
   port: MessagePort,
   scope: Scope,
   cleanup: DisposableStack,
+  limits: ToolCallLimits = DEFAULT_LIMITS,
 ) {
   const pendingReplies = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
   let nextCallId = 1;
 
-  // The guest bridge stops invoking once it records a failure, so no failure check is needed here.
+  // The guest bridge owns admission and stops invoking after a limit or failure.
   const bridge = installGuestToolBridge(
     context,
     toolNames,
@@ -33,6 +36,7 @@ export function installWorkerToolBridge(
       return pendingReply.promise;
     },
     scope,
+    limits,
   );
 
   cleanup.defer(() => {

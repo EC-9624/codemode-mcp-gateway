@@ -3,6 +3,8 @@ import { Buffer } from "node:buffer";
 import {
   DEFAULT_LIMITS,
   isByteLimit,
+  isCallCount,
+  MAX_CALL_COUNT,
   MAX_LIMIT_BYTES,
   MAX_STACK_SIZE_BYTES,
 } from "./execution-limits";
@@ -10,6 +12,7 @@ import { createCallLog, SandboxExecutionError, type ExecutionReport } from "./ex
 import { listen } from "./listener";
 import { type GuestResult, type SandboxResult } from "./sandbox-result";
 import { callTool, serializeToolResult, type SandboxTool } from "./tool";
+import { createToolCallBudget, type ToolCallLimits } from "./tool-call-budget";
 import {
   isTimeoutMs,
   MAX_TIMEOUT_MS,
@@ -35,6 +38,10 @@ export type ExecuteOptions = {
   maxStackSizeBytes?: number;
   /** Submitted source limit in UTF-8 bytes, before worker startup. Defaults to 256 KiB. */
   maxSourceBytes?: number;
+  /** Total admitted calls per execution, including failed responses. Defaults to 100. */
+  maxToolCalls?: number;
+  /** Outstanding calls per execution. Exceeding this limit stops execution. Defaults to 10. */
+  maxConcurrentToolCalls?: number;
 };
 
 /** @internal Parent-owned controls; only the interrupt buffer crosses into the worker. */
@@ -77,6 +84,21 @@ export async function execute(
     const maximum = name === "maxStackSizeBytes" ? MAX_STACK_SIZE_BYTES : MAX_LIMIT_BYTES;
     if (!isByteLimit(value, maximum)) {
       throw new RangeError(`${name} must be an integer from 1 to ${maximum}.`);
+    }
+  }
+
+  const callLimits = {
+    maxToolCalls:
+      options.maxToolCalls === undefined ? DEFAULT_LIMITS.maxToolCalls : options.maxToolCalls,
+    maxConcurrentToolCalls:
+      options.maxConcurrentToolCalls === undefined
+        ? DEFAULT_LIMITS.maxConcurrentToolCalls
+        : options.maxConcurrentToolCalls,
+  };
+
+  for (const [name, value] of Object.entries(callLimits)) {
+    if (!isCallCount(value)) {
+      throw new RangeError(`${name} must be an integer from 1 to ${MAX_CALL_COUNT}.`);
     }
   }
 
@@ -128,6 +150,7 @@ export async function execute(
         timeoutMs,
         memoryLimitBytes: limits.memoryLimitBytes,
         maxStackSizeBytes: limits.maxStackSizeBytes,
+        ...callLimits,
         interruptBuffer: control.interrupt.buffer,
       } satisfies WorkerStartupData,
     });
@@ -135,7 +158,7 @@ export async function execute(
     throw new SandboxExecutionError([], cause);
   }
 
-  return await superviseWorker(worker, registry, control);
+  return await superviseWorker(worker, registry, control, callLimits);
 }
 
 /** @internal Takes ownership of a fresh, single-execution worker, including termination. */
@@ -143,10 +166,11 @@ export async function superviseWorker(
   worker: Worker,
   tools: ReadonlyMap<string, SandboxTool> = new Map(),
   control?: WorkerControl,
+  limits: ToolCallLimits = DEFAULT_LIMITS,
 ): Promise<ExecutionReport> {
   const calls = createCallLog();
   try {
-    const result = await runWorker(worker, tools, control, calls);
+    const result = await runWorker(worker, tools, control, calls, limits);
 
     return { result, calls: calls.close("sandbox-error") };
   } catch (cause) {
@@ -160,6 +184,7 @@ async function runWorker(
   tools: ReadonlyMap<string, SandboxTool>,
   control: WorkerControl | undefined,
   calls: ReturnType<typeof createCallLog>,
+  limits: ToolCallLimits,
 ): Promise<SandboxResult> {
   // `await using` disposes this stack on scope exit, awaiting cleanup in reverse order.
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using
@@ -172,6 +197,7 @@ async function runWorker(
   // https://developer.mozilla.org/en-US/docs/Web/API/AbortController
   const toolController = new AbortController();
   const context = { signal: toolController.signal };
+  const budget = createToolCallBudget(limits);
   const deadline = control?.deadline;
   const signal = control?.signal;
   let state: "active" | "succeeded" | "stopped" = "active";
@@ -194,8 +220,12 @@ async function runWorker(
 
     state = outcome.ok && outcome.result.ok ? "succeeded" : "stopped";
     if (outcome.ok && !outcome.result.ok) {
-      const kind = outcome.result.error.kind;
-      calls.close(kind === "script" ? "script-error" : kind);
+      const error = outcome.result.error;
+      if (error.kind === "limit") {
+        calls.close(error.resource === "tool-calls" ? "call-limit" : "concurrency-limit");
+      } else {
+        calls.close(error.kind === "script" ? "script-error" : error.kind);
+      }
     } else {
       calls.close("sandbox-error");
     }
@@ -272,22 +302,33 @@ async function runWorker(
       const dispatch = async () => {
         if (!isActive()) return;
 
-        calls.dispatch(call.callId, call.name);
-        // Domain validation belongs to the callback; the protocol only checks JSON syntax.
-        const result = await callTool(tool, call.args, context);
-        // Converting a late result would run getters/toJSON after execution has ended.
-        if (!isActive()) return;
+        const limit = budget.admit();
+        if (limit !== undefined) {
+          finish({ ok: true, result: { ok: false, error: limit } });
 
-        const serialized = serializeToolResult(result);
-        // Host getters/toJSON cannot be interrupted and may exhaust the parent budget.
-        if (!isActive()) return;
+          return;
+        }
 
-        calls.complete(call.callId, serialized);
-        worker.postMessage({
-          type: "tool-result",
-          callId: call.callId,
-          result: serialized,
-        } satisfies ToolReply);
+        try {
+          calls.dispatch(call.callId, call.name);
+          // Domain validation belongs to the callback; the protocol only checks JSON syntax.
+          const result = await callTool(tool, call.args, context);
+          // Converting a late result would run getters/toJSON after execution has ended.
+          if (!isActive()) return;
+
+          const serialized = serializeToolResult(result);
+          // Host getters/toJSON cannot be interrupted and may exhaust the parent budget.
+          if (!isActive()) return;
+
+          calls.complete(call.callId, serialized);
+          worker.postMessage({
+            type: "tool-result",
+            callId: call.callId,
+            result: serialized,
+          } satisfies ToolReply);
+        } finally {
+          budget.release();
+        }
       };
 
       // Catching dispatch as a tool failure would let guests recover from broken transport.

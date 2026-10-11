@@ -35,6 +35,16 @@ console.log(
   ),
 );
 
+console.log(
+  await execute(
+    "await tools.read(); return await tools.read();",
+    {
+      read: () => ToolResult.success(42),
+    },
+    { maxToolCalls: 1 },
+  ),
+);
+
 const controller = new AbortController();
 const started = Promise.withResolvers<void>();
 

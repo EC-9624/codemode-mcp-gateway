@@ -134,6 +134,78 @@ These settings do not cap total host/WASM memory or enlarge the WASM build's
 physical stack. Source admission happens before the execution deadlines start;
 guest parsing remains covered by `timeoutMs` and the optional parent deadline.
 
+### Tool-call limits
+
+Each execution defaults to **100 total calls** and **10 outstanding calls**.
+Override either field independently:
+
+```ts
+await execute(code, tools);
+await execute(code, tools, { maxToolCalls: 200, maxConcurrentToolCalls: 5 });
+```
+
+Both counts must be integers from 1 to 2147483647. Invalid counts reject with
+`RangeError` before source admission, registry access, or worker startup, including
+when cancellation is already requested. A total limit below the concurrency limit
+is valid; there is no required relationship between them.
+
+- Each admitted invocation consumes one total call, including tool failures,
+  discovery, and unawaited calls. Awaiting the same promise twice counts once.
+- Argument serialization failures before admission consume no call capacity.
+- A concurrency slot remains occupied until the response is handled: through
+  guest-promise settlement on the worker, and through serialization/transport on
+  the parent. Completed success or failure responses release the slot.
+- Exactly the configured number is allowed. The next admission attempt ends
+  execution with a structured limit result. Calls are not queued or retried, and
+  guest `try/catch` cannot bypass execution-level limits.
+- Total capacity is checked before concurrency. If both are exhausted, the result
+  identifies the total-call limit.
+
+```ts
+await execute(
+  "await tools.read(); return await tools.read();",
+  {
+    read: () => ToolResult.success(42),
+  },
+  { maxToolCalls: 1 },
+);
+// {
+//   result: {
+//     ok: false,
+//     error: {
+//       kind: "limit", resource: "tool-calls", maximum: 1,
+//       message: "Execution exceeded the 1 tool-call limit."
+//     }
+//   },
+//   calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }]
+// }
+```
+
+Concurrency exhaustion uses `resource: "concurrent-tool-calls"`. Excess calls never
+invoke a host callback and do not appear in the dispatched-call report. Completed
+responses stay completed; pending dispatched calls become interrupted with
+`reason: "call-limit"` or `"concurrency-limit"`. The parent requests cooperative
+tool cancellation and awaits worker cleanup. A later cleanup failure retains the
+selected interruption reason in `SandboxExecutionError.calls`.
+
+```text
+guest serializes arguments
+  -> worker validates payload and reserves total/concurrent capacity
+       denied -> record structured limit, interrupt guest execution
+       admitted -> allocate deferred promise and post tool request
+  -> parent validates request and independently reserves capacity
+       denied -> select limit result and close dispatch/call snapshot
+       admitted -> record dispatch, invoke tool, retain and post response
+  -> parent releases slot; worker settles guest promise and releases its slot
+```
+
+Checking on the worker bounds deferred allocations and posted requests during a
+synchronous guest burst. Checking on the parent independently bounds host dispatch.
+The two budgets are local to their execution boundaries; reply transit can keep a
+worker slot occupied after the parent has released its slot. Limits are per
+execution, not application-wide. Tools that ignore cancellation may continue after
+their execution has ended.
+
 ### Execution reports and retained calls
 
 `execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
@@ -147,13 +219,14 @@ Each call record has an execution-local `callId`, tool `name`, and one of:
   `{ ok: false, error: { message: string } }`.
 - `interrupted`: the parent started invocation but had not recorded its response
   when execution stopped. `reason` explains why observation ended:
-  `cancelled`, `timeout`, `script-error`, or `sandbox-error`.
+  `cancelled`, `timeout`, `script-error`, `sandbox-error`, `call-limit`, or `concurrency-limit`.
   The operation may still finish or have side effects.
 
 `cancelled` means the caller requested cancellation; `timeout` means a guest or
 total deadline expired; `script-error` means guest execution failed; `sandbox-error`
 means the worker, transport, or execution machinery failed. Detailed sandbox
 failure causes remain on `SandboxExecutionError` rather than in each call record.
+`call-limit` and `concurrency-limit` identify execution stopped by tool admission.
 
 Completed means an observed response, not guest receipt or proof of an external
 transaction. Even a failed response, including the generic response for a thrown
@@ -336,7 +409,8 @@ QuickJS guest
   submitted code: await tools.someTool(args)
 ```
 
-Supporting modules: `execution-limits.ts` defines byte-limit defaults and validation;
+Supporting modules: `execution-limits.ts` defines byte/count defaults and validation;
+`tool-call-budget.ts` provides the total/outstanding counters owned independently by each boundary;
 `runtime.ts` creates a VM with memory and stack limits;
 `worker-protocol.ts` and `sandbox-result.ts` define shared data contracts;
 `listener.ts` registers listeners whose removal is owned by a cleanup stack.
@@ -394,7 +468,7 @@ parent accepts completion / cancellation / timeout / infrastructure failure
   terminating the worker. The error listener stays until termination settles, so
   late errors cannot become unhandled EventEmitter errors. Partial setup unwinds.
 - The guest bridge's `pendingCalls` tracks work until guest promises settle;
-  `failure` records the first private infrastructure failure and `failureSignal`
+  `failure` records the first private infrastructure failure or admission limit and `failureSignal`
   wakes the engine. The worker bridge's `pendingReplies` correlates call IDs with
   main-thread replies.
 
@@ -409,6 +483,9 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 - Oversized source resolves with `kind: "limit"`, `resource: "source"`, the byte
   maximum, and no calls. Source admission belongs to the parent; workers cannot
   report a source-limit result or caller cancellation.
+- Tool admission exhaustion resolves with `kind: "limit"` and resource
+  `tool-calls` or `concurrent-tool-calls`. The worker and parent each enforce these
+  limits; they are distinct from catchable tool failures and sandbox errors.
 - `ToolResult.failure(message)` is the only way a host message reaches the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
@@ -577,7 +654,8 @@ generators, and the guest-global `this` binding remain supported.
   there is no rollback, automatic retry, or exactly-once guarantee. Retained call
   outcomes describe only parent observations at execution completion; unresolved
   dispatched calls are marked interrupted with the reason observation ended.
-  Call count and retained bytes are not yet bounded.
+  Call counts and outstanding calls are bounded per execution; payload size and
+  retained bytes are not yet bounded.
 - No imports, TypeScript, persistent state, or MCP integration yet.
 - This is a learning project, not a production-hardened sandbox.
 
@@ -627,10 +705,11 @@ one layer. Typechecking includes all test helpers and fixtures.
 7. Caller cancellation and cooperative host-tool cancellation.
 8. Parent-owned execution reports with completed responses and explicit call interruption reasons.
 9. Optional memory, stack, and UTF-8 source limits with defaults and pre-startup admission.
+10. Per-execution tool-call and concurrency limits enforced before deferred allocation and host dispatch.
 
 Next:
 
-1. Bounds on calls, concurrency, payloads, output, and retained responses.
+1. Bounds on payloads, output, and retained responses.
 2. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
 3. Soak/fault testing, latency/memory measurements, and reference comparisons.
 

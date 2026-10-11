@@ -9,6 +9,8 @@ const request = {
   timeoutMs: 1000,
   memoryLimitBytes: 64 * 1024 * 1024,
   maxStackSizeBytes: 1024 * 1024,
+  maxToolCalls: 100,
+  maxConcurrentToolCalls: 10,
 } satisfies WorkerStartupData;
 
 describe("worker startup data", () => {
@@ -34,6 +36,8 @@ describe("worker startup data", () => {
         timeoutMs: 1000,
         memoryLimitBytes: request.memoryLimitBytes,
         maxStackSizeBytes: request.maxStackSizeBytes,
+        maxToolCalls: request.maxToolCalls,
+        maxConcurrentToolCalls: request.maxConcurrentToolCalls,
       }).ok,
     ).toBe(false);
   });
@@ -82,6 +86,17 @@ describe("worker startup data", () => {
       expect(WorkerStartupData.decode({ ...request, interruptBuffer }).ok).toBe(false);
     }
   });
+
+  for (const name of ["maxToolCalls", "maxConcurrentToolCalls"] as const) {
+    test(`requires a resolved valid ${name}`, () => {
+      for (const value of [undefined, null, 0, -1, 1.5, NaN, Infinity, 2 ** 31, "100"]) {
+        expect(WorkerStartupData.decode({ ...request, [name]: value }).ok).toBe(false);
+      }
+
+      expect(WorkerStartupData.decode({ ...request, [name]: 1 }).ok).toBe(true);
+      expect(WorkerStartupData.decode({ ...request, [name]: 2147483647 }).ok).toBe(true);
+    });
+  }
 });
 
 describe("worker messages", () => {
@@ -90,6 +105,25 @@ describe("worker messages", () => {
       { type: "completed", result: { ok: true, value: null } },
       { type: "completed", result: { ok: false, error: { kind: "script", message: "failed" } } },
       { type: "completed", result: { ok: false, error: { kind: "timeout", message: "expired" } } },
+      {
+        type: "completed",
+        result: {
+          ok: false,
+          error: { kind: "limit", resource: "tool-calls", maximum: 100, message: "exhausted" },
+        },
+      },
+      {
+        type: "completed",
+        result: {
+          ok: false,
+          error: {
+            kind: "limit",
+            resource: "concurrent-tool-calls",
+            maximum: 10,
+            message: "exhausted",
+          },
+        },
+      },
       { type: "failed", reason: "execution" },
       { type: "failed", reason: "request" },
     ] satisfies WorkerToMainMessage[]) {
@@ -138,6 +172,20 @@ describe("worker messages", () => {
       expect(
         WorkerToMainMessage.decode({ type: "tool-call", callId: 1, name: "read", argsJson }),
       ).toEqual({ ok: true, value: { type: "tool-call", callId: 1, name: "read", args } });
+    }
+  });
+
+  test("rejects malformed call-limit results", () => {
+    for (const error of [
+      { kind: "limit", resource: "other", maximum: 1, message: "bad" },
+      { kind: "limit", resource: "tool-calls", message: "bad" },
+      { kind: "limit", resource: "tool-calls", maximum: 0, message: "bad" },
+      { kind: "limit", resource: "concurrent-tool-calls", maximum: "10", message: "bad" },
+      { kind: "limit", resource: "tool-calls", maximum: 1, message: 42 },
+    ]) {
+      expect(
+        WorkerToMainMessage.decode({ type: "completed", result: { ok: false, error } }).ok,
+      ).toBe(false);
     }
   });
 

@@ -2,7 +2,13 @@ import { type SandboxResult } from "./sandbox-result";
 import { type SerializedToolResult } from "./tool";
 
 /** Why execution stopped observing a dispatched call, not the tool's external outcome. */
-export type InterruptionReason = "cancelled" | "timeout" | "script-error" | "sandbox-error";
+export type InterruptionReason =
+  | "cancelled"
+  | "timeout"
+  | "script-error"
+  | "sandbox-error"
+  | "call-limit"
+  | "concurrency-limit";
 
 /** Parent observations, not proof of external side effects or guest receipt. */
 export type CallOutcome = {

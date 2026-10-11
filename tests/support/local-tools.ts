@@ -3,14 +3,16 @@ import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { executeEngine } from "../../src/sandbox-engine";
 import { callTool, serializeToolResult, type SandboxTool } from "../../src/tool";
 import { installGuestToolBridge } from "../../src/guest-tool-bridge";
+import { type ToolCallLimits } from "../../src/tool-call-budget";
 
 export function executeLocally(
   code: string,
   tools: Readonly<Record<string, SandboxTool>> = {},
   timeoutMs = 1000,
+  limits: ToolCallLimits = DEFAULT_LIMITS,
 ) {
   return executeEngine(code, { ...DEFAULT_LIMITS, timeoutMs }, (vm, scope) =>
-    installLocalToolBridge(vm, tools, scope),
+    installLocalToolBridge(vm, tools, scope, limits),
   );
 }
 
@@ -19,6 +21,7 @@ export function installLocalToolBridge(
   vm: QuickJSContext,
   tools: Readonly<Record<string, SandboxTool>>,
   scope: Scope,
+  limits: ToolCallLimits = DEFAULT_LIMITS,
 ) {
   const registry = new Map(Object.entries(tools));
   const context = { signal: new AbortController().signal };
@@ -35,5 +38,6 @@ export function installLocalToolBridge(
       return serializeToolResult(await callTool(tool, args, context));
     },
     scope,
+    limits,
   );
 }

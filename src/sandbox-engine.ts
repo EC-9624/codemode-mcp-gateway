@@ -19,9 +19,13 @@ export async function executeEngine(
 
   const result = await executeScript(vm, code, options.timeoutMs, bridge, interrupt);
 
-  // Error conversion can run guest getters after the job loop's last failure check.
+  // Error conversion can invoke tools after the job loop's last failure/limit check.
   const failure = bridge.failure;
-  if (!failure.ok) throw failure.error;
+  if (!failure.ok) {
+    if ("limit" in failure) return { ok: false, error: failure.limit };
+
+    throw failure.error;
+  }
 
   return result;
 }
@@ -40,10 +44,14 @@ async function executeScript(
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics
   const interrupted = () => interrupt !== undefined && Atomics.load(interrupt, 0) !== 0;
 
-  // Infrastructure failures throw; an expired deadline stops execution with a timeout result.
+  // Infrastructure failures throw; admission limits and deadlines are execution results.
   const checkpoint = (): GuestResult | undefined => {
     const failure = bridge.failure;
-    if (!failure.ok) throw failure.error;
+    if (!failure.ok) {
+      if ("limit" in failure) return { ok: false, error: failure.limit };
+
+      throw failure.error;
+    }
 
     if (interrupted()) {
       return {

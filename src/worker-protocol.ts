@@ -1,6 +1,6 @@
 import { type GuestResult } from "./sandbox-result";
 import { type SerializedToolResult } from "./tool";
-import { isByteLimit, MAX_STACK_SIZE_BYTES } from "./execution-limits";
+import { isByteLimit, isCallCount, MAX_STACK_SIZE_BYTES } from "./execution-limits";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -20,6 +20,8 @@ export type WorkerStartupData = {
   timeoutMs: number;
   memoryLimitBytes: number;
   maxStackSizeBytes: number;
+  maxToolCalls: number;
+  maxConcurrentToolCalls: number;
   interruptBuffer?: SharedArrayBuffer;
 };
 
@@ -33,6 +35,8 @@ export const WorkerStartupData = {
       isTimeoutMs(value.timeoutMs) &&
       isByteLimit(value.memoryLimitBytes) &&
       isByteLimit(value.maxStackSizeBytes, MAX_STACK_SIZE_BYTES) &&
+      isCallCount(value.maxToolCalls) &&
+      isCallCount(value.maxConcurrentToolCalls) &&
       (value.interruptBuffer === undefined ||
         (value.interruptBuffer instanceof SharedArrayBuffer &&
           value.interruptBuffer.byteLength === Int32Array.BYTES_PER_ELEMENT))
@@ -46,6 +50,8 @@ export const WorkerStartupData = {
           timeoutMs: value.timeoutMs,
           memoryLimitBytes: value.memoryLimitBytes,
           maxStackSizeBytes: value.maxStackSizeBytes,
+          maxToolCalls: value.maxToolCalls,
+          maxConcurrentToolCalls: value.maxConcurrentToolCalls,
           ...(value.interruptBuffer === undefined
             ? {}
             : { interruptBuffer: value.interruptBuffer }),
@@ -171,10 +177,15 @@ function isGuestResult(value: unknown): value is GuestResult {
   // The engine already performs JSON conversion; the generic result remains unknown.
   if (value.ok === true) return "value" in value;
 
-  return (
-    value.ok === false &&
-    isRecord(value.error) &&
-    (value.error.kind === "script" || value.error.kind === "timeout") &&
-    typeof value.error.message === "string"
-  );
+  if (value.ok !== false || !isRecord(value.error) || typeof value.error.message !== "string")
+    return false;
+
+  if (value.error.kind === "limit") {
+    return (
+      (value.error.resource === "tool-calls" || value.error.resource === "concurrent-tool-calls") &&
+      isCallCount(value.error.maximum)
+    );
+  }
+
+  return value.error.kind === "script" || value.error.kind === "timeout";
 }

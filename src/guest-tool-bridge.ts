@@ -1,15 +1,22 @@
 import { type QuickJSContext, type QuickJSDeferredPromise, type Scope } from "quickjs-emscripten";
 import { type SerializedToolResult } from "./tool";
+import { DEFAULT_LIMITS } from "./execution-limits";
+import { type ToolCallLimit } from "./sandbox-result";
+import { createToolCallBudget, type ToolCallLimits } from "./tool-call-budget";
 
 export type ToolBridge = {
   pendingCalls: ReadonlySet<Promise<void>>;
-  readonly failure: { ok: true } | { ok: false; error: unknown };
+  readonly failure:
+    | { ok: true }
+    | { ok: false; error: unknown }
+    | { ok: false; limit: ToolCallLimit };
   failureSignal: Promise<void>;
   fail(error: unknown): void;
 };
 
 /**
  * Tool failures arrive as result values so guests can catch them.
+ * Admission limits stop execution before allocating an excess deferred promise.
  * Invocation rejections signal infrastructure failure and must end execution,
  * rather than become catchable guest errors.
  */
@@ -18,7 +25,9 @@ export function installGuestToolBridge(
   toolNames: readonly string[],
   invoke: (name: string, json: string | undefined) => Promise<SerializedToolResult>,
   scope: Scope,
+  limits: ToolCallLimits = DEFAULT_LIMITS,
 ): ToolBridge {
+  const budget = createToolCallBudget(limits);
   const pendingCalls = new Set<Promise<void>>();
   const failureSignal = Promise.withResolvers<void>();
   let failure: ToolBridge["failure"] = { ok: true };
@@ -58,6 +67,15 @@ export function installGuestToolBridge(
           }
         }
 
+        // Reserve before deferred allocation or dispatch, including synchronous guest bursts.
+        const limit = budget.admit();
+        if (limit !== undefined) {
+          failure = { ok: false, limit };
+          failureSignal.resolve();
+
+          return context.undefined;
+        }
+
         // Callback-local `using` would dispose the resolver before the host reply arrives.
         deferred = scope.manage(context.newPromise());
       } catch (error) {
@@ -69,7 +87,16 @@ export function installGuestToolBridge(
 
       const settlement = settlePromise(context, () => invoke(name, json), deferred, scope);
       pendingCalls.add(settlement);
-      void settlement.then(() => pendingCalls.delete(settlement), fail);
+      void settlement.then(
+        () => {
+          budget.release();
+          pendingCalls.delete(settlement);
+        },
+        (error) => {
+          budget.release();
+          fail(error);
+        },
+      );
 
       return deferred.handle;
     });

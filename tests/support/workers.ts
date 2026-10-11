@@ -12,6 +12,8 @@ export function toolWorker(code: string, timeoutMs = 1000, interruptBuffer?: Sha
       timeoutMs,
       memoryLimitBytes: DEFAULT_LIMITS.memoryLimitBytes,
       maxStackSizeBytes: DEFAULT_LIMITS.maxStackSizeBytes,
+      maxToolCalls: DEFAULT_LIMITS.maxToolCalls,
+      maxConcurrentToolCalls: DEFAULT_LIMITS.maxConcurrentToolCalls,
       ...(interruptBuffer === undefined ? {} : { interruptBuffer }),
     } satisfies WorkerStartupData,
   });
@@ -27,6 +29,8 @@ export function faultWorker(scenario: string, toolNames: string[] = []) {
       timeoutMs: 1000,
       memoryLimitBytes: DEFAULT_LIMITS.memoryLimitBytes,
       maxStackSizeBytes: DEFAULT_LIMITS.maxStackSizeBytes,
+      maxToolCalls: DEFAULT_LIMITS.maxToolCalls,
+      maxConcurrentToolCalls: DEFAULT_LIMITS.maxConcurrentToolCalls,
     } satisfies WorkerStartupData,
   });
 }
