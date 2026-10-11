@@ -28,9 +28,11 @@ export function serializeToolResult(result: ToolResult): SerializedToolResult {
     // Getters and toJSON are part of conversion and can throw arbitrary values.
     return ToolResult.failure("Tool result is not JSON-serializable.");
   }
+
   if (serialized === undefined && result.value !== undefined) {
     return ToolResult.failure("Tool result is not JSON-serializable.");
   }
+
   return { ok: true, json: serialized };
 }
 

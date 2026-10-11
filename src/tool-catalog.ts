@@ -24,9 +24,11 @@ export type ToolCatalog = {
 export const ToolCatalog = {
   create(definitions: Readonly<Record<string, ToolDefinition>>): ToolCatalog {
     const entries = Object.entries(definitions);
+
     const tools = Object.freeze(
       Object.fromEntries(entries.map(([name, tool]) => [name, tool.execute])),
     );
+
     // Selecting metadata fields avoids exposing callbacks or private extension fields in discovery.
     const descriptions = new Map(
       entries.map(([name, tool]) => [
@@ -51,9 +53,11 @@ export const ToolCatalog = {
               .filter((term) => term.length > 0),
           ),
         ];
+
         return [...descriptions.values()]
           .map((tool) => {
             const text = `${tool.name} ${tool.description}`.toLowerCase();
+
             return { tool, score: terms.filter((term) => text.includes(term)).length };
           })
           .filter((match) => match.score > 0)
@@ -80,6 +84,7 @@ export function createDiscoveryTools(catalog: ToolCatalog) {
       ) {
         return ToolResult.failure("searchTools expects a non-empty query string in { query }.");
       }
+
       return ToolResult.success(catalog.search(args.query));
     },
     describeTool: (args) => {
@@ -91,8 +96,10 @@ export function createDiscoveryTools(catalog: ToolCatalog) {
       ) {
         return ToolResult.failure("describeTool expects a tool name string in { name }.");
       }
+
       const description = catalog.describe(args.name);
       if (!description) return ToolResult.failure("Tool not found in this catalog.");
+
       return ToolResult.success(description);
     },
   } satisfies Record<string, SandboxTool>;

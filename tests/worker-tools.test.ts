@@ -12,6 +12,7 @@ describe("worker host tools", () => {
       error: { message: "Public failure", diagnostics: () => "Private error details" },
       privateCallback: () => {},
     } as const;
+
     expect(
       await execute("try { await tools.read(); } catch (error) { return error.message; }", {
         read: () => result,
@@ -27,6 +28,7 @@ describe("worker host tools", () => {
           ToolResult.success({
             toJSON() {
               conversions += 1;
+
               return { mainThread: isMainThread, omitted: undefined, values: [undefined, NaN] };
             },
           }),
@@ -42,9 +44,12 @@ describe("worker host tools", () => {
       await execute("return await Promise.all([tools.read(1), tools.read(2)]);", {
         read: async (args) => {
           if (args === 1) await second.promise;
+
           if (typeof args !== "number") return ToolResult.failure("Expected a number");
+
           order.push(args);
           if (args === 2) second.resolve();
+
           return ToolResult.success(args);
         },
       }),
@@ -59,6 +64,7 @@ describe("worker host tools", () => {
         () => ToolResult.success(name),
       ]),
     );
+
     expect(
       await execute(
         "return await Promise.all([tools.__proto__(), tools.constructor(), tools.toString()]);",
@@ -85,9 +91,11 @@ describe("worker host tools", () => {
   test("rejects reply transport failures without turning them into guest tool errors", async () => {
     const worker = toolWorker('try { return await tools.read(); } catch { return "caught"; }');
     const failure = new Error("Private reply transport failure");
+
     using post = spyOn(worker, "postMessage").mockImplementation(() => {
       throw failure;
     });
+
     expect(
       (
         await rejectionOf(
@@ -106,14 +114,17 @@ describe("worker host tools", () => {
       const worker = toolWorker('try { return await tools.read(); } catch { return "caught"; }');
       const send = worker.postMessage.bind(worker);
       using post = spyOn(worker, "postMessage").mockImplementation(() => send(reply));
+
       const failure = (
         await rejectionOf(
           superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
         )
       ).reason;
+
       expect(failure).toBeInstanceOf(Error);
       if (failure instanceof Error)
         expect(failure.message).toContain("Sandbox worker execution failed.");
+
       expect(post).toHaveBeenCalledTimes(1);
     });
   }
@@ -121,16 +132,20 @@ describe("worker host tools", () => {
   test("observes duplicate replies even while guest jobs keep arriving", async () => {
     const worker = toolWorker("tools.read(); while (true) await Promise.resolve();");
     const send = worker.postMessage.bind(worker);
+
     using post = spyOn(worker, "postMessage").mockImplementation((value: unknown) => {
       send(value);
       send(value);
     });
+
     const failure = (
       await rejectionOf(superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])))
     ).reason;
+
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error)
       expect(failure.message).toContain("Sandbox worker execution failed.");
+
     expect(post).toHaveBeenCalledTimes(1);
   });
 
@@ -142,6 +157,7 @@ describe("worker host tools", () => {
     test(`rejects ${name} without dispatching a callback`, async () => {
       const worker = toolWorker("return 42;");
       let calls = 0;
+
       const completion = superviseWorker(
         worker,
         new Map([
@@ -149,11 +165,13 @@ describe("worker host tools", () => {
             "read",
             () => {
               calls += 1;
+
               return ToolResult.success();
             },
           ],
         ]),
       );
+
       worker.emit("message", call);
       expect((await rejectionOf(completion)).reason).toBeInstanceOf(Error);
       expect(calls).toBe(0);
@@ -164,6 +182,7 @@ describe("worker host tools", () => {
     const worker = toolWorker("return 42;");
     const late = Promise.withResolvers<ToolResult>();
     let calls = 0;
+
     const completion = superviseWorker(
       worker,
       new Map([
@@ -171,11 +190,13 @@ describe("worker host tools", () => {
           "read",
           () => {
             calls += 1;
+
             return late.promise;
           },
         ],
       ]),
     );
+
     const call = { type: "tool-call", callId: 1, name: "read", argsJson: undefined };
     worker.emit("message", call);
     worker.emit("message", call);
@@ -197,6 +218,7 @@ describe("worker host tools", () => {
       ToolResult.success({
         toJSON() {
           conversions += 1;
+
           return 42;
         },
       }),
@@ -210,13 +232,17 @@ describe("worker host tools", () => {
     const worker = faultWorker("call-and-crash", ["read"]);
     const late = Promise.withResolvers<ToolResult>();
     using post = spyOn(worker, "postMessage");
+
     const read: SandboxTool = () => {
       worker.postMessage("crash now");
+
       return late.promise;
     };
+
     const failure = (await rejectionOf(superviseWorker(worker, new Map([["read", read]])))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).not.toContain("Private fixture");
+
     late.reject(new Error("Private late failure"));
     await Bun.sleep(0);
     expect(post).toHaveBeenCalledTimes(1);

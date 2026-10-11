@@ -16,6 +16,11 @@ bun run example
 bun run check
 ```
 
+Oxlint enforces blank lines after guards/control-flow blocks, before standalone
+returns, and around multiline declarations. Apply spacing fixes with
+`bun run lint --fix`, then run `bun run format`. Keep logical phases separated
+manually, especially test setup, execution, and assertions.
+
 ## Usage
 
 `src/sandbox.ts` is the public entry point.

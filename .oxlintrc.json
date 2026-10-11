@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "jsPlugins": ["@stylistic/eslint-plugin"],
   "categories": {
     "correctness": "error"
   },
@@ -10,6 +11,21 @@
   },
   "ignorePatterns": ["node_modules/**", "coverage/**"],
   "rules": {
+    "@stylistic/padding-line-between-statements": [
+      "error",
+      { "blankLine": "always", "prev": ["if", "block-like", "for", "while", "do"], "next": "*" },
+      { "blankLine": "always", "prev": "*", "next": "return" },
+      {
+        "blankLine": "always",
+        "prev": "*",
+        "next": ["multiline-const", "multiline-let", "multiline-using"]
+      },
+      {
+        "blankLine": "always",
+        "prev": ["multiline-const", "multiline-let", "multiline-using"],
+        "next": "*"
+      }
+    ],
     "eqeqeq": "error",
     "prefer-const": "error",
     "no-else-return": "error",

@@ -4,6 +4,7 @@ import { executeEngine } from "./sandbox-engine";
 import { WorkerStartupData, type WorkerToMainMessage } from "./worker-protocol";
 
 if (!parentPort) throw new Error("Sandbox worker entry requires a parent port.");
+
 const startup = WorkerStartupData.decode(workerData);
 
 if (!startup.ok) {
@@ -21,12 +22,14 @@ async function run(startup: WorkerStartupData, port: MessagePort): Promise<Worke
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/using
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DisposableStack
     using cleanup = new DisposableStack();
+
     const result = await executeEngine(
       startup.code,
       startup.timeoutMs,
       (vm, scope) => connectGuestToolsToMainThread(vm, startup.toolNames, port, scope, cleanup),
       startup.interruptBuffer === undefined ? undefined : new Int32Array(startup.interruptBuffer),
     );
+
     return { type: "completed", result };
   } catch {
     return { type: "failed", reason: "execution" };

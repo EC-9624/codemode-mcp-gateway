@@ -5,21 +5,26 @@ import { createDiscoveryTools, ToolCatalog } from "../src/tool-catalog";
 describe("host tool catalog", () => {
   test("describes tools without invoking or exposing their implementations", () => {
     let calls = 0;
+
     const definition = {
       description: "List customer invoices",
       inputSchema: { type: "object", properties: { customerId: { type: "string" } } },
       privateDetails: "Private adapter configuration",
       execute: () => {
         calls += 1;
+
         return ToolResult.success([]);
       },
     };
+
     const catalog = ToolCatalog.create({ listInvoices: definition });
+
     const expected = {
       name: "listInvoices",
       description: "List customer invoices",
       inputSchema: definition.inputSchema,
     };
+
     expect(catalog.describe("listInvoices")).toEqual(expected);
     expect(catalog.search("invoices")).toEqual([expected]);
     expect(calls).toBe(0);
@@ -38,6 +43,7 @@ describe("host tool catalog", () => {
       },
       sendEmail: { description: "Send a message", execute: () => ToolResult.success() },
     });
+
     expect(catalog.search("  CUSTOMER invoices customer ").map((tool) => tool.name)).toEqual([
       "customerInvoices",
       "listInvoices",
@@ -62,6 +68,7 @@ describe("host tool catalog", () => {
         execute: () => ToolResult.success(),
       },
     });
+
     expect(catalog.describe("withoutSchema")).toEqual({
       name: "withoutSchema",
       description: "No schema",
@@ -75,6 +82,7 @@ describe("host tool catalog", () => {
       description: "Original description",
       execute: () => ToolResult.success(1),
     };
+
     const definitions = { read: definition };
     const catalog = ToolCatalog.create(definitions);
     definition.description = "Changed description";
@@ -95,6 +103,7 @@ describe("host tool catalog", () => {
         ]),
       ),
     );
+
     expect(catalog.describe("toString")).toBeUndefined();
     expect(catalog.describe("missing")).toBeUndefined();
     expect(
@@ -111,6 +120,7 @@ describe("host tool catalog", () => {
 describe("catalog discovery through the sandbox", () => {
   test("discovers a tool, reads its schema, and calls its existing named wrapper", async () => {
     let calls = 0;
+
     const catalog = ToolCatalog.create({
       "billing.listInvoices": {
         description: "List customer invoices",
@@ -128,11 +138,14 @@ describe("catalog discovery through the sandbox", () => {
           ) {
             return ToolResult.failure("customerId must be a string.");
           }
+
           calls += 1;
+
           return ToolResult.success([{ customerId: args.customerId, total: 42 }]);
         },
       },
     });
+
     const discovery = createDiscoveryTools(catalog);
     expect(
       await execute(
@@ -175,11 +188,13 @@ describe("catalog discovery through the sandbox", () => {
         ToolResult.failure("searchTools expects a non-empty query string in { query }."),
       );
     }
+
     for (const args of [undefined, null, "name", {}, { name: 42 }]) {
       expect(discovery.describeTool(args)).toEqual(
         ToolResult.failure("describeTool expects a tool name string in { name }."),
       );
     }
+
     expect(
       await execute(
         'try { await tools.describeTool({ name: "missing" }); } catch (error) { return error.message; }',
@@ -198,6 +213,7 @@ describe("catalog discovery through the sandbox", () => {
     const catalog = ToolCatalog.create({
       searchTools: { description: "Application tool", execute: () => ToolResult.success(42) },
     });
+
     const discovery = createDiscoveryTools(catalog);
     expect(
       await execute(
@@ -216,7 +232,9 @@ describe("catalog discovery through the sandbox", () => {
         const catalog = ToolCatalog.create({
           [name]: { description: "Read value", execute: () => ToolResult.success(name) },
         });
+
         const discovery = createDiscoveryTools(catalog);
+
         return execute(
           `const matches = await tools.searchTools({ query: "value" });
         return await tools[matches[0].name]();`,
@@ -224,6 +242,7 @@ describe("catalog discovery through the sandbox", () => {
         );
       }),
     );
+
     expect(results).toEqual([
       { ok: true, value: "first" },
       { ok: true, value: "second" },

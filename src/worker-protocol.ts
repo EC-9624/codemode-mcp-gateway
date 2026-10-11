@@ -45,6 +45,7 @@ export const WorkerStartupData = {
         },
       };
     }
+
     return { ok: false, message: "Sandbox worker received an invalid execution request." };
   },
 };
@@ -63,6 +64,7 @@ export type DecodedWorkerMessage =
 export const WorkerToMainMessage = {
   decode(value: unknown): DecodeResult<DecodedWorkerMessage> {
     if (!isRecord(value)) return invalidResponse();
+
     if (
       value.type === "tool-call" &&
       isCallId(value.callId) &&
@@ -72,17 +74,21 @@ export const WorkerToMainMessage = {
     ) {
       const args = parseJsonText(value.argsJson);
       if (!args.ok) return invalidResponse();
+
       return {
         ok: true,
         value: { type: "tool-call", callId: value.callId, name: value.name, args: args.value },
       };
     }
+
     if (value.type === "failed" && (value.reason === "request" || value.reason === "execution")) {
       return { ok: true, value: { type: "failed", reason: value.reason } };
     }
+
     if (value.type === "completed" && isSandboxResult(value.result)) {
       return { ok: true, value: { type: "completed", result: value.result } };
     }
+
     return invalidResponse();
   },
 };
@@ -102,6 +108,7 @@ export const ToolReply = {
         value: { type: "tool-result", callId: value.callId, result: value.result },
       };
     }
+
     return { ok: false, message: "Sandbox worker received an invalid tool reply." };
   },
 };
@@ -128,27 +135,35 @@ function isToolNames(value: unknown): value is string[] {
 
 function parseJsonText(value: unknown): { ok: true; value: unknown } | { ok: false } {
   if (value === undefined) return { ok: true, value: undefined };
+
   if (typeof value !== "string") return { ok: false };
+
   try {
     const parsed: unknown = JSON.parse(value);
+
     return { ok: true, value: parsed };
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
+
     return { ok: false };
   }
 }
 
 function isSerializedToolResult(value: unknown): value is SerializedToolResult {
   if (!isRecord(value)) return false;
+
   // Results stay JSON text so the guest prelude, not the worker, builds guest values.
   if (value.ok === true) return "json" in value && parseJsonText(value.json).ok;
+
   return value.ok === false && isRecord(value.error) && typeof value.error.message === "string";
 }
 
 function isSandboxResult(value: unknown): value is SandboxResult {
   if (!isRecord(value)) return false;
+
   // The engine already performs JSON conversion; the generic result remains unknown.
   if (value.ok === true) return "value" in value;
+
   return (
     value.ok === false &&
     isRecord(value.error) &&

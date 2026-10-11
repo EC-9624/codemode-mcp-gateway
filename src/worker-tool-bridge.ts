@@ -38,20 +38,27 @@ export function connectGuestToolsToMainThread(
   cleanup.defer(() => {
     for (const pendingReply of pendingReplies.values())
       pendingReply.reject(new Error("Sandbox tool transport closed."));
+
     pendingReplies.clear();
   });
+
   listen(cleanup, port, "message", (data: unknown) => {
     if (!bridge.failure.ok) return;
+
     const decodedReply = ToolReply.decode(data);
     if (!decodedReply.ok) {
       bridge.fail(new Error(decodedReply.message));
+
       return;
     }
+
     const pendingReply = pendingReplies.get(decodedReply.value.callId);
     if (!pendingReply) {
       bridge.fail(new Error("Sandbox worker received an unknown or duplicate tool reply."));
+
       return;
     }
+
     pendingReplies.delete(decodedReply.value.callId);
     pendingReply.resolve(decodedReply.value.result);
   });
@@ -61,5 +68,6 @@ export function connectGuestToolsToMainThread(
   listen(cleanup, port, "close", () =>
     bridge.fail(new Error("Sandbox tool transport closed before completion.")),
   );
+
   return bridge;
 }

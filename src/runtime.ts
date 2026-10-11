@@ -10,6 +10,7 @@ export async function createVm(): Promise<QuickJSContext> {
   try {
     vm.runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
     vm.runtime.setMaxStackSize(STACK_LIMIT_BYTES);
+
     return vm;
   } catch (error) {
     // Factory-local `using` would dispose the VM before ownership reaches the caller.

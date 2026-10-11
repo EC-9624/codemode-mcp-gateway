@@ -18,13 +18,16 @@ export function installLocalTools(
   scope: Scope,
 ) {
   const registry = new Map(Object.entries(tools));
+
   return installGuestToolBridge(
     vm,
     [...registry.keys()],
     async (name, json) => {
       const tool = registry.get(name);
       if (!tool) throw new Error("Test bridge referenced an unknown tool.");
+
       const args: unknown = json === undefined ? undefined : JSON.parse(json);
+
       return serializeToolResult(await callTool(tool, args));
     },
     scope,

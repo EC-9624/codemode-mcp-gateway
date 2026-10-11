@@ -16,6 +16,7 @@ describe("parent deadline", () => {
   ] as const) {
     test(`rejects a ${name} total budget before reading tools`, async () => {
       let reads = 0;
+
       const failure = (
         await rejectionOf(
           execute(
@@ -23,6 +24,7 @@ describe("parent deadline", () => {
             {
               get read() {
                 reads++;
+
                 return () => ToolResult.success();
               },
             },
@@ -30,10 +32,12 @@ describe("parent deadline", () => {
           ),
         )
       ).reason;
+
       expect(failure).toBeInstanceOf(RangeError);
       if (failure instanceof RangeError) {
         expect(failure.message).toBe("totalTimeoutMs must be an integer from 1 to 2147483647.");
       }
+
       expect(reads).toBe(0);
     });
   }
@@ -53,10 +57,12 @@ describe("parent deadline", () => {
     const deadline = parentDeadline(100);
     const worker = faultWorker("startup-stall");
     using terminate = spyOn(worker, "terminate");
+
     expect(await superviseWorker(worker, new Map(), deadline)).toEqual(timeout(100));
     expect(Atomics.load(deadline.interrupt, 0)).toBe(1);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
+
     expect(await execute("return 42;", {}, { totalTimeoutMs: 2000 })).toEqual({
       ok: true,
       value: 42,
@@ -67,6 +73,7 @@ describe("parent deadline", () => {
     const deadline = parentDeadline(100);
     deadline.expiresAt = performance.now() - 1;
     const worker = faultWorker("idle");
+
     expect(await superviseWorker(worker, new Map(), deadline)).toEqual(timeout(100));
     expect(Atomics.load(deadline.interrupt, 0)).toBe(1);
     expectNoExecutionListeners(worker);
@@ -80,14 +87,17 @@ describe("parent deadline", () => {
     test(`rejects a late ${name} before the timer callback can run`, async () => {
       const worker = faultWorker("idle");
       let calls = 0;
+
       const completion = superviseWorker(
         worker,
         new Map([["read", () => ToolResult.success(++calls)]]),
         parentDeadline(20),
       );
+
       // Deliberately block the parent: the message handler must consult the clock itself.
       Bun.sleepSync(40);
       worker.emit("message", response);
+
       expect(await completion).toEqual(timeout(20));
       expect(calls).toBe(0);
       expectNoExecutionListeners(worker);
@@ -99,6 +109,7 @@ describe("parent deadline", () => {
       const worker = faultWorker("idle");
       let conversions = 0;
       using post = spyOn(worker, "postMessage");
+
       const completion = superviseWorker(
         worker,
         new Map([
@@ -106,10 +117,12 @@ describe("parent deadline", () => {
             "read",
             () => {
               if (phase === "callback") Bun.sleepSync(40);
+
               return ToolResult.success({
                 toJSON() {
                   conversions++;
                   if (phase === "result conversion") Bun.sleepSync(40);
+
                   return 42;
                 },
               });
@@ -118,7 +131,9 @@ describe("parent deadline", () => {
         ]),
         parentDeadline(20),
       );
+
       worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
+
       expect(await completion).toEqual(timeout(20));
       expect(conversions).toBe(phase === "callback" ? 0 : 1);
       expect(post).not.toHaveBeenCalled();
@@ -135,6 +150,7 @@ describe("parent deadline", () => {
       let calls = 0;
       let conversions = 0;
       using post = spyOn(worker, "postMessage");
+
       expect(
         await superviseWorker(
           worker,
@@ -143,6 +159,7 @@ describe("parent deadline", () => {
               "read",
               () => {
                 calls++;
+
                 return late.promise;
               },
             ],
@@ -151,18 +168,22 @@ describe("parent deadline", () => {
         ),
       ).toEqual(timeout(250));
       expect(calls).toBe(1);
+
       if (outcome === "failure") late.reject(new Error("Private late callback failure"));
       else {
         late.resolve(
           ToolResult.success({
             toJSON() {
               conversions++;
+
               return 42;
             },
           }),
         );
       }
+
       await Bun.sleep(0);
+
       expect(conversions).toBe(0);
       expect(post).not.toHaveBeenCalled();
       expectNoExecutionListeners(worker);
@@ -176,24 +197,33 @@ describe("parent deadline", () => {
     const release = Promise.withResolvers<void>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve());
+
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       const code = await terminateWorker();
       terminating.resolve();
       await release.promise;
+
       return code;
     });
+
     const deadline = parentDeadline(50);
     let settled = false;
+
     const completion = superviseWorker(worker, new Map(), deadline).then((result) => {
       settled = true;
+
       return result;
     });
+
     worker.emit("message", { type: "completed", result: { ok: true, value: 42 } });
     await terminating.promise;
     await Bun.sleep(Math.max(0, deadline.expiresAt - performance.now()) + 20);
+
     expect(settled).toBe(false);
+
     worker.emit("error", new Error("Private late worker failure"));
     release.resolve();
+
     expect(await completion).toEqual({ ok: true, value: 42 });
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
@@ -207,25 +237,35 @@ describe("parent deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve());
     const deadline = parentDeadline(20);
+
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       expect(Atomics.load(deadline.interrupt, 0)).toBe(1);
       expect(worker.listenerCount("message")).toBe(0);
       expect(worker.listenerCount("error")).toBe(1);
+
       const code = await terminateWorker();
       terminating.resolve();
       await release.promise;
+
       return code;
     });
+
     let settled = false;
+
     const completion = superviseWorker(worker, new Map(), deadline).then((result) => {
       settled = true;
+
       return result;
     });
+
     await terminating.promise;
     worker.emit("message", { type: "completed", result: { ok: true, value: 42 } });
     worker.emit("error", new Error("Private late worker failure"));
+
     expect(settled).toBe(false);
+
     release.resolve();
+
     expect(await completion).toEqual(timeout(20));
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
@@ -240,6 +280,7 @@ describe("parent deadline", () => {
     });
     const failure = new Error("Worker termination failed");
     using terminate = spyOn(worker, "terminate").mockRejectedValue(failure);
+
     expect((await rejectionOf(superviseWorker(worker, new Map(), parentDeadline(20)))).reason).toBe(
       failure,
     );
@@ -255,6 +296,7 @@ describe("parent deadline", () => {
       ],
       { stdout: "pipe", stderr: "pipe" },
     );
+
     const timer = setTimeout(() => child.kill(), 5000);
     try {
       const [stdout, stderr, exitCode] = await Promise.all([
@@ -262,15 +304,19 @@ describe("parent deadline", () => {
         new Response(child.stderr).text(),
         child.exited,
       ]);
+
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+
       const results = stdout
         .trim()
         .split("\n")
         .map((line) => {
           const value: unknown = JSON.parse(line);
+
           return value;
         });
+
       expect(results).toEqual([
         { result: timeout(100), called: true },
         {

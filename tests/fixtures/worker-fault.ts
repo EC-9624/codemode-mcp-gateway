@@ -2,6 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { WorkerStartupData, type WorkerToMainMessage } from "../../src/worker-protocol";
 
 if (!parentPort) throw new Error("Fixture requires a parent port");
+
 const request = WorkerStartupData.decode(workerData);
 if (!request.ok) throw new Error(request.message);
 
@@ -44,6 +45,7 @@ switch (request.value.code) {
       argsJson: undefined,
     } satisfies WorkerToMainMessage);
     while (true) {}
+
   case "call-and-crash":
     parentPort.postMessage({
       type: "tool-call",

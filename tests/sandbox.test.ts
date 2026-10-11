@@ -79,14 +79,17 @@ describe("sandbox", () => {
         error: { kind: "script", message: "Script threw a value without an error message." },
       });
     }
+
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 
   test("propagates unexpected parser failures instead of reporting a script error", async () => {
     const failure = new Error("Parser infrastructure failed");
+
     using parser = spyOn(Parser, "parse").mockImplementation(() => {
       throw failure;
     });
+
     expect((await rejectionOf(executeLocally("return 3;"))).reason).toBe(failure);
     expect(parser).toHaveBeenCalledTimes(1);
     parser.mockRestore();
@@ -116,6 +119,7 @@ describe("sandbox", () => {
     const result = await execute("return { then: 3 };");
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toHaveProperty("then", 3);
+
     expect(await execute("Number.prototype.then = () => {}; return 3;")).toEqual({
       ok: true,
       value: 3,
@@ -128,6 +132,7 @@ describe("sandbox", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe("script");
     }
+
     expect(await execute("return () => 3;")).toEqual({
       ok: false,
       error: { kind: "script", message: "Return value is not JSON-serializable." },
@@ -158,6 +163,7 @@ describe("sandbox", () => {
       expect((await execute("return 3;")).ok).toBe(true);
       expect((await execute('throw new Error("failure");')).ok).toBe(false);
     }
+
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 

@@ -176,6 +176,11 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 ## Formatting, Linting, and Checks
 
 - Use Oxfmt for formatting and Oxlint for linting.
+- Use blank lines after guards/control-flow blocks, before standalone returns,
+  and around multiline declarations (including `using`). Oxlint's
+  `@stylistic/padding-line-between-statements` rule enforces these boundaries.
+- Keep related short declarations and assertions grouped; separate logical phases
+  such as test setup, execution, and assertions with a blank line.
 - Preserve established formatting rather than introducing cosmetic churn.
 - Prefer focused native lint rules over blanket restrictive presets.
 - Do not ban legitimate `unknown`, boundary validation, or exceptions merely to

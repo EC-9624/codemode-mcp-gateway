@@ -15,7 +15,9 @@ console.log(
       ) {
         return ToolResult.failure("add expects numeric a and b.");
       }
+
       await Bun.sleep(10);
+
       return ToolResult.success(args.a + args.b);
     },
   }),
@@ -30,6 +32,7 @@ const catalog = ToolCatalog.create({
     execute: () => ToolResult.success(42),
   },
 });
+
 const discovery = createDiscoveryTools(catalog);
 console.log(
   await execute(

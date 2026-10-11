@@ -16,10 +16,13 @@ export async function executeEngine(
   using vm = await createVm();
   using bridgeScope = new Scope();
   const bridge = installBridge(vm, bridgeScope);
+
   const result = await executeScript(vm, code, timeoutMs, bridge, interrupt);
+
   // Error conversion can run guest getters after the job loop's last failure check.
   const failure = bridge.failure;
   if (!failure.ok) throw failure.error;
+
   return result;
 }
 
@@ -32,20 +35,25 @@ async function executeScript(
 ): Promise<SandboxResult> {
   const runtime = vm.runtime;
   using deadline = createDeadline(timeoutMs);
+
   // QuickJS polls this shared flag via Atomics even while worker message handling is blocked.
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics
   const interrupted = () => interrupt !== undefined && Atomics.load(interrupt, 0) !== 0;
+
   // Infrastructure failures throw; an expired deadline stops execution with a timeout result.
   const checkpoint = (): SandboxResult | undefined => {
     const failure = bridge.failure;
     if (!failure.ok) throw failure.error;
+
     if (interrupted()) {
       return {
         ok: false,
         error: { kind: "timeout", message: "Execution interrupted by the parent." },
       };
     }
+
     if (!deadline.passed()) return undefined;
+
     return {
       ok: false,
       error: { kind: "timeout", message: `Execution exceeded the ${timeoutMs} ms limit.` },
@@ -57,13 +65,16 @@ async function executeScript(
   const submission = prepareScript(code);
   const parsed = checkpoint();
   if (parsed) return parsed;
+
   if (!submission.ok) {
     return { ok: false, error: { kind: "script", message: submission.message } };
   }
+
   using evaluated = startScript(vm, submission.source);
   // An interrupted start surfaces as an error; the checkpoint classifies it first.
   const started = checkpoint();
   if (started) return started;
+
   if (evaluated.error) return scriptFailure(vm, evaluated.error);
 
   while (true) {
@@ -74,11 +85,13 @@ async function executeScript(
     using jobs = runtime.executePendingJobs(JOBS_PER_TURN);
     const pumped = checkpoint();
     if (pumped) return pumped;
+
     if (jobs.error) return scriptFailure(vm, jobs.error);
 
     const state = vm.getPromiseState(evaluated.value);
     if (state.type === "rejected") {
       using error = state.error;
+
       return scriptFailure(vm, error);
     }
 
@@ -87,6 +100,7 @@ async function executeScript(
       // A return does not abandon calls already started by the script or toJSON.
       if (!runtime.hasPendingJob() && bridge.pendingCalls.size === 0) {
         const value: unknown = JSON.parse(vm.getString(result));
+
         return { ok: true, value };
       }
     }
@@ -116,6 +130,7 @@ function createDeadline(timeoutMs: number) {
   const expiresAt = performance.now() + timeoutMs;
   const expiration = Promise.withResolvers<void>();
   const timer = setTimeout(expiration.resolve, timeoutMs);
+
   return {
     expired: expiration.promise,
     passed: () => performance.now() >= expiresAt,
@@ -136,8 +151,10 @@ function prepareScript(
     program = parse(source, { ecmaVersion: "latest", sourceType: "script" });
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
+
     return { ok: false, message: error.message };
   }
+
   const statement = program.body[0];
   if (
     program.body.length !== 1 ||
@@ -150,6 +167,7 @@ function prepareScript(
   ) {
     return { ok: false, message: "Source must stay inside the submitted async function body." };
   }
+
   return { ok: true, source };
 }
 
@@ -157,15 +175,19 @@ function startScript(vm: QuickJSContext, source: string) {
   // Disposing an error result here would invalidate the handle the caller must inspect.
   const factory = vm.evalCode(PRELUDE_SOURCE, "sandbox-prelude.js");
   if (factory.error) return factory;
+
   using factoryHandle = factory.value;
   using hostTools = vm.getProp(vm.global, "tools");
   const runner = vm.callFunction(factoryHandle, vm.undefined, hostTools);
   if (runner.error) return runner;
+
   using run = runner.value;
 
   const compiled = vm.evalCode(source, "sandbox.js");
   if (compiled.error) return compiled;
+
   using script = compiled.value;
+
   return vm.callFunction(run, vm.undefined, script);
 }
 
@@ -214,8 +236,11 @@ function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): SandboxR
       error: { kind: "script", message: scriptErrorMessage(context.dump(handle)) },
     };
   }
+
   if (state.type === "fulfilled") state.value.dispose();
+
   if (state.type === "rejected") state.error.dispose();
+
   return { ok: false, error: { kind: "script", message: scriptErrorMessage(undefined) } };
 }
 

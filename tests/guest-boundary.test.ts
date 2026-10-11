@@ -16,14 +16,18 @@ describe("guest prelude boundary", () => {
 
   test("rejects access to raw callbacks without dispatching a host call", async () => {
     let calls = 0;
+
     const result = await execute("return await hostTools.answer();", {
       answer: () => {
         calls += 1;
+
         return ToolResult.success(42);
       },
     });
+
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("script");
+
     expect(calls).toBe(0);
   });
 
@@ -56,10 +60,13 @@ describe("guest prelude boundary", () => {
 
   test("rejects function-wrapper escape syntax before executing any user code", async () => {
     let calls = 0;
+
     const write = () => {
       calls += 1;
+
       return ToolResult.success();
     };
+
     for (const code of [
       "}); tools.write(); (async (tools) => { return 3;",
       "}), tools.write(), (async (tools) => { return 3;",
@@ -67,8 +74,10 @@ describe("guest prelude boundary", () => {
       const result = await execute(code, { write });
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe("script");
+
       expect(calls).toBe(0);
     }
+
     expect(await execute("return 3;")).toEqual({ ok: true, value: 3 });
   });
 
@@ -126,14 +135,18 @@ describe("guest prelude boundary", () => {
 
   test("rejects assignments to public tools before dispatch", async () => {
     let calls = 0;
+
     const result = await execute("tools.answer = () => 0; return await tools.answer();", {
       answer: () => {
         calls += 1;
+
         return ToolResult.success(42);
       },
     });
+
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("script");
+
     expect(calls).toBe(0);
   });
 

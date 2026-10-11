@@ -74,8 +74,10 @@ describe("worker execution", () => {
         while (Date.now() - started < 400) {}
         return { started, ended: Date.now() };
       `);
+
       expect(result.ok).toBe(true);
       if (!result.ok) return;
+
       const value = result.value;
       if (
         typeof value !== "object" ||
@@ -86,6 +88,7 @@ describe("worker execution", () => {
         typeof value.ended !== "number"
       )
         throw new Error("Expected numeric guest computation timestamps.");
+
       const started = value.started;
       const ended = value.ended;
       expect(ticks.some((tick) => tick > started + 50 && tick < ended - 50)).toBe(true);
@@ -106,6 +109,7 @@ describe("worker execution", () => {
     const worker = new Worker(new URL("../src/worker-entry.ts", import.meta.url), {
       workerData: { type: "execute", code: 42 },
     });
+
     try {
       const response = Promise.withResolvers<unknown>();
       worker.once("message", (data: unknown) => response.resolve(data));
@@ -120,6 +124,7 @@ describe("worker execution", () => {
     const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
+
     expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
@@ -139,6 +144,7 @@ describe("worker execution", () => {
         expect(failure.message).toContain(message);
         expect(failure.message).not.toContain("Private fixture failure details");
       }
+
       expectNoExecutionListeners(worker);
       expect(terminate).toHaveBeenCalledTimes(1);
       expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
@@ -148,16 +154,20 @@ describe("worker execution", () => {
   test("settles once and cleans up listeners and the worker", async () => {
     const worker = faultWorker("duplicate");
     const terminateWorker = worker.terminate.bind(worker);
+
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       const removedListeners = ["message", "messageerror", "exit"].map((name) =>
         worker.listenerCount(name),
       );
+
       const errorListeners = worker.listenerCount("error");
       const code = await terminateWorker();
       expect(removedListeners).toEqual([0, 0, 0]);
       expect(errorListeners).toBeGreaterThan(0);
+
       return code;
     });
+
     expect(await superviseWorker(worker)).toEqual({ ok: true, value: 42 });
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
@@ -167,12 +177,14 @@ describe("worker execution", () => {
     const worker = new Worker(new URL("./fixtures/worker-parser-fault.ts", import.meta.url), {
       workerData: { type: "execute", code: "return 42;", toolNames: [], timeoutMs: 1000 },
     });
+
     const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
       expect(failure.message).not.toContain("Private parser infrastructure details");
     }
+
     expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
   });
 
@@ -185,6 +197,7 @@ describe("worker execution", () => {
     const failure = (await rejectionOf(completion)).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("could not be deserialized");
+
     expectNoExecutionListeners(worker);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -198,12 +211,14 @@ describe("worker execution", () => {
         timeoutMs: 1000,
       },
     });
+
     const failure = (await rejectionOf(superviseWorker(worker))).reason;
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
       expect(failure.message).not.toContain("Private worker allocation details");
     }
+
     expectNoExecutionListeners(worker);
     expect(await execute("return 42;")).toEqual({ ok: true, value: 42 });
   });
@@ -214,6 +229,7 @@ describe("worker execution", () => {
       const failure = new Error("Listener setup failed");
       let workerErrorObserved = false;
       const addListener = worker.on.bind(worker);
+
       using add = spyOn(worker, "on").mockImplementation((...args: Parameters<Worker["on"]>) => {
         const added = addListener(...args);
         if (args[0] === "message") {
@@ -223,17 +239,23 @@ describe("worker execution", () => {
               new Error("Private worker failure during setup"),
             );
           }
+
           throw failure;
         }
+
         return added;
       });
+
       const terminateWorker = worker.terminate.bind(worker);
+
       using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
         if (errorPhase === "termination") {
           workerErrorObserved = worker.emit("error", new Error("Private late worker failure"));
         }
+
         return await terminateWorker();
       });
+
       expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
       // Unhandled promise rejections fail bun:test; allow the rejection checkpoint to run.
       await Bun.sleep(0);
@@ -265,17 +287,23 @@ describe("worker execution", () => {
     const release = Promise.withResolvers<void>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve());
+
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       const code = await terminateWorker();
       terminating.resolve();
       await release.promise;
+
       return code;
     });
+
     let settled = false;
+
     const completion = superviseWorker(worker).then((result) => {
       settled = true;
+
       return result;
     });
+
     await terminating.promise;
     expect(settled).toBe(false);
     expect(worker.listenerCount("message")).toBe(0);
@@ -291,22 +319,29 @@ describe("worker execution", () => {
     const worker = faultWorker("idle");
     const failure = new Error("Listener setup failed");
     const addListener = worker.on.bind(worker);
+
     using add = spyOn(worker, "on").mockImplementation((...args: Parameters<Worker["on"]>) => {
       const added = addListener(...args);
       if (args[0] === "messageerror") throw failure;
+
       return added;
     });
+
     const terminateWorker = worker.terminate.bind(worker);
+
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       const removedListeners = ["message", "messageerror", "exit"].map((name) =>
         worker.listenerCount(name),
       );
+
       const errorListeners = worker.listenerCount("error");
       const code = await terminateWorker();
       expect(removedListeners).toEqual([0, 0, 0]);
       expect(errorListeners).toBeGreaterThan(0);
+
       return code;
     });
+
     expect((await rejectionOf(superviseWorker(worker))).reason).toBe(failure);
     expect(add).toHaveBeenCalledWith("messageerror", expect.any(Function));
     expectNoExecutionListeners(worker);
@@ -321,6 +356,7 @@ describe("worker execution", () => {
         stderr: "pipe",
       },
     );
+
     const timer = setTimeout(() => child.kill(), 10000);
     try {
       const [stdout, stderr, exitCode] = await Promise.all([
@@ -328,6 +364,7 @@ describe("worker execution", () => {
         new Response(child.stderr).text(),
         child.exited,
       ]);
+
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
       expect(
@@ -336,6 +373,7 @@ describe("worker execution", () => {
           .split("\n")
           .map((line) => {
             const value: unknown = JSON.parse(line);
+
             return value;
           }),
       ).toEqual([

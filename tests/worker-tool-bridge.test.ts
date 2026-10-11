@@ -11,9 +11,11 @@ test("worker-side posting failures bypass guest catch and release transport list
   const port1 = channel.port1;
   using cleanup = new DisposableStack();
   const failure = new Error("Private worker transport failure");
+
   using post = spyOn(port1, "postMessage").mockImplementation(() => {
     throw failure;
   });
+
   const result = await rejectionOf(
     executeEngine(
       'try { return await tools.read(); } catch { return "caught"; }',
@@ -21,6 +23,7 @@ test("worker-side posting failures bypass guest catch and release transport list
       (vm, scope) => connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
     ),
   );
+
   expect(result.reason).toBe(failure);
   expect(post).toHaveBeenCalledTimes(1);
   cleanup.dispose();
@@ -39,6 +42,7 @@ for (const [name, event, message] of [
     using cleanup = new DisposableStack();
     // Failing during setup would not exercise the engine's idle host-call wait.
     port2.once("message", () => port1.emit(event, new Error("Injected transport failure")));
+
     const result = await rejectionOf(
       executeEngine(
         'try { return await tools.read(); } catch { return "caught"; }',
@@ -46,8 +50,10 @@ for (const [name, event, message] of [
         (vm, scope) => connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup),
       ),
     );
+
     expect(result.reason).toBeInstanceOf(Error);
     if (result.reason instanceof Error) expect(result.reason.message).toBe(message);
+
     cleanup.dispose();
     expect(port1.listenerCount("message")).toBe(0);
   });
@@ -60,16 +66,21 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
   const failure = new Error("Remote listener setup failed");
   const resources: ExecutionResources[] = [];
   const add = port1.on.bind(port1);
+
   using on = spyOn(port1, "on").mockImplementation((...args: Parameters<typeof port1.on>) => {
     if (args[0] === "messageerror") throw failure;
+
     return add(...args);
   });
+
   const result = await rejectionOf(
     executeEngine("return 42;", 1000, (vm, scope) => {
       resources.push({ vm, scope });
+
       return connectGuestToolsToMainThread(vm, ["read"], port1, scope, cleanup);
     }),
   );
+
   expect(result.reason).toBe(failure);
   expect(on).toHaveBeenCalledWith("messageerror", expect.any(Function));
   expectDisposedExecution(resources);
@@ -77,11 +88,13 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
   for (const name of ["message", "messageerror", "close"]) {
     expect(port1.listenerCount(name)).toBe(0);
   }
+
   expect(await executeLocally("return 42;")).toEqual({ ok: true, value: 42 });
 });
 
 function openChannel() {
   const channel = new MessageChannel();
+
   return {
     port1: channel.port1,
     port2: channel.port2,

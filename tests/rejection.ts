@@ -5,5 +5,6 @@ export async function rejectionOf(operation: Promise<unknown>): Promise<{ reason
   } catch (reason) {
     return { reason };
   }
+
   throw new Error("Expected the operation to reject, but it resolved.");
 }

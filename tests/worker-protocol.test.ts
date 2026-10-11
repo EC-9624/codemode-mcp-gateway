@@ -24,6 +24,7 @@ describe("worker startup data", () => {
     for (const toolNames of [null, [42], ["read", "read"], Array(1)]) {
       expect(WorkerStartupData.decode({ ...request, toolNames }).ok).toBe(false);
     }
+
     expect(
       WorkerStartupData.decode({ type: "execute", code: "return 42;", timeoutMs: 1000 }).ok,
     ).toBe(false);
@@ -33,6 +34,7 @@ describe("worker startup data", () => {
     for (const timeoutMs of [undefined, 0, -1, 1.5, NaN, Infinity, 2 ** 31, "1000"]) {
       expect(WorkerStartupData.decode({ ...request, timeoutMs }).ok).toBe(false);
     }
+
     expect(WorkerStartupData.decode({ ...request, timeoutMs: 2 ** 31 - 1 }).ok).toBe(true);
   });
 
@@ -41,6 +43,7 @@ describe("worker startup data", () => {
     const decoded = WorkerStartupData.decode({ ...request, interruptBuffer });
     expect(decoded.ok).toBe(true);
     if (!decoded.ok) return;
+
     expect(decoded.value.interruptBuffer).toBe(interruptBuffer);
   });
 
@@ -69,6 +72,7 @@ describe("worker messages", () => {
     ] satisfies WorkerToMainMessage[]) {
       expect(WorkerToMainMessage.decode(value)).toEqual({ ok: true, value });
     }
+
     for (const value of [
       null,
       undefined,
@@ -123,6 +127,7 @@ describe("tool replies", () => {
       callId: 1,
       result: ToolResult.failure("Public failure"),
     } as const;
+
     expect(ToolReply.decode(failure)).toEqual({ ok: true, value: failure });
   });
 

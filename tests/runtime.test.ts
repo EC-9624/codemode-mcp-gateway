@@ -22,6 +22,7 @@ describe("runtime setup", () => {
       expect(owner.alive).toBe(true);
       expect(runtime.alive).toBe(true);
     }
+
     expect(vm.alive).toBe(false);
     expect(runtime.alive).toBe(false);
   });

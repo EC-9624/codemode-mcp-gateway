@@ -18,7 +18,9 @@ const add: SandboxTool = async (args) => {
   ) {
     return ToolResult.failure("add expects numeric a and b.");
   }
+
   await Bun.sleep(1);
+
   return ToolResult.success(args.a + args.b);
 };
 
@@ -58,6 +60,7 @@ describe("guest tool bridge", () => {
           add,
           fail: async () => {
             await Bun.sleep(1);
+
             return ToolResult.failure("An expected failure");
           },
         },
@@ -101,6 +104,7 @@ describe("guest tool bridge", () => {
       await execute("const call = tools.answer(); return [await call, await call];", {
         answer: () => {
           calls += 1;
+
           return ToolResult.success(3);
         },
       }),
@@ -116,7 +120,9 @@ describe("guest tool bridge", () => {
         echo: async (args) => {
           started += 1;
           if (started === 2) bothStarted.resolve();
+
           await bothStarted.promise;
+
           return ToolResult.success(args);
         },
       }),
@@ -139,17 +145,21 @@ describe("guest tool bridge", () => {
       cleanup.defer(() => release.resolve());
       let completed = false;
       let settled = false;
+
       const completion = execute(scenario.code, {
         write: async () => {
           started.resolve();
           await release.promise;
           completed = true;
+
           return ToolResult.success();
         },
       }).then((result) => {
         settled = true;
+
         return result;
       });
+
       await started.promise;
       expect(settled).toBe(false);
       expect(completed).toBe(false);
@@ -167,6 +177,7 @@ describe("guest tool bridge", () => {
     let completed = false;
     let calls = 0;
     let settled = false;
+
     const completion = execute(
       `
         const winner = await Promise.race([tools.fast(), tools.slow()]);
@@ -179,17 +190,21 @@ describe("guest tool bridge", () => {
           calls += 1;
           await releaseLoser.promise;
           completed = true;
+
           return ToolResult.success(2);
         },
         reportWinner: (winner) => {
           winnerObserved.resolve(winner);
+
           return ToolResult.success();
         },
       },
     ).then((result) => {
       settled = true;
+
       return result;
     });
+
     expect(await winnerObserved.promise).toBe(1);
     expect(settled).toBe(false);
     expect(completed).toBe(false);
@@ -215,6 +230,7 @@ describe("guest tool bridge", () => {
       await execute("return await tools.echo();", {
         echo: (args) => {
           argument = args;
+
           return ToolResult.success(args);
         },
       }),
@@ -259,11 +275,13 @@ describe("guest tool bridge", () => {
     using vm = await createVm();
     using scope = new Scope();
     let calls = 0;
+
     const bridge = installLocalTools(
       vm,
       {
         echo: (args) => {
           calls += 1;
+
           return ToolResult.success(args);
         },
       },
@@ -274,6 +292,7 @@ describe("guest tool bridge", () => {
       using result = vm.evalCode(code);
       expect(result.error).toBeDefined();
     }
+
     expect(calls).toBe(0);
     expect(bridge.pendingCalls.size).toBe(0);
   });
@@ -284,9 +303,11 @@ describe("guest tool bridge", () => {
       using scope = new Scope();
       const bridge = installLocalTools(vm, { answer: () => ToolResult.success(42) }, scope);
       const failure = new Error("VM infrastructure failed");
+
       using fault = spyOn(vm, method).mockImplementation(() => {
         throw failure;
       });
+
       using guestErrors = spyOn(vm, "newError");
 
       using result = vm.evalCode("tools.answer();");
@@ -316,32 +337,41 @@ describe("guest tool bridge", () => {
       let calls = 0;
       let guestErrors = 0;
       const resources: ExecutionResources[] = [];
+
       const completion = executeEngine(code, 1000, (vm, scope) => {
         resources.push({ vm, scope });
+
         const fault = spyOn(vm, "newPromise").mockImplementation(() => {
           allocations += 1;
           throw failure;
         });
+
         const newError = vm.newError.bind(vm);
+
         const errors = spyOn(vm, "newError").mockImplementation(
           (...args: Parameters<typeof vm.newError>) => {
             guestErrors += 1;
+
             return newError(...args);
           },
         );
+
         cleanup.defer(() => fault.mockRestore());
         cleanup.defer(() => errors.mockRestore());
+
         return installLocalTools(
           vm,
           {
             read: () => {
               calls += 1;
+
               return ToolResult.success(42);
             },
           },
           scope,
         );
       });
+
       expect((await rejectionOf(completion)).reason).toBe(failure);
       expect(allocations).toBe(1);
       expect(calls).toBe(0);
@@ -359,20 +389,25 @@ describe("guest tool bridge", () => {
       using vm = await createVm();
       using scope = new Scope();
       let calls = 0;
+
       const bridge = installLocalTools(
         vm,
         {
           read: () => {
             calls += 1;
+
             return ToolResult.success(42);
           },
         },
         scope,
       );
+
       const failure = new Error("Private synchronous bridge failure");
+
       using fault = spyOn(vm, method).mockImplementation(() => {
         throw failure;
       });
+
       using result = vm.evalCode(code);
       expect(result.error).toBeUndefined();
       expect(bridge.failure).toEqual({ ok: false, error: failure });
@@ -386,12 +421,15 @@ describe("guest tool bridge", () => {
   test("propagates VM failures while rejecting an explicit tool failure", async () => {
     using vm = await createVm();
     using scope = new Scope();
+
     const bridge = installLocalTools(
       vm,
       { fail: () => ToolResult.failure("Public failure") },
       scope,
     );
+
     const failure = new Error("VM infrastructure failed");
+
     using fault = spyOn(vm, "newError").mockImplementation(() => {
       throw failure;
     });
@@ -406,11 +444,13 @@ describe("guest tool bridge", () => {
     const failure = new Error("VM allocation failed");
     using cleanup = new DisposableStack();
     const resources: ExecutionResources[] = [];
+
     const completion = executeEngine(
       "tools.answer(); while (true) await Promise.resolve();",
       1000,
       (vm, scope) => {
         resources.push({ vm, scope });
+
         return installLocalTools(
           vm,
           {
@@ -419,7 +459,9 @@ describe("guest tool bridge", () => {
               const fault = spyOn(vm, "newString").mockImplementation(() => {
                 throw failure;
               });
+
               cleanup.defer(() => fault.mockRestore());
+
               return ToolResult.success(42);
             },
           },
@@ -427,6 +469,7 @@ describe("guest tool bridge", () => {
         );
       },
     );
+
     expect((await rejectionOf(completion)).reason).toBe(failure);
     expectDisposedExecution(resources);
     cleanup.dispose();
@@ -435,10 +478,13 @@ describe("guest tool bridge", () => {
 
   test("rejects non-JSON arguments before host dispatch", async () => {
     let calls = 0;
+
     const echo: SandboxTool = (args) => {
       calls += 1;
+
       return ToolResult.success(args);
     };
+
     for (const code of [
       "return await tools.echo(1n);",
       "return await tools.echo(() => 3);",
@@ -448,6 +494,7 @@ describe("guest tool bridge", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe("script");
     }
+
     expect(calls).toBe(0);
   });
 
@@ -529,6 +576,7 @@ describe("guest tool bridge", () => {
         {
           wait: async () => {
             await Bun.sleep(5);
+
             return ToolResult.success();
           },
         },
@@ -542,11 +590,13 @@ describe("guest tool bridge", () => {
         execute("return await tools.read();", {
           read: async () => {
             await Bun.sleep(1);
+
             return ToolResult.success(value);
           },
         }),
       ),
     );
+
     expect(results).toEqual(Array.from({ length: 10 }, (_, value) => ({ ok: true, value })));
   });
 
@@ -581,6 +631,7 @@ describe("guest tool bridge", () => {
       });
       if (fail) late.reject(new Error("Late private failure"));
       else late.resolve(3);
+
       await Bun.sleep(0);
       expect(await execute("return await tools.add({ a: 1, b: 2 });", { add })).toEqual({
         ok: true,

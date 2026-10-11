@@ -8,6 +8,7 @@ const startupDeadline = {
   expiresAt: performance.now() + 100,
   interrupt: new Int32Array(new SharedArrayBuffer(4)),
 } satisfies WorkerDeadline;
+
 let startupCalled = false;
 console.log(
   JSON.stringify({
@@ -18,6 +19,7 @@ console.log(
           "read",
           () => {
             startupCalled = true;
+
             return ToolResult.success();
           },
         ],
@@ -39,11 +41,13 @@ try {
       started: () => {
         called = true;
         startedTicks = ticks;
+
         return ToolResult.success();
       },
     },
     { timeoutMs: 10000, totalTimeoutMs: 500 },
   );
+
   console.log(
     JSON.stringify({
       result,
@@ -67,6 +71,7 @@ console.log(
           "read",
           () => {
             Atomics.store(interrupt, 0, 1);
+
             return ToolResult.success();
           },
         ],
