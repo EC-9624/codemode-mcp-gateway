@@ -2,6 +2,7 @@ export type ExecutionLimits = {
   readonly memoryLimitBytes: number;
   readonly maxStackSizeBytes: number;
   readonly maxSourceBytes: number;
+  readonly maxOutputBytes: number;
   readonly maxToolCalls: number;
   readonly maxConcurrentToolCalls: number;
 };
@@ -10,6 +11,7 @@ export const DEFAULT_LIMITS: ExecutionLimits = {
   memoryLimitBytes: 64 * 1024 * 1024,
   maxStackSizeBytes: 1024 * 1024,
   maxSourceBytes: 256 * 1024,
+  maxOutputBytes: 256 * 1024,
   maxToolCalls: 100,
   maxConcurrentToolCalls: 10,
 };

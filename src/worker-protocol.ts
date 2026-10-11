@@ -20,6 +20,7 @@ export type WorkerStartupData = {
   timeoutMs: number;
   memoryLimitBytes: number;
   maxStackSizeBytes: number;
+  maxOutputBytes: number;
   maxToolCalls: number;
   maxConcurrentToolCalls: number;
   interruptBuffer?: SharedArrayBuffer;
@@ -35,6 +36,7 @@ export const WorkerStartupData = {
       isTimeoutMs(value.timeoutMs) &&
       isByteLimit(value.memoryLimitBytes) &&
       isByteLimit(value.maxStackSizeBytes, MAX_STACK_SIZE_BYTES) &&
+      isByteLimit(value.maxOutputBytes) &&
       isCallCount(value.maxToolCalls) &&
       isCallCount(value.maxConcurrentToolCalls) &&
       (value.interruptBuffer === undefined ||
@@ -50,6 +52,7 @@ export const WorkerStartupData = {
           timeoutMs: value.timeoutMs,
           memoryLimitBytes: value.memoryLimitBytes,
           maxStackSizeBytes: value.maxStackSizeBytes,
+          maxOutputBytes: value.maxOutputBytes,
           maxToolCalls: value.maxToolCalls,
           maxConcurrentToolCalls: value.maxConcurrentToolCalls,
           ...(value.interruptBuffer === undefined
@@ -181,6 +184,8 @@ function isGuestResult(value: unknown): value is GuestResult {
     return false;
 
   if (value.error.kind === "limit") {
+    if (value.error.resource === "output") return isByteLimit(value.error.maximum);
+
     return (
       (value.error.resource === "tool-calls" || value.error.resource === "concurrent-tool-calls") &&
       isCallCount(value.error.maximum)

@@ -111,6 +111,34 @@ test("rejects prelude factory invocation failure and disposes execution resource
   expectDisposedExecution(resources);
 });
 
+test.each([
+  ["return value", 'await tools.read(); return "x".repeat(40);'],
+  ["error message", 'await tools.read(); throw new Error("x".repeat(40));'],
+] as const)("disposes execution resources after an oversized %s", async (_name, code) => {
+  const resources: ExecutionResources[] = [];
+
+  const result = await executeEngine(
+    code,
+    { ...DEFAULT_LIMITS, timeoutMs: 1000, maxOutputBytes: 32 },
+    (vm, scope) => {
+      resources.push({ vm, scope });
+
+      return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
+    },
+  );
+
+  expect(result).toEqual({
+    ok: false,
+    error: {
+      kind: "limit",
+      resource: "output",
+      maximum: 32,
+      message: "Output exceeds the 32 byte limit.",
+    },
+  });
+  expectDisposedExecution(resources);
+});
+
 test("preserves timeout classification during prelude initialization", async () => {
   const resources: ExecutionResources[] = [];
 

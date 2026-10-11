@@ -81,14 +81,15 @@ await execute(code, tools);
 await execute(code, tools, { memoryLimitBytes: 128 * 1024 * 1024 });
 ```
 
-| Option              | Default             | Applies to                                       |
-| ------------------- | ------------------- | ------------------------------------------------ |
-| `memoryLimitBytes`  | 64 MiB (`67108864`) | QuickJS guest heap allocation                    |
-| `maxStackSizeBytes` | 1 MiB (`1048576`)   | QuickJS stack guard                              |
-| `maxSourceBytes`    | 256 KiB (`262144`)  | Submitted function body, measured in UTF-8 bytes |
+| Option              | Default             | Applies to                                                      |
+| ------------------- | ------------------- | --------------------------------------------------------------- |
+| `memoryLimitBytes`  | 64 MiB (`67108864`) | QuickJS guest heap allocation                                   |
+| `maxStackSizeBytes` | 1 MiB (`1048576`)   | QuickJS stack guard                                             |
+| `maxSourceBytes`    | 256 KiB (`262144`)  | Submitted function body, measured in UTF-8 bytes                |
+| `maxOutputBytes`    | 256 KiB (`262144`)  | Final JSON return value or script-error message, in UTF-8 bytes |
 
 Omitted fields use their defaults. Each value must be a positive integer.
-Memory and source limits allow up to 2147483647 bytes; the stack limit allows up to
+Memory, source, and output limits allow up to 2147483647 bytes; the stack limit allows up to
 4 MiB (`4194304`), leaving headroom below the pinned WASM build's 5 MiB stack.
 Invalid values reject with `RangeError` before registry access or worker
 startup, even when the caller signal is already aborted. Zero, negative values,
@@ -133,6 +134,53 @@ sandbox setup from completing.
 These settings do not cap total host/WASM memory or enlarge the WASM build's
 physical stack. Source admission happens before the execution deadlines start;
 guest parsing remains covered by `timeoutMs` and the optional parent deadline.
+
+### Final output limit
+
+`maxOutputBytes` bounds the guest's final return value and script-error message:
+
+```ts
+await execute('return "too much";', {}, { maxOutputBytes: 5 });
+// {
+//   result: {
+//     ok: false,
+//     error: {
+//       kind: "limit", resource: "output", maximum: 5,
+//       message: "Output exceeds the 5 byte limit."
+//     }
+//   },
+//   calls: []
+// }
+```
+
+Return values count their serialized JSON bytes, including quotes and escapes;
+undefined returns normalize to `null` (four bytes). Script errors count the raw
+message's UTF-8 bytes, including thrown strings, syntax errors, and conversion
+errors. Exactly the configured size is accepted. Oversized output is rejected,
+not truncated.
+
+```text
+guest serializes return value once -> drain started calls and guest jobs
+  -> worker measures JSON text -> output limit, or parse and return value
+guest throws -> convert public script-error message
+  -> worker measures message -> output limit, or return script error
+```
+
+Size checks run in the worker before sending the result to the parent. JSON return
+text is checked before parsing into host data. Controlled timeout, cancellation,
+and limit diagnostics are not subject to this content limit; an output-limit
+message can itself be longer than a very small configured maximum.
+
+Completed tool responses remain available. Pending calls when an oversized script
+error ends execution are interrupted with `reason: "output-limit"`, including
+when worker cleanup later fails. Return values retain the existing drain-before-
+completion behavior. Tool arguments, tool responses, and retained response bodies
+are not capped by `maxOutputBytes`: a script can process a large dataset and return
+a small summary. This is a final guest-output bound, not a bound on the full report.
+
+Serialization, error conversion, and reading text from the VM can allocate before
+measurement. The output limit does not bound those temporary allocations or total
+host memory.
 
 ### Tool-call limits
 
@@ -219,7 +267,7 @@ Each call record has an execution-local `callId`, tool `name`, and one of:
   `{ ok: false, error: { message: string } }`.
 - `interrupted`: the parent started invocation but had not recorded its response
   when execution stopped. `reason` explains why observation ended:
-  `cancelled`, `timeout`, `script-error`, `sandbox-error`, `call-limit`, or `concurrency-limit`.
+  `cancelled`, `timeout`, `script-error`, `sandbox-error`, `call-limit`, `concurrency-limit`, or `output-limit`.
   The operation may still finish or have side effects.
 
 `cancelled` means the caller requested cancellation; `timeout` means a guest or
@@ -227,6 +275,7 @@ total deadline expired; `script-error` means guest execution failed; `sandbox-er
 means the worker, transport, or execution machinery failed. Detailed sandbox
 failure causes remain on `SandboxExecutionError` rather than in each call record.
 `call-limit` and `concurrency-limit` identify execution stopped by tool admission.
+`output-limit` identifies an oversized final guest result or script-error message.
 
 Completed means an observed response, not guest receipt or proof of an external
 transaction. Even a failed response, including the generic response for a thrown
@@ -486,6 +535,8 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 - Tool admission exhaustion resolves with `kind: "limit"` and resource
   `tool-calls` or `concurrent-tool-calls`. The worker and parent each enforce these
   limits; they are distinct from catchable tool failures and sandbox errors.
+- Oversized guest output resolves with `kind: "limit"`, `resource: "output"` and
+  its byte maximum. The worker enforces this before transferring its result.
 - `ToolResult.failure(message)` is the only way a host message reaches the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
@@ -639,8 +690,8 @@ generators, and the guest-global `this` binding remain supported.
 - This is thread separation, not an OS or process sandbox. The trusted worker has
   Bun privileges; guest code runs only inside QuickJS.
 - Configurable limits cover guest heap (default 64 MiB), stack (default 1 MiB),
-  submitted source (default 256 KiB), and deadlines, not total host/WASM memory or
-  model-facing output size.
+  submitted source and final guest output (each default 256 KiB), and deadlines,
+  not total host/WASM memory or the full execution report's size.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
 - Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
   a stuck worker that neither reports nor exits can leave execution pending.
@@ -706,11 +757,12 @@ one layer. Typechecking includes all test helpers and fixtures.
 8. Parent-owned execution reports with completed responses and explicit call interruption reasons.
 9. Optional memory, stack, and UTF-8 source limits with defaults and pre-startup admission.
 10. Per-execution tool-call and concurrency limits enforced before deferred allocation and host dispatch.
+11. Optional final guest-output limit covering UTF-8 JSON returns and script-error messages.
 
 Next:
 
-1. Bounds on payloads, output, and retained responses.
-2. Schema-backed argument validation and one synthetic MCP upstream to the host catalog.
+1. One synthetic MCP upstream to the host catalog, exercising realistic tool payloads.
+2. Schema-backed argument validation; revisit payload/retention bounds using integration evidence.
 3. Soak/fault testing, latency/memory measurements, and reference comparisons.
 
 Do not add a gateway framework before the sandbox behavior is understood.

@@ -75,7 +75,7 @@ describe("worker-side admission", () => {
   test("preserves a call limit triggered during guest error conversion", async () => {
     const result = await executeEngine(
       'await tools.read(); throw { get message() { tools.read(); return "Guest failure"; } };',
-      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+      { ...DEFAULT_LIMITS, timeoutMs: 1000, maxOutputBytes: 1 },
       (vm, scope) =>
         installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope, {
           maxToolCalls: 1,

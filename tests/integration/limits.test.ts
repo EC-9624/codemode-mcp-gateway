@@ -8,6 +8,7 @@ describe("execution limit options", () => {
     ["memoryLimitBytes", 2147483647],
     ["maxStackSizeBytes", 4194304],
     ["maxSourceBytes", 2147483647],
+    ["maxOutputBytes", 2147483647],
   ] as const) {
     test.each([
       ["zero", 0],

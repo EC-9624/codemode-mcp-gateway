@@ -281,6 +281,43 @@ describe("parent-owned call outcomes", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
+  test("preserves the output-limit snapshot when cleanup rejects", async () => {
+    const worker = faultWorker("idle");
+    const terminateWorker = worker.terminate.bind(worker);
+    const cause = new Error("Termination failed");
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+
+    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+      await terminateWorker();
+      throw cause;
+    });
+
+    const completion = superviseWorker(worker, new Map([["read", () => late.promise]]));
+
+    worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
+    worker.emit("message", {
+      type: "completed",
+      result: {
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "output",
+          maximum: 1,
+          message: "Output exceeds the 1 byte limit.",
+        },
+      },
+    });
+    const error = await executionErrorOf(completion);
+
+    expect(error.cause).toBe(cause);
+    expect(error.calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "output-limit" },
+    ]);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
   test("preserves both execution and cleanup failures alongside sandbox-interrupted calls", async () => {
     const worker = faultWorker("idle");
     const terminateWorker = worker.terminate.bind(worker);

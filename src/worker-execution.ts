@@ -38,6 +38,8 @@ export type ExecuteOptions = {
   maxStackSizeBytes?: number;
   /** Submitted source limit in UTF-8 bytes, before worker startup. Defaults to 256 KiB. */
   maxSourceBytes?: number;
+  /** Final JSON return value or script-error message in UTF-8 bytes. Defaults to 256 KiB. */
+  maxOutputBytes?: number;
   /** Total admitted calls per execution, including failed responses. Defaults to 100. */
   maxToolCalls?: number;
   /** Outstanding calls per execution. Exceeding this limit stops execution. Defaults to 10. */
@@ -78,6 +80,8 @@ export async function execute(
         : options.maxStackSizeBytes,
     maxSourceBytes:
       options.maxSourceBytes === undefined ? DEFAULT_LIMITS.maxSourceBytes : options.maxSourceBytes,
+    maxOutputBytes:
+      options.maxOutputBytes === undefined ? DEFAULT_LIMITS.maxOutputBytes : options.maxOutputBytes,
   };
 
   for (const [name, value] of Object.entries(limits)) {
@@ -150,6 +154,7 @@ export async function execute(
         timeoutMs,
         memoryLimitBytes: limits.memoryLimitBytes,
         maxStackSizeBytes: limits.maxStackSizeBytes,
+        maxOutputBytes: limits.maxOutputBytes,
         ...callLimits,
         interruptBuffer: control.interrupt.buffer,
       } satisfies WorkerStartupData,
@@ -222,7 +227,13 @@ async function runWorker(
     if (outcome.ok && !outcome.result.ok) {
       const error = outcome.result.error;
       if (error.kind === "limit") {
-        calls.close(error.resource === "tool-calls" ? "call-limit" : "concurrency-limit");
+        const reasons = {
+          "tool-calls": "call-limit",
+          "concurrent-tool-calls": "concurrency-limit",
+          output: "output-limit",
+        } as const;
+
+        calls.close(reasons[error.resource]);
       } else {
         calls.close(error.kind === "script" ? "script-error" : error.kind);
       }

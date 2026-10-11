@@ -1,4 +1,5 @@
 import { parse } from "acorn";
+import { Buffer } from "node:buffer";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { createVm, type VmLimits } from "./runtime";
 import { type ToolBridge } from "./guest-tool-bridge";
@@ -9,7 +10,7 @@ const JOBS_PER_TURN = 100;
 /** Worker-local engine. Bridge handles belong to the execution's scope. */
 export async function executeEngine(
   code: string,
-  options: VmLimits & { timeoutMs: number },
+  options: VmLimits & { timeoutMs: number; maxOutputBytes: number },
   installToolBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
   interrupt?: Int32Array<SharedArrayBuffer>,
 ): Promise<GuestResult> {
@@ -17,7 +18,14 @@ export async function executeEngine(
   using bridgeScope = new Scope();
   const bridge = installToolBridge(vm, bridgeScope);
 
-  const result = await executeScript(vm, code, options.timeoutMs, bridge, interrupt);
+  const result = await executeScript(
+    vm,
+    code,
+    options.timeoutMs,
+    options.maxOutputBytes,
+    bridge,
+    interrupt,
+  );
 
   // Error conversion can invoke tools after the job loop's last failure/limit check.
   const failure = bridge.failure;
@@ -27,6 +35,14 @@ export async function executeEngine(
     throw failure.error;
   }
 
+  if (
+    !result.ok &&
+    result.error.kind === "script" &&
+    Buffer.byteLength(result.error.message, "utf8") > options.maxOutputBytes
+  ) {
+    return outputLimit(options.maxOutputBytes);
+  }
+
   return result;
 }
 
@@ -34,6 +50,7 @@ async function executeScript(
   vm: QuickJSContext,
   code: string,
   timeoutMs: number,
+  maxOutputBytes: number,
   bridge: ToolBridge,
   interrupt: Int32Array<SharedArrayBuffer> | undefined,
 ): Promise<GuestResult> {
@@ -113,7 +130,10 @@ async function executeScript(
       using result = state.value;
       // A return does not abandon calls already started by the script or toJSON.
       if (!runtime.hasPendingJob() && bridge.pendingCalls.size === 0) {
-        const value: unknown = JSON.parse(vm.getString(result));
+        const json = vm.getString(result);
+        if (Buffer.byteLength(json, "utf8") > maxOutputBytes) return outputLimit(maxOutputBytes);
+
+        const value: unknown = JSON.parse(json);
 
         return { ok: true, value };
       }
@@ -138,6 +158,18 @@ async function executeScript(
     // An interrupt handler cannot expire a script while QuickJS is idle.
     await Promise.race([deadline.expired, bridge.failureSignal, ...bridge.pendingCalls]);
   }
+}
+
+function outputLimit(maximum: number): GuestResult {
+  return {
+    ok: false,
+    error: {
+      kind: "limit",
+      resource: "output",
+      maximum,
+      message: `Output exceeds the ${maximum} byte limit.`,
+    },
+  };
 }
 
 function createDeadline(timeoutMs: number) {

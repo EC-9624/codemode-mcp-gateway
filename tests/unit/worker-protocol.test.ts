@@ -9,6 +9,7 @@ const request = {
   timeoutMs: 1000,
   memoryLimitBytes: 64 * 1024 * 1024,
   maxStackSizeBytes: 1024 * 1024,
+  maxOutputBytes: 256 * 1024,
   maxToolCalls: 100,
   maxConcurrentToolCalls: 10,
 } satisfies WorkerStartupData;
@@ -36,6 +37,7 @@ describe("worker startup data", () => {
         timeoutMs: 1000,
         memoryLimitBytes: request.memoryLimitBytes,
         maxStackSizeBytes: request.maxStackSizeBytes,
+        maxOutputBytes: request.maxOutputBytes,
         maxToolCalls: request.maxToolCalls,
         maxConcurrentToolCalls: request.maxConcurrentToolCalls,
       }).ok,
@@ -61,6 +63,7 @@ describe("worker startup data", () => {
 
   for (const [name, maximum] of [
     ["memoryLimitBytes", 2147483647],
+    ["maxOutputBytes", 2147483647],
     ["maxStackSizeBytes", 4194304],
   ] as const) {
     test(`requires a resolved positive byte limit for ${name}`, () => {
@@ -105,6 +108,13 @@ describe("worker messages", () => {
       { type: "completed", result: { ok: true, value: null } },
       { type: "completed", result: { ok: false, error: { kind: "script", message: "failed" } } },
       { type: "completed", result: { ok: false, error: { kind: "timeout", message: "expired" } } },
+      {
+        type: "completed",
+        result: {
+          ok: false,
+          error: { kind: "limit", resource: "output", maximum: 1, message: "too large" },
+        },
+      },
       {
         type: "completed",
         result: {
@@ -175,13 +185,17 @@ describe("worker messages", () => {
     }
   });
 
-  test("rejects malformed call-limit results", () => {
+  test("rejects malformed limit results", () => {
     for (const error of [
       { kind: "limit", resource: "other", maximum: 1, message: "bad" },
       { kind: "limit", resource: "tool-calls", message: "bad" },
       { kind: "limit", resource: "tool-calls", maximum: 0, message: "bad" },
       { kind: "limit", resource: "concurrent-tool-calls", maximum: "10", message: "bad" },
       { kind: "limit", resource: "tool-calls", maximum: 1, message: 42 },
+      { kind: "limit", resource: "output", message: "bad" },
+      { kind: "limit", resource: "output", maximum: 0, message: "bad" },
+      { kind: "limit", resource: "output", maximum: 2 ** 31, message: "bad" },
+      { kind: "limit", resource: "output", maximum: "1", message: "bad" },
     ]) {
       expect(
         WorkerToMainMessage.decode({ type: "completed", result: { ok: false, error } }).ok,

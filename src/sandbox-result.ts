@@ -8,7 +8,8 @@ export type ToolCallLimit = {
 export type GuestResult =
   | { ok: true; value: unknown }
   | { ok: false; error: { kind: "script" | "timeout"; message: string } }
-  | { ok: false; error: ToolCallLimit };
+  | { ok: false; error: ToolCallLimit }
+  | { ok: false; error: { kind: "limit"; resource: "output"; maximum: number; message: string } };
 
 /** Cancellation and source admission limits are classified by the parent. */
 export type SandboxResult =

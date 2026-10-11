@@ -8,7 +8,8 @@ export type InterruptionReason =
   | "script-error"
   | "sandbox-error"
   | "call-limit"
-  | "concurrency-limit";
+  | "concurrency-limit"
+  | "output-limit";
 
 /** Parent observations, not proof of external side effects or guest receipt. */
 export type CallOutcome = {
