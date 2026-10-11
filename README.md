@@ -619,7 +619,8 @@ parent accepts completion / cancellation / timeout / infrastructure failure
   QuickJS handles point into WASM memory; host garbage collection does not
   release them. Forced worker termination may skip this worker-side cleanup.
 - `createVm` transfers the context, which owns its runtime, only after setup
-  succeeds. A factory-local `using` would dispose it before the caller could use it.
+  succeeds by moving its cleanup stack. Failed setup disposes the context; if disposal
+  also fails, a `SuppressedError` retains both failures.
 - Promise resolvers outlive the callback that creates them, so the bridge `Scope`
   owns them for the execution. Settlement checks that the scope is alive before
   touching the VM, so late host completions never access a closed VM.
@@ -696,7 +697,8 @@ executable methods are never shared between host and guest.
 - An uncaught script failure or timeout ends execution without waiting for
   unrelated callbacks. Late results are dropped before conversion or posting.
 - One monotonic deadline covers source validation, prelude setup, execution, guest
-  jobs, and host waits. It starts after worker startup, WASM loading, VM creation,
+  jobs, host waits, and error conversion (including guest getters and `toJSON`).
+  It starts after worker startup, WASM loading, VM creation,
   and tool installation. A worker timer wakes idle execution; the QuickJS interrupt
   handler stops running guest computation.
 

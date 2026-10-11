@@ -49,7 +49,15 @@ export function installWorkerToolBridge(
   listen(cleanup, port, "message", (data: unknown) => {
     if (!bridge.failure.ok) return;
 
-    const decodedReply = ToolReply.decode(data);
+    let decodedReply: ReturnType<typeof ToolReply.decode>;
+    try {
+      decodedReply = ToolReply.decode(data);
+    } catch (error) {
+      bridge.fail(error);
+
+      return;
+    }
+
     if (!decodedReply.ok) {
       bridge.fail(new Error(decodedReply.message));
 

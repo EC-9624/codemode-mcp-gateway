@@ -6,15 +6,13 @@ export type VmLimits = Pick<ExecutionLimits, "memoryLimitBytes" | "maxStackSizeB
 /** Create a fresh context that owns its runtime; the caller owns disposal. */
 export async function createVm(limits: VmLimits = DEFAULT_LIMITS): Promise<QuickJSContext> {
   const quickJS = await getQuickJS();
-  const vm = quickJS.newContext();
-  try {
-    vm.runtime.setMemoryLimit(limits.memoryLimitBytes);
-    vm.runtime.setMaxStackSize(limits.maxStackSizeBytes);
+  using cleanup = new DisposableStack();
+  const vm = cleanup.use(quickJS.newContext());
+  vm.runtime.setMemoryLimit(limits.memoryLimitBytes);
+  vm.runtime.setMaxStackSize(limits.maxStackSizeBytes);
 
-    return vm;
-  } catch (error) {
-    // Factory-local `using` would dispose the VM before ownership reaches the caller.
-    vm.dispose();
-    throw error;
-  }
+  // Transfer ownership only after configuration succeeds; failed cleanup preserves both errors.
+  cleanup.move();
+
+  return vm;
 }

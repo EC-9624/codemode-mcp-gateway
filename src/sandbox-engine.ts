@@ -85,6 +85,13 @@ async function executeScript(
     };
   };
 
+  const failScript = (error: QuickJSHandle): GuestResult => {
+    const result = scriptFailure(vm, error);
+
+    // Error conversion can run guest getters/toJSON and exhaust the deadline.
+    return checkpoint() ?? result;
+  };
+
   runtime.setInterruptHandler(() => !bridge.failure.ok || interrupted() || deadline.passed());
 
   const submission = prepareScript(code);
@@ -106,7 +113,7 @@ async function executeScript(
   const started = checkpoint();
   if (started) return started;
 
-  if (evaluated.error) return scriptFailure(vm, evaluated.error);
+  if (evaluated.error) return failScript(evaluated.error);
 
   while (true) {
     const turn = checkpoint();
@@ -117,13 +124,13 @@ async function executeScript(
     const pumped = checkpoint();
     if (pumped) return pumped;
 
-    if (jobs.error) return scriptFailure(vm, jobs.error);
+    if (jobs.error) return failScript(jobs.error);
 
     const state = vm.getPromiseState(evaluated.value);
     if (state.type === "rejected") {
       using error = state.error;
 
-      return scriptFailure(vm, error);
+      return failScript(error);
     }
 
     if (state.type === "fulfilled") {

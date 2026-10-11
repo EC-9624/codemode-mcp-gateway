@@ -3,6 +3,7 @@ import { MessageChannel } from "node:worker_threads";
 import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { installWorkerToolBridge } from "../../src/worker-tool-bridge";
 import { executeEngine } from "../../src/sandbox-engine";
+import { ToolReply } from "../../src/worker-protocol";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
 import { executeLocally } from "../support/local-tools";
 import { rejectionOf } from "../support/rejection";
@@ -30,6 +31,49 @@ test("worker-side posting failures bypass guest catch and release transport list
   cleanup.dispose();
   for (const name of ["message", "messageerror", "close"]) {
     expect(port1.listenerCount(name)).toBe(0);
+  }
+});
+
+test("reply decoder exceptions reject execution and dispose resources without guest recovery", async () => {
+  using channel = openChannel();
+  using cleanup = new DisposableStack();
+  const failure = new Error("Private reply decoder failure");
+  const resources: ExecutionResources[] = [];
+  const started = Promise.withResolvers<void>();
+  channel.port2.once("message", () => started.resolve());
+
+  using decode = spyOn(ToolReply, "decode").mockImplementation(() => {
+    throw failure;
+  });
+
+  const completion = rejectionOf(
+    executeEngine(
+      'try { return await tools.read(); } catch { return "caught"; }',
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+      (vm, scope) => {
+        resources.push({ vm, scope });
+
+        return installWorkerToolBridge(vm, ["read"], channel.port1, scope, cleanup);
+      },
+    ),
+  );
+
+  await started.promise;
+  expect(() =>
+    channel.port1.emit("message", {
+      type: "tool-result",
+      callId: 1,
+      result: { ok: true, json: "42" },
+    }),
+  ).not.toThrow();
+  const rejected = await completion;
+
+  expect(rejected.reason).toBe(failure);
+  expect(decode).toHaveBeenCalledTimes(1);
+  expectDisposedExecution(resources);
+  cleanup.dispose();
+  for (const name of ["message", "messageerror", "close"]) {
+    expect(channel.port1.listenerCount(name)).toBe(0);
   }
 });
 

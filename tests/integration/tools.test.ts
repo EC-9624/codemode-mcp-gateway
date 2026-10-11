@@ -325,6 +325,49 @@ describe("sandbox tool calls", () => {
     }
   });
 
+  test("reads an undefined tool result value once for guest delivery and retention", async () => {
+    let reads = 0;
+
+    const report = await execute("return (await tools.read()) === undefined;", {
+      read: () => ({
+        ok: true,
+        get value() {
+          reads++;
+          if (reads > 1) throw new Error("Private repeated getter failure");
+
+          return undefined;
+        },
+      }),
+    });
+
+    expect(report).toEqual({
+      result: { ok: true, value: true },
+      calls: [
+        { callId: 1, name: "read", status: "completed", result: { ok: true, json: undefined } },
+      ],
+    });
+    expect(reads).toBe(1);
+  });
+
+  test("lets the guest catch a private tool result value getter failure as a conversion error", async () => {
+    const report = await execute(
+      "try { await tools.read(); } catch (error) { return error.message; }",
+      {
+        read: () => ({
+          ok: true,
+          get value() {
+            throw new Error("Private value getter failure");
+          },
+        }),
+      },
+    );
+
+    expect(report.result).toEqual({
+      ok: true,
+      value: "Tool result is not JSON-serializable.",
+    });
+  });
+
   test("treats throwing host getters and toJSON hooks as conversion failures", async () => {
     for (const value of [
       {

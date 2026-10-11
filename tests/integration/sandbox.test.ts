@@ -49,6 +49,18 @@ describe("sandbox", () => {
     });
   });
 
+  test.each([
+    ["message getter", "throw { get message() { while (true) {} } };"],
+    ["toJSON", "throw { toJSON() { while (true) {} } };"],
+  ])("reports timeout when error conversion loops in %s", async (_name, code) => {
+    const report = await execute(code, {}, { timeoutMs: 100 });
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+    });
+  });
+
   test("reports thrown strings and values without messages", async () => {
     expect((await execute('throw "Something failed";')).result).toEqual({
       ok: false,

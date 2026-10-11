@@ -38,6 +38,42 @@ describe("runtime setup", () => {
     if (!recovered.error) expect(vm.getNumber(recovered.value)).toBe(3);
   });
 
+  test("preserves setup and disposal failures without retrying cleanup", async () => {
+    const quickJS = await getQuickJS();
+    const vm = quickJS.newContext();
+    const dispose = vm.dispose.bind(vm);
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => {
+      if (vm.alive) dispose();
+    });
+    const setupFailure = new Error("Stack configuration failed");
+    const cleanupFailure = new Error("Context disposal failed");
+    using context = spyOn(quickJS, "newContext").mockReturnValue(vm);
+
+    using stack = spyOn(vm.runtime, "setMaxStackSize").mockImplementation(() => {
+      throw setupFailure;
+    });
+
+    using disposal = spyOn(vm, "dispose").mockImplementation(() => {
+      dispose();
+      throw cleanupFailure;
+    });
+
+    const rejected = await rejectionOf(createVm());
+
+    expect(rejected.reason).toBeInstanceOf(SuppressedError);
+    if (rejected.reason instanceof SuppressedError) {
+      expect(rejected.reason.error).toBe(cleanupFailure);
+      expect(rejected.reason.suppressed).toBe(setupFailure);
+    }
+
+    expect(context).toHaveBeenCalledTimes(1);
+    expect(stack).toHaveBeenCalledTimes(1);
+    expect(disposal).toHaveBeenCalledTimes(1);
+    expect(vm.alive).toBe(false);
+    expect(vm.runtime.alive).toBe(false);
+  });
+
   test("disposes the context and runtime when limit configuration throws and recovers", async () => {
     const quickJS = await getQuickJS();
     const vm = quickJS.newContext();

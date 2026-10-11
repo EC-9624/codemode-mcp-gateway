@@ -282,7 +282,15 @@ async function runWorker(
   const onMessage = (data: unknown) => {
     if (!isActive()) return;
 
-    const response = WorkerToMainMessage.decode(data);
+    let response: ReturnType<typeof WorkerToMainMessage.decode>;
+    try {
+      response = WorkerToMainMessage.decode(data);
+    } catch (error) {
+      fail(error);
+
+      return;
+    }
+
     // Decoding can consume the remaining budget before the timer gets a turn.
     if (!isActive()) return;
 

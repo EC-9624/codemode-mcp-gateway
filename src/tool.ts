@@ -24,15 +24,17 @@ export function serializeToolResult(result: ToolResult): SerializedToolResult {
   // Forwarding the original envelope could transport extra private fields or callbacks.
   if (!result.ok) return ToolResult.failure(result.error.message);
 
+  let value: unknown;
   let serialized: string | undefined;
   try {
-    serialized = JSON.stringify(result.value);
+    value = result.value;
+    serialized = JSON.stringify(value);
   } catch {
     // Getters and toJSON are part of conversion and can throw arbitrary values.
     return ToolResult.failure("Tool result is not JSON-serializable.");
   }
 
-  if (serialized === undefined && result.value !== undefined) {
+  if (serialized === undefined && value !== undefined) {
     return ToolResult.failure("Tool result is not JSON-serializable.");
   }
 

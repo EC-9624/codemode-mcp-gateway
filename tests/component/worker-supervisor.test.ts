@@ -4,6 +4,7 @@ import { DEFAULT_LIMITS } from "../../src/execution-limits";
 import { execute } from "../../src/sandbox";
 import { executeLocally } from "../support/local-tools";
 import { superviseWorker } from "../../src/worker-execution";
+import { WorkerToMainMessage } from "../../src/worker-protocol";
 import { executionErrorOf } from "../support/execution-error";
 import { faultWorker } from "../support/workers";
 
@@ -127,6 +128,33 @@ describe("worker supervisor", () => {
     }
 
     expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+  });
+
+  test("captures unexpected message decoder failures and releases the worker", async () => {
+    const worker = faultWorker("idle");
+    await using cleanup = new AsyncDisposableStack();
+    cleanup.defer(async () => {
+      await worker.terminate();
+    });
+    const failure = new Error("Private decoder failure");
+
+    using decode = spyOn(WorkerToMainMessage, "decode").mockImplementation(() => {
+      throw failure;
+    });
+
+    using terminate = spyOn(worker, "terminate");
+    const completion = executionErrorOf(superviseWorker(worker));
+
+    expect(() =>
+      worker.emit("message", { type: "completed", result: { ok: true, value: 42 } }),
+    ).not.toThrow();
+    const error = await completion;
+
+    expect(error.cause).toBe(failure);
+    expect(error.calls).toEqual([]);
+    expect(decode).toHaveBeenCalledTimes(1);
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expectNoExecutionListeners(worker);
   });
 
   test("cleans up after response deserialization errors", async () => {

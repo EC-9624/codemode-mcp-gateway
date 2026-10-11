@@ -56,6 +56,38 @@ test("shared interruption disposes the VM, runtime, and bridge scope", async () 
   expectDisposedExecution(resources);
 });
 
+test("preserves parent interruption during guest error conversion", async () => {
+  const resources: ExecutionResources[] = [];
+  const interrupt = new Int32Array(new SharedArrayBuffer(4));
+
+  const result = await executeEngine(
+    'throw { get message() { tools.read(); return "Guest error"; } };',
+    { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+    (vm, scope) => {
+      resources.push({ vm, scope });
+
+      return installLocalToolBridge(
+        vm,
+        {
+          read: () => {
+            Atomics.store(interrupt, 0, 1);
+
+            return ToolResult.success();
+          },
+        },
+        scope,
+      );
+    },
+    interrupt,
+  );
+
+  expect(result).toEqual({
+    ok: false,
+    error: { kind: "timeout", message: "Execution interrupted by the parent." },
+  });
+  expectDisposedExecution(resources);
+});
+
 test.each([
   ["memory", { memoryLimitBytes: 1 }],
   ["stack", { maxStackSizeBytes: 1024 }],
