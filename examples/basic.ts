@@ -1,4 +1,5 @@
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../src/sandbox";
+import { z } from "zod";
+import { createDiscoveryTools, defineTool, execute, ToolCatalog, ToolResult } from "../src/sandbox";
 
 console.log(await execute("return 1 + 2;"));
 console.log(await execute('throw new Error("An example failure");'));
@@ -77,6 +78,14 @@ const catalog = ToolCatalog.create({
     description: "Return the answer to the example question",
     execute: () => ToolResult.success(42),
   },
+  echo: defineTool({
+    description: "Return a non-empty string",
+    inputSchema: z
+      .string()
+      .min(1)
+      .transform((value) => value.toUpperCase()),
+    execute: (args) => ToolResult.success(args),
+  }),
 });
 
 const discovery = createDiscoveryTools(catalog);
@@ -87,5 +96,15 @@ console.log(
   return await tools[matches[0].name]();
 `,
     { ...catalog.tools, searchTools: discovery.searchTools, describeTool: discovery.describeTool },
+  ),
+);
+
+console.log(
+  await execute(
+    `
+  try { await tools.echo(42); }
+  catch (error) { return { validation: error.message, recovered: await tools.echo("valid") }; }
+`,
+    catalog.tools,
   ),
 );

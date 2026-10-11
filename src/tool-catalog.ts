@@ -1,13 +1,38 @@
-import { ToolResult, type SandboxTool } from "./tool";
+import { type StandardJSONSchemaV1, type StandardSchemaV1 } from "@standard-schema/spec";
+import { ToolResult, validateTool, type SandboxTool, type ToolContext } from "./tool";
+import { type ToolSchema } from "./tool-schema";
 
-/** Descriptive JSON Schema metadata; invocation validation remains the callback's responsibility. */
-export type ToolSchema = boolean | Readonly<Record<string, unknown>>;
+export { type ToolSchema } from "./tool-schema";
 
 export type ToolDefinition = {
   description: string;
+  /** Discovery metadata. defineTool binds a native validator to the callback. */
   inputSchema?: ToolSchema;
   execute: SandboxTool;
 };
+
+/** Native schemas validate values and export the input contract used by discovery. */
+export type ToolInputSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output> &
+  StandardJSONSchemaV1<Input, Output>;
+
+/** Build a catalog definition whose handler receives the schema's inferred output. */
+export function defineTool<Input, Output>(definition: {
+  description: string;
+  inputSchema: ToolInputSchema<Input, Output>;
+  execute: (args: Output, context: ToolContext) => ToolResult | Promise<ToolResult>;
+}): ToolDefinition {
+  const schema = definition.inputSchema;
+
+  const inputSchema = structuredClone(
+    schema["~standard"].jsonSchema.input({ target: "draft-2020-12" }),
+  );
+
+  return {
+    description: definition.description,
+    inputSchema,
+    execute: validateTool(schema, definition.execute),
+  };
+}
 
 export type ToolDescription = {
   readonly name: string;

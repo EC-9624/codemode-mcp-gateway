@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { Ajv2020 } from "ajv/dist/2020";
 import { Client, StreamableHTTPClientTransport, type Tool } from "@modelcontextprotocol/client";
 import { createMcpHandler, Server, type CallToolResult } from "@modelcontextprotocol/server";
 import { createMcpServer } from "../../examples/mcp-tools";
-import { createMcpCatalog } from "../../src/sandbox";
+import { createMcpCatalog, ToolCatalog, ToolResult } from "../../src/sandbox";
 import { callTool } from "../../src/tool";
 import { connectMcp } from "../support/mcp";
 import { rejectionOf } from "../support/rejection";
@@ -121,6 +122,23 @@ describe("MCP catalog discovery", () => {
     const rejected = await rejectionOf(createMcpCatalog(client));
 
     expect(rejected.reason).toEqual(new Error("Connect the MCP client before discovering tools."));
+  });
+
+  test("checks the discovery deadline after synchronous catalog setup", async () => {
+    await using connection = await connectMcp(createMcpServer());
+    const create = ToolCatalog.create.bind(ToolCatalog);
+
+    using compilation = spyOn(ToolCatalog, "create").mockImplementation((definitions) => {
+      Bun.sleepSync(150);
+
+      return create(definitions);
+    });
+
+    const rejected = await rejectionOf(createMcpCatalog(connection.client, { timeoutMs: 100 }));
+
+    expect(rejected.reason).toEqual(new Error("MCP tool discovery exceeded the 100 ms limit."));
+    expect(compilation).toHaveBeenCalledTimes(1);
+    expect(await connection.client.ping()).toEqual({});
   });
 
   test("rejects a malformed wire listing rather than creating an empty catalog", async () => {
@@ -290,6 +308,84 @@ describe("MCP catalog discovery", () => {
 });
 
 describe("MCP invocation boundary", () => {
+  test("compiles JSON input schemas at discovery rather than per invocation", async () => {
+    await using connection = await connectMcp(createMcpServer());
+    using compilation = spyOn(Ajv2020.prototype, "compile");
+    const catalog = await createMcpCatalog(connection.client);
+    const count = compilation.mock.calls.length;
+    const add = catalog.tools.add;
+    if (!add) throw new Error("Missing add tool");
+
+    expect(await add({ a: 1, b: 2 }, context)).toMatchObject({
+      ok: true,
+      value: { structuredContent: { sum: 3 } },
+    });
+    expect(await add({ a: 3, b: 4 }, context)).toMatchObject({
+      ok: true,
+      value: { structuredContent: { sum: 7 } },
+    });
+    expect(count).toBeGreaterThan(0);
+    expect(compilation).toHaveBeenCalledTimes(count);
+  });
+  test("rejects schema-invalid objects before upstream dispatch and preserves valid arguments", async () => {
+    await using connection = await connectMcp(createMcpServer());
+    const catalog = await createMcpCatalog(connection.client);
+    using invocation = spyOn(connection.client, "callTool");
+    const add = catalog.tools.add;
+    if (!add) throw new Error("Missing add tool");
+
+    expect(await add({ a: "1", b: 2 }, context)).toEqual(
+      ToolResult.failure('Invalid arguments for "add": /a must be number.'),
+    );
+    expect(invocation).not.toHaveBeenCalled();
+    const args = { a: 1, b: 2 };
+    expect(await add(args, context)).toMatchObject({
+      ok: true,
+      value: { structuredContent: { sum: 3 } },
+    });
+    expect(invocation).toHaveBeenCalledTimes(1);
+    expect(invocation.mock.calls[0]?.[0].arguments).toBe(args);
+  });
+
+  test("normalizes omitted MCP arguments before validating the object schema", async () => {
+    await using connection = await connectMcp(createMcpServer());
+    const catalog = await createMcpCatalog(connection.client);
+    using invocation = spyOn(connection.client, "callTool");
+    const fail = catalog.tools.fail;
+    if (!fail) throw new Error("Missing fail tool");
+
+    expect(await fail(undefined, context)).toEqual({
+      ok: true,
+      value: { content: [{ type: "text", text: "Synthetic tool failure." }], isError: true },
+    });
+    expect(invocation.mock.calls[0]?.[0]).toEqual({ name: "fail", arguments: {} });
+  });
+
+  test("fails catalog construction for an invalid upstream schema without closing the client", async () => {
+    const server = new Server(
+      { name: "invalid-schema", version: "1" },
+      { capabilities: { tools: {} } },
+    );
+
+    server.setRequestHandler("tools/list", () => ({
+      tools: [
+        {
+          name: "read",
+          inputSchema: { type: "object", properties: { id: { type: "string", minLength: -1 } } },
+        },
+      ],
+    }));
+
+    await using connection = await connectMcp(server);
+    const rejected = await rejectionOf(createMcpCatalog(connection.client));
+
+    expect(rejected.reason).toBeInstanceOf(Error);
+    if (!(rejected.reason instanceof Error)) throw new Error("Expected setup failure");
+
+    expect(rejected.reason.message).toContain('Invalid input schema for tool "read"');
+    expect(rejected.reason.cause).toBeInstanceOf(Error);
+    expect(await connection.client.ping()).toEqual({});
+  });
   test.each([null, [], 42, "text", true])(
     "rejects non-object argument %j before upstream dispatch",
     async (args) => {

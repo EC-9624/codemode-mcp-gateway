@@ -69,8 +69,17 @@ describe("MCP sandbox integration", () => {
     expect(Buffer.byteLength(call.result.json ?? "")).toBeGreaterThan(256 * 1024);
   });
 
-  test("resolves explicit MCP errors and server argument-validation errors as data", async () => {
-    await using connection = await connectMcp(createMcpServer());
+  test("resolves explicit MCP errors and stricter server-side validation errors as data", async () => {
+    const server = createMcpServer();
+    // A server may enforce rules beyond the schema it advertises to the client.
+    server.server.setRequestHandler("tools/list", () => ({
+      tools: [
+        { name: "add", inputSchema: { type: "object" } },
+        { name: "fail", inputSchema: { type: "object" } },
+      ],
+    }));
+
+    await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
 
     const report = await execute(
@@ -116,6 +125,58 @@ describe("MCP sandbox integration", () => {
       name: "add",
       status: "completed",
       result: { ok: false, error: { message: "MCP tool arguments must be an object." } },
+    });
+  });
+
+  test("retains local MCP schema failures as rejections and sends only corrected arguments upstream", async () => {
+    const server = new Server({ name: "validated", version: "1" }, { capabilities: { tools: {} } });
+    const received: unknown[] = [];
+    server.setRequestHandler("tools/list", () => ({
+      tools: [
+        {
+          name: "read",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            required: ["id"],
+          },
+        },
+      ],
+    }));
+    server.setRequestHandler("tools/call", ({ params }) => {
+      received.push(params.arguments);
+
+      return { content: [], structuredContent: params.arguments };
+    });
+
+    await using connection = await connectMcp(server);
+    const catalog = await createMcpCatalog(connection.client);
+
+    const report = await execute(
+      `
+      let message;
+      try { await tools.read({ id: "1" }); } catch (error) { message = error.message; }
+      return { message, response: await tools.read({ id: 1 }) };
+    `,
+      catalog.tools,
+    );
+
+    expect(received).toEqual([{ id: 1 }]);
+    expect(report.result).toEqual({
+      ok: true,
+      value: {
+        message: 'Invalid arguments for "read": /id must be integer.',
+        response: { content: [], structuredContent: { id: 1 } },
+      },
+    });
+    expect(report.calls[0]).toEqual({
+      callId: 1,
+      name: "read",
+      status: "completed",
+      result: {
+        ok: false,
+        error: { message: 'Invalid arguments for "read": /id must be integer.' },
+      },
     });
   });
 

@@ -1,5 +1,6 @@
 import { type Client } from "@modelcontextprotocol/client";
-import { ToolResult } from "./tool";
+import { ToolResult, validateTool, type SandboxTool } from "./tool";
+import { compileToolSchema } from "./tool-schema";
 import { ToolCatalog, type ToolDefinition } from "./tool-catalog";
 import { isTimeoutMs, MAX_TIMEOUT_MS } from "./worker-protocol";
 
@@ -40,9 +41,13 @@ export async function createMcpCatalog(
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
 
-  const timer = setTimeout(() => {
+  const expiresAt = performance.now() + timeoutMs;
+
+  const expire = () => {
     controller.abort(new Error(`MCP tool discovery exceeded the ${timeoutMs} ms limit.`));
-  }, timeoutMs);
+  };
+
+  const timer = setTimeout(expire, timeoutMs);
 
   cleanup.defer(() => clearTimeout(timer));
 
@@ -62,37 +67,73 @@ export async function createMcpCatalog(
     names.add(tool.name);
   }
 
-  return ToolCatalog.create(
+  const catalog = ToolCatalog.create(
     Object.fromEntries(
-      listing.tools.map((tool) => [
-        tool.name,
-        {
-          description: tool.description ?? `MCP tool: ${tool.name}`,
-          inputSchema: tool.inputSchema,
-          execute: async (args, { signal }) => {
+      listing.tools.map((tool) => {
+        const compiled = compileToolSchema(tool.inputSchema);
+        if (!compiled.ok) {
+          throw new Error(
+            `Invalid input schema for tool ${JSON.stringify(tool.name)}: ${compiled.message}`,
+            { cause: compiled.cause },
+          );
+        }
+
+        return [
+          tool.name,
+          {
+            description: tool.description ?? `MCP tool: ${tool.name}`,
+            inputSchema: compiled.schema,
+            execute: validateTool(
+              compiled.validator,
+              async (args, { signal }) => {
+                // The outer MCP wrapper normalizes before catalog validation. Keep the SDK boundary typed.
+                if (!isArguments(args)) throw new Error("MCP argument normalization failed.");
+
+                const response = await client.callTool(
+                  { name: tool.name, arguments: args },
+                  { signal },
+                );
+
+                return ToolResult.success({
+                  content: response.content,
+                  ...(response.structuredContent === undefined
+                    ? {}
+                    : { structuredContent: response.structuredContent }),
+                  ...(response.isError === undefined ? {} : { isError: response.isError }),
+                });
+              },
+              tool.name,
+            ),
+          } satisfies ToolDefinition,
+        ];
+      }),
+    ),
+  );
+
+  // Synchronous compilation can outlast the timer before the event loop gets another turn.
+  if (performance.now() >= expiresAt) expire();
+
+  controller.signal.throwIfAborted();
+
+  return {
+    ...catalog,
+    tools: Object.freeze(
+      Object.fromEntries(
+        Object.entries(catalog.tools).map(([name, invoke]) => [
+          name,
+          ((args, context) => {
             if (args !== undefined && !isArguments(args)) {
               return ToolResult.failure("MCP tool arguments must be an object.");
             }
 
-            signal.throwIfAborted();
+            context.signal.throwIfAborted();
 
-            const response = await client.callTool(
-              { name: tool.name, arguments: args ?? {} },
-              { signal },
-            );
-
-            return ToolResult.success({
-              content: response.content,
-              ...(response.structuredContent === undefined
-                ? {}
-                : { structuredContent: response.structuredContent }),
-              ...(response.isError === undefined ? {} : { isError: response.isError }),
-            });
-          },
-        } satisfies ToolDefinition,
-      ]),
+            return invoke(args ?? {}, context);
+          }) satisfies SandboxTool,
+        ]),
+      ),
     ),
-  );
+  };
 }
 
 function isArguments(value: unknown): value is Record<string, unknown> {

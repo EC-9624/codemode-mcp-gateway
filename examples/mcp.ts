@@ -21,10 +21,14 @@ console.log(
       const sum = await tools.add({ a: 2, b: 3 });
       const failure = await tools.fail();
       const dataset = await tools.dataset({ count: 3000 });
+      let validation;
+      try { await tools.add({ a: "2", b: 3 }); }
+      catch (error) { validation = error.message; }
       return {
         sum: sum.structuredContent.sum,
         failure: failure.isError,
         records: dataset.structuredContent.records.length,
+        validation,
       };
     `,
     catalog.tools,

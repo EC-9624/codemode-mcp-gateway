@@ -378,9 +378,11 @@ completed, and does not mean retrying them is safe.
 ### Catalog and discovery
 
 The app owns tool metadata and implementations. `ToolCatalog.create` snapshots
-callback bindings, names, and descriptions from a definition record. Input
-schemas are descriptive metadata, not validators. Schema objects remain
-host-owned and should be treated as read-only.
+callback bindings, names, and descriptions from a definition record. `defineTool`
+builds validated native definitions; `createMcpCatalog` builds validated MCP
+definitions. On manually supplied definitions, `inputSchema` is descriptive JSON
+metadata and the callback owns validation. Discovery schema objects should be
+treated as read-only.
 
 ```ts
 import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "./src/sandbox";
@@ -426,6 +428,68 @@ await execute(
 Only callable names go to the worker at startup; metadata reaches the guest when
 discovery returns it. The MCP adapter supplies definitions and callbacks through
 this same boundary.
+
+### Validated tool contracts
+
+`defineTool` accepts Standard Schema validators with Standard JSON Schema export,
+including compatible Zod, Valibot, or custom schemas. The handler receives the
+schema's inferred **output** type, including intentional transformations:
+
+```ts
+import { z } from "zod";
+import { defineTool, execute, ToolCatalog, ToolResult } from "./src/sandbox";
+
+const catalog = ToolCatalog.create({
+  length: defineTool({
+    description: "Count characters in a non-empty string",
+    inputSchema: z
+      .string()
+      .min(1)
+      .transform((text) => text.length),
+    execute: (length) => ToolResult.success(length + 1), // length is inferred as number
+  }),
+});
+
+await execute('return await tools.length("hello");', catalog.tools);
+// result: { ok: true, value: 6 }
+```
+
+```text
+definition: export input JSON Schema once -> snapshot metadata -> wrap typed handler
+invocation: check cancellation -> await Standard Schema validation
+  -> check cancellation -> public validation failure, or execute(result.value)
+```
+
+The public `ToolInputSchema<Input, Output>` is
+`StandardSchemaV1<Input, Output> & StandardJSONSchemaV1<Input, Output>`.
+Validation uses `~standard.validate`; discovery uses
+`~standard.jsonSchema.input({ target: "draft-2020-12" })`. Standard Schema alone
+does not guarantee JSON export. Export failures reject definition setup on the
+host. Native refinements may enforce rules richer than the exported description.
+MCM never compiles native schema objects with Ajv or clones their executable methods.
+Treat the supplied schema as immutable after definition.
+
+Both synchronous and asynchronous validators are supported. The schema determines
+coercion, defaults, refinements, and transformations; the implementation receives
+the validated output. Native omitted arguments arrive at the schema as `undefined`.
+One reported issue becomes a catchable failure such as
+`Invalid arguments: /id: Expected a number.`. Standard issue paths are rendered
+as JSON Pointers, including escaped object keys. MCM does not append the arguments;
+custom validators own the content of their public issue messages.
+
+Locally rejected calls consume the existing call budget and are retained as
+`status: "completed"` with `result.ok: false`. The guest can catch the rejection
+and correct its arguments. Thrown exceptions and rejected validation promises use
+the existing private host-tool failure boundary. Standard Schema supplies no
+cancellation signal: cancellation can end observation while validation is pending,
+but an aborted signal prevents subsequent handler invocation when validation settles.
+Synchronous validator work runs on the host thread and cannot be preempted.
+
+Dependency note: Zod 4.3.6's Standard adapter first attempts synchronous parsing.
+A throwing async transform can leave a rejected promise from that probe outside
+the returned validation promise. MCM can handle returned promises, not promises a
+validator discards; use reported validation issues for expected failures and keep
+schema validation free of side effects.
 
 ### MCP upstream adapter
 
@@ -487,6 +551,7 @@ guest code, choosing callback names that do not collide with upstream tools.
 guest calls tools[name](args)
   -> existing worker/host bridge and call budgets
   -> adapter validates object shape (omitted arguments become {})
+  -> Standard Schema wrapper validates using the compiled JSON Schema adapter
   -> client.callTool with the execution's AbortSignal
   -> project content, optional structuredContent, optional isError
   -> ToolResult.success(response)
@@ -494,8 +559,29 @@ guest calls tools[name](args)
 ```
 
 Arrays, null, and primitive arguments return the public failure
-`MCP tool arguments must be an object.` before sending an MCP request. Full
-input-schema validation remains the server's responsibility in this slice.
+`MCP tool arguments must be an object.` before sending an MCP request. Omitted
+arguments are normalized to `{}` **before** schema validation. Objects that fail
+the discovered schema produce a catchable `Invalid arguments for "<tool>": ...`
+failure without an upstream request. This extends the existing local shape-error
+contract: schema-invalid calls that previously reached the server now reject
+locally, rather than resolving as an upstream `isError` envelope.
+Servers still validate their own inputs and may enforce stricter rules than they
+advertise. Invalid discovered input schemas reject catalog construction without
+closing the borrowed client.
+
+Raw MCP input schemas are copied and compiled once with Ajv 8.18.0. The adapter
+supports default/explicit JSON Schema 2020-12, explicit draft-07, boolean schemas,
+and local definitions, anchors, and recursive references. HTTP/HTTPS dialect URI
+aliases and trailing `#` are accepted. Unsupported dialects, invalid schemas,
+unresolved external references, and Ajv `$async` validators fail setup; dependency
+causes stay available on the host. No external schemas are fetched.
+
+The JSON adapter performs no coercion, default insertion, property removal, or
+argument replacement. Only own properties satisfy object requirements. Formats
+from `ajv-formats` are checked; unknown format/extension annotations are permitted.
+Independent engines isolate root and nested `$id` values across tools. These
+JSON-specific rules do not restrict native Standard Schema validators.
+
 The SDK can validate output schemas learned during discovery using its own
 metadata cache; the adapter does not add another validator.
 
@@ -525,6 +611,8 @@ not captured by invocation callbacks. Each invocation instead forwards the
 execution's `ToolContext.signal`; server handlers must cooperate with cancellation.
 Late completions cannot change the closed execution report. The SDK's own request
 timeout can also end an individual call before MCM's execution deadline.
+Discovery checks its overall deadline again after synchronous schema compilation;
+it rejects an over-budget result but cannot interrupt compilation mid-operation.
 
 The example uses the SDK's default legacy handshake. Modern JSON response values
 are also tested through an in-process HTTP handler. Protocol negotiation remains
@@ -874,10 +962,11 @@ one layer. Typechecking includes all test helpers and fixtures.
 10. Per-execution tool-call and concurrency limits enforced before deferred allocation and host dispatch.
 11. Optional final guest-output limit covering UTF-8 JSON returns and script-error messages.
 12. Host-owned MCP client adapter with Pi-style responses, bounded discovery, and synthetic stdio lifecycle coverage.
+13. Typed Standard Schema native tools, async validation/transformation, and a compiled JSON Schema adapter for MCP inputs.
 
 Next:
 
-1. Schema-backed argument validation; revisit payload/retention bounds using integration evidence.
-2. Soak/fault testing, latency/memory measurements, and reference comparisons.
+1. Soak/fault testing, latency/memory measurements, and reference comparisons.
+2. Revisit payload/retention bounds using integration evidence.
 
 Do not add a gateway framework before the sandbox behavior is understood.
