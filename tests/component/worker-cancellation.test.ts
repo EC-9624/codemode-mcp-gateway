@@ -88,7 +88,7 @@ describe("worker cancellation", () => {
       const report = await completion;
       expect(report).toEqual({
         result: cancelled,
-        calls: [{ callId: 1, name: "read", status: "uncertain" }],
+        calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
       });
 
       if (outcome === "failure") late.reject(new Error("Private late tool failure"));
@@ -106,7 +106,9 @@ describe("worker cancellation", () => {
       await Bun.sleep(0);
 
       expect(conversions).toBe(0);
-      expect(report.calls).toEqual([{ callId: 1, name: "read", status: "uncertain" }]);
+      expect(report.calls).toEqual([
+        { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
+      ]);
       expect(post).not.toHaveBeenCalled();
       expectCleanedUp(worker, controller.signal);
     });
@@ -174,7 +176,7 @@ describe("worker cancellation", () => {
 
     expect(report).toEqual({
       result: cancelled,
-      calls: [{ callId: 1, name: "read", status: "uncertain" }],
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
     expect(post).not.toHaveBeenCalled();
     expectCleanedUp(worker, controller.signal);

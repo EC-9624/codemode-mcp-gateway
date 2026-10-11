@@ -96,10 +96,10 @@ export async function superviseWorker(
   try {
     const result = await runWorker(worker, tools, control, calls);
 
-    return { result, calls: calls.close() };
+    return { result, calls: calls.close("sandbox-error") };
   } catch (cause) {
     // Catch outside the ownership scope so failed termination also carries the snapshot.
-    throw new SandboxExecutionError(calls.close(), cause);
+    throw new SandboxExecutionError(calls.close("sandbox-error"), cause);
   }
 }
 
@@ -128,7 +128,7 @@ async function runWorker(
   const stop = () => {
     if (state === "active") state = "stopped";
 
-    calls.close();
+    calls.close("sandbox-error");
 
     if (control !== undefined) Atomics.store(control.interrupt, 0, 1);
 
@@ -141,7 +141,13 @@ async function runWorker(
     if (state !== "active") return;
 
     state = outcome.ok && outcome.result.ok ? "succeeded" : "stopped";
-    calls.close();
+    if (outcome.ok && !outcome.result.ok) {
+      const kind = outcome.result.error.kind;
+      calls.close(kind === "script" ? "script-error" : kind);
+    } else {
+      calls.close("sandbox-error");
+    }
+
     completion.resolve(outcome);
     stop();
   };

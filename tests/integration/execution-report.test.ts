@@ -181,7 +181,7 @@ describe("execution reports", () => {
     });
   });
 
-  test("retains completed work and marks the pending call uncertain on cancellation", async () => {
+  test("retains completed work and records cancellation for the interrupted call", async () => {
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
@@ -215,7 +215,7 @@ describe("execution reports", () => {
           status: "completed",
           result: { ok: true, json: '{"id":"invoice-1"}' },
         },
-        { callId: 2, name: "send", status: "uncertain" },
+        { callId: 2, name: "send", status: "interrupted", reason: "cancelled" },
       ],
     } as const;
 
@@ -253,7 +253,7 @@ describe("execution reports", () => {
       result: { ok: false, error: { kind: "script", message: "failed" } },
       calls: [
         { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
-        { callId: 2, name: "pending", status: "uncertain" },
+        { callId: 2, name: "pending", status: "interrupted", reason: "script-error" },
       ],
     });
   });
@@ -279,7 +279,7 @@ describe("execution reports", () => {
       },
       calls: [
         { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
-        { callId: 2, name: "pending", status: "uncertain" },
+        { callId: 2, name: "pending", status: "interrupted", reason: "timeout" },
       ],
     });
   });

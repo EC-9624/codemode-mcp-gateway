@@ -26,7 +26,7 @@ describe("parent-owned call outcomes", () => {
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
-      calls: [{ callId: 1, name: "read", status: "uncertain" }],
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
   });
 
@@ -80,7 +80,9 @@ describe("parent-owned call outcomes", () => {
     controller.abort();
     const report = await completion;
 
-    expect(report.calls).toEqual([{ callId: 1, name: "read", status: "uncertain" }]);
+    expect(report.calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
+    ]);
     expect(invocations).toBe(1);
     expect(conversions).toBe(0);
     expect(post).not.toHaveBeenCalled();
@@ -112,7 +114,7 @@ describe("parent-owned call outcomes", () => {
 
     expect(error.calls).toEqual([
       { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-      { callId: 2, name: "read", status: "uncertain" },
+      { callId: 2, name: "read", status: "interrupted", reason: "sandbox-error" },
     ]);
     expect(error.cause).toBeInstanceOf(Error);
     if (error.cause instanceof Error) {
@@ -123,10 +125,13 @@ describe("parent-owned call outcomes", () => {
     }
   });
 
-  test("retains completed and pending calls when the parent deadline expires", async () => {
+  test("keeps the timeout interruption reason when cancellation arrives after deadline selection", async () => {
+    const controller = new AbortController();
+
     const control = {
       deadline: { timeoutMs: 10000, expiresAt: performance.now() + 10000 },
       interrupt: new Int32Array(new SharedArrayBuffer(4)),
+      signal: controller.signal,
     };
 
     const worker = toolWorker(
@@ -160,6 +165,7 @@ describe("parent-owned call outcomes", () => {
     await started.promise;
     control.deadline.expiresAt = performance.now() - 1;
     worker.emit("message", { type: "completed", result: { ok: true, value: 7 } });
+    controller.abort();
 
     expect(await completion).toEqual({
       result: {
@@ -168,7 +174,7 @@ describe("parent-owned call outcomes", () => {
       },
       calls: [
         { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-        { callId: 2, name: "read", status: "uncertain" },
+        { callId: 2, name: "read", status: "interrupted", reason: "timeout" },
       ],
     });
   });
@@ -224,7 +230,9 @@ describe("parent-owned call outcomes", () => {
     await Bun.sleep(0);
     release.resolve();
 
-    expect((await completion).calls).toEqual([{ callId: 1, name: "read", status: "uncertain" }]);
+    expect((await completion).calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
+    ]);
     expect(conversions).toBe(0);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -268,12 +276,12 @@ describe("parent-owned call outcomes", () => {
     expect(error.cause).toBe(cause);
     expect(error.calls).toEqual([
       { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-      { callId: 2, name: "read", status: "uncertain" },
+      { callId: 2, name: "read", status: "interrupted", reason: "cancelled" },
     ]);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
-  test("preserves both execution and cleanup failures alongside uncertain calls", async () => {
+  test("preserves both execution and cleanup failures alongside sandbox-interrupted calls", async () => {
     const worker = faultWorker("idle");
     const terminateWorker = worker.terminate.bind(worker);
     const cleanupFailure = new Error("Termination failed");
@@ -292,7 +300,9 @@ describe("parent-owned call outcomes", () => {
     worker.emit("error", new Error("Private worker details"));
     const error = await executionErrorOf(completion);
 
-    expect(error.calls).toEqual([{ callId: 1, name: "read", status: "uncertain" }]);
+    expect(error.calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" },
+    ]);
     expect(error.cause).toBeInstanceOf(SuppressedError);
     if (error.cause instanceof SuppressedError) {
       expect(error.cause.error).toBe(cleanupFailure);

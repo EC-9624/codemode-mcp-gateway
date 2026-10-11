@@ -1,14 +1,19 @@
 import { type SandboxResult } from "./sandbox-result";
 import { type SerializedToolResult } from "./tool";
 
+/** Why execution stopped observing a dispatched call, not the tool's external outcome. */
+export type InterruptionReason = "cancelled" | "timeout" | "script-error" | "sandbox-error";
+
 /** Parent observations, not proof of external side effects or guest receipt. */
 export type CallOutcome = {
   readonly callId: number;
   readonly name: string;
 } & (
   | { readonly status: "completed"; readonly result: SerializedToolResult }
-  | { readonly status: "uncertain" }
+  | { readonly status: "interrupted"; readonly reason: InterruptionReason }
 );
+
+type PendingCall = { readonly callId: number; readonly name: string; readonly status: "pending" };
 
 export type ExecutionReport = {
   readonly result: SandboxResult;
@@ -28,14 +33,14 @@ export class SandboxExecutionError extends Error {
 
 /** @internal Parent-owned records. Closing fixes the snapshot before abort listeners can run. */
 export function createCallLog() {
-  const calls = new Map<number, CallOutcome>();
+  const calls = new Map<number, PendingCall | Extract<CallOutcome, { status: "completed" }>>();
   let snapshot: readonly CallOutcome[] | undefined;
 
   return {
     dispatch(callId: number, name: string) {
       if (snapshot !== undefined) return;
 
-      calls.set(callId, { callId, name, status: "uncertain" });
+      calls.set(callId, { callId, name, status: "pending" });
     },
     complete(callId: number, result: SerializedToolResult) {
       if (snapshot !== undefined) return;
@@ -45,8 +50,12 @@ export function createCallLog() {
 
       calls.set(callId, { ...call, status: "completed", result });
     },
-    close() {
-      snapshot ??= [...calls.values()];
+    close(reason: InterruptionReason) {
+      snapshot ??= [...calls.values()].map((call): CallOutcome => {
+        if (call.status === "completed") return call;
+
+        return { ...call, status: "interrupted", reason };
+      });
       calls.clear();
 
       return snapshot;

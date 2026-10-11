@@ -83,13 +83,20 @@ Each call record has an execution-local `callId`, tool `name`, and one of:
 - `completed`: the parent recorded a serialized public response before selecting
   the execution outcome. `result` is `{ ok: true, json: string | undefined }` or
   `{ ok: false, error: { message: string } }`.
-- `uncertain`: the parent started invocation but had not recorded its response
-  when execution stopped. The operation may still finish or have side effects.
+- `interrupted`: the parent started invocation but had not recorded its response
+  when execution stopped. `reason` explains why observation ended:
+  `cancelled`, `timeout`, `script-error`, or `sandbox-error`.
+  The operation may still finish or have side effects.
+
+`cancelled` means the caller requested cancellation; `timeout` means a guest or
+total deadline expired; `script-error` means guest execution failed; `sandbox-error`
+means the worker, transport, or execution machinery failed. Detailed sandbox
+failure causes remain on `SandboxExecutionError` rather than in each call record.
 
 Completed means an observed response, not guest receipt or proof of an external
 transaction. Even a failed response, including the generic response for a thrown
 callback, does not establish that no side effects occurred. Cancellation or
-deadline expiry during result conversion leaves the call uncertain.
+deadline expiry during result conversion leaves the call interrupted for that reason.
 
 Records remain in invocation order, even when replies arrive out of order. Calls
 rejected before invocation, including malformed requests, do not appear. Call
@@ -118,7 +125,7 @@ const report = {
       status: "completed",
       result: { ok: true, json: '{"id":"invoice-1"}' },
     },
-    { callId: 2, name: "wait", status: "uncertain" },
+    { callId: 2, name: "wait", status: "interrupted", reason: "cancelled" },
   ],
 };
 ```
@@ -130,6 +137,10 @@ host-only `SandboxExecutionError`. Its `calls` carries the same snapshot and its
 `cause` preserves the original host-side failure. If execution and cleanup both
 throw, the cause retains the disposal `SuppressedError` chain. Invalid budgets
 continue to reject with `RangeError` before execution.
+
+Once selected, interruption reasons do not change during cleanup. For example,
+cancellation followed by a termination failure rejects with `SandboxExecutionError`,
+but pending calls keep `reason: "cancelled"`. Completed responses remain completed.
 
 ```ts
 import { execute, SandboxExecutionError } from "./src/sandbox";
@@ -289,7 +300,7 @@ Execution report flow:
 parent accepts completion / cancellation / timeout / infrastructure failure
   -> close dispatch and snapshot call outcomes
        recorded responses -> completed
-       unresolved dispatched calls -> uncertain
+       unresolved dispatched calls -> interrupted with the selected reason
   -> request interruption; abort tool signal on unsuccessful execution
   -> await worker cleanup
        success -> return { result, calls }
@@ -498,7 +509,8 @@ generators, and the guest-global `this` binding remain supported.
   tool cancellation. Started operations may still finish or have side effects;
   there is no rollback, automatic retry, or exactly-once guarantee. Retained call
   outcomes describe only parent observations at execution completion; unresolved
-  dispatched calls remain uncertain. Call count and retained bytes are not yet bounded.
+  dispatched calls are marked interrupted with the reason observation ended.
+  Call count and retained bytes are not yet bounded.
 - No imports, TypeScript, persistent state, or MCP integration yet.
 - This is a learning project, not a production-hardened sandbox.
 
@@ -546,7 +558,7 @@ one layer. Typechecking includes all test helpers and fixtures.
 5. Worker-backed host tools, host-owned catalog, and discovery.
 6. Configurable guest deadlines and opt-in parent-supervised deadlines/interruption.
 7. Caller cancellation and cooperative host-tool cancellation.
-8. Parent-owned execution reports with retained completed/uncertain call outcomes.
+8. Parent-owned execution reports with completed responses and explicit call interruption reasons.
 
 Next:
 
