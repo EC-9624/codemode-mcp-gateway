@@ -424,8 +424,120 @@ await execute(
   are not JavaScript identifiers.
 
 Only callable names go to the worker at startup; metadata reaches the guest when
-discovery returns it. A future MCP adapter can provide definitions and callbacks
-without teaching the engine about MCP.
+discovery returns it. The MCP adapter supplies definitions and callbacks through
+this same boundary.
+
+### MCP upstream adapter
+
+`createMcpCatalog(client, options?)` discovers a snapshot from an already-connected
+official MCP SDK v2 client. The application owns connection settings, credentials,
+protocol negotiation, and closing the client. The adapter borrows it on both
+success and failure; cancelling one execution does not close the shared client.
+
+```ts
+import { createMcpCatalog, execute } from "./src/sandbox";
+
+// client is an application-owned, connected @modelcontextprotocol/client Client.
+const catalog = await createMcpCatalog(client);
+const report = await execute(
+  `
+    const response = await tools.add({ a: 2, b: 3 });
+    if (response.isError) return response.content;
+    return response.structuredContent.sum;
+  `,
+  catalog.tools,
+);
+```
+
+Run `bun run example:mcp` for the complete stdio workflow. It starts
+`examples/mcp-server.ts` as a Bun child process, calls the synthetic `add`, `fail`,
+and `dataset` tools, then closes the client. `examples/mcp-tools.ts` also exposes
+`wait`, whose handler cooperates with request cancellation. Server diagnostics
+belong on stderr; stdout is reserved for protocol messages.
+
+#### Discovery
+
+```ts
+await createMcpCatalog(client, {
+  timeoutMs: 15_000, // default; overall discovery budget across pages
+  signal, // optional; cancels discovery only
+});
+```
+
+`timeoutMs` must be an integer from 1 through 2147483647. Invalid options reject
+before cancellation or network work. An already-aborted signal rejects before
+discovery. Setup failures stay on the host, outside `ExecutionReport`; SDK
+rejections retain their original identity. Discovery releases its timer and caller
+abort listener on every exit.
+
+Discovery uses the SDK's `listTools` aggregation with `cacheMode: "refresh"`.
+Rebuilding requests a fresh listing without changing an earlier catalog's names
+or callbacks. SDK v2.3.1 defaults to a 64-page cap and throws when it is exceeded;
+it treats identical consecutive pages with the same cursor as the end of a list.
+The adapter rejects duplicate names, preserves original names and input schemas,
+and supplies `MCP tool: <name>` when a description is absent. A connected server
+without the tools capability produces an empty catalog without a listing request.
+
+Use the existing `createDiscoveryTools(catalog)` to expose search/description to
+guest code, choosing callback names that do not collide with upstream tools.
+
+#### Invocation and responses
+
+```text
+guest calls tools[name](args)
+  -> existing worker/host bridge and call budgets
+  -> adapter validates object shape (omitted arguments become {})
+  -> client.callTool with the execution's AbortSignal
+  -> project content, optional structuredContent, optional isError
+  -> ToolResult.success(response)
+  -> existing single serialization, retained response, guest settlement
+```
+
+Arrays, null, and primitive arguments return the public failure
+`MCP tool arguments must be an object.` before sending an MCP request. Full
+input-schema validation remains the server's responsibility in this slice.
+The SDK can validate output schemas learned during discovery using its own
+metadata cache; the adapter does not add another validator.
+
+Guest response handling follows Pi's model:
+
+- `content` blocks are preserved without parsing text or fetching resource links.
+- `structuredContent` is retained when present, including arrays, null, false,
+  zero, and empty strings. The negotiated MCP revision determines its wire shape.
+- `isError: true` **resolves as data**, including server-side input-validation
+  errors. Guest code checks it explicitly.
+- Top-level `_meta` and unrelated extension fields are excluded. Metadata inside
+  content blocks is preserved.
+- SDK invocation exceptions use the existing `Host tool failed.` guest rejection.
+  Arbitrary protocol/transport/validator exception text is never forwarded by the
+  adapter. A `ProtocolError` class alone does not prove a message came from upstream.
+
+A completed retained call with `result.ok: true` can therefore contain JSON with
+`isError: true`: the outer result records a received public response, while the
+inner MCP flag describes the tool's outcome. A lost connection only establishes
+that a usable response was not obtained; it does not establish external failure.
+
+#### Cancellation, ownership, and current scope
+
+Connection setup, discovery, and execution have separate lifetimes. Execution
+deadlines do not cover the preceding connect/list phase. Discovery's signal is
+not captured by invocation callbacks. Each invocation instead forwards the
+execution's `ToolContext.signal`; server handlers must cooperate with cancellation.
+Late completions cannot change the closed execution report. The SDK's own request
+timeout can also end an individual call before MCM's execution deadline.
+
+The example uses the SDK's default legacy handshake. Modern JSON response values
+are also tested through an in-process HTTP handler. Protocol negotiation remains
+application-owned; automatic stdio negotiation can spawn a separate probe child.
+Lifecycle tests observe actual child exit, including after failed setup. In SDK
+v2.3.1 a failed legacy handshake initiates close without awaiting it, so a subsequent
+`client.close()` can return before that earlier teardown finishes.
+
+The adapter adds no retries. SDK protocol flows may issue multiple wire requests
+per invocation; execution call budgets count host-tool invocations, not wire
+attempts. Catalog refresh is explicit, and client reuse, authentication, and
+interactive request handlers remain application-owned. Tool payloads and retained
+response bytes still have no MCM-specific cap; SDK transport limits also apply.
 
 ## Architecture
 
@@ -702,12 +814,13 @@ generators, and the guest-global `this` binding remain supported.
   the parent can request worker termination meanwhile.
 - Timeout, failure, or cancellation ends sandbox execution and requests cooperative
   tool cancellation. Started operations may still finish or have side effects;
-  there is no rollback, automatic retry, or exactly-once guarantee. Retained call
+  the sandbox provides no rollback, automatic retry, or exactly-once guarantee. Retained call
   outcomes describe only parent observations at execution completion; unresolved
   dispatched calls are marked interrupted with the reason observation ended.
   Call counts and outstanding calls are bounded per execution; payload size and
   retained bytes are not yet bounded.
-- No imports, TypeScript, persistent state, or MCP integration yet.
+- No guest imports, TypeScript, or persistent state. MCP integration currently
+  adapts tools from one application-owned client per catalog.
 - This is a learning project, not a production-hardened sandbox.
 
 ## Code style and checks
@@ -758,11 +871,11 @@ one layer. Typechecking includes all test helpers and fixtures.
 9. Optional memory, stack, and UTF-8 source limits with defaults and pre-startup admission.
 10. Per-execution tool-call and concurrency limits enforced before deferred allocation and host dispatch.
 11. Optional final guest-output limit covering UTF-8 JSON returns and script-error messages.
+12. Host-owned MCP client adapter with Pi-style responses, bounded discovery, and synthetic stdio lifecycle coverage.
 
 Next:
 
-1. One synthetic MCP upstream to the host catalog, exercising realistic tool payloads.
-2. Schema-backed argument validation; revisit payload/retention bounds using integration evidence.
-3. Soak/fault testing, latency/memory measurements, and reference comparisons.
+1. Schema-backed argument validation; revisit payload/retention bounds using integration evidence.
+2. Soak/fault testing, latency/memory measurements, and reference comparisons.
 
 Do not add a gateway framework before the sandbox behavior is understood.

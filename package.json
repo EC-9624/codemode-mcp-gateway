@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "example": "bun run examples/basic.ts",
+    "example:mcp": "bun run examples/mcp.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./tests",
     "lint": "oxlint --deny-warnings .",
@@ -14,16 +15,19 @@
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
     "acorn": "8.19.0",
     "quickjs-emscripten": "0.32.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/bun": "1.4.2",
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
     "oxlint-tsgolint": "7.0.2003",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "zod": "4.3.6"
   },
   "engines": {
     "bun": "1.4.2"

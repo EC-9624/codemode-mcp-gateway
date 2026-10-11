@@ -15,3 +15,4 @@ export {
   type ToolSchema,
 } from "./tool-catalog";
 export { execute, type ExecuteOptions } from "./worker-execution";
+export { createMcpCatalog, type McpCatalogOptions } from "./mcp-catalog";
