@@ -1,5 +1,11 @@
-import { Client, InMemoryTransport, type ClientOptions } from "@modelcontextprotocol/client";
-import { type McpServer, type Server } from "@modelcontextprotocol/server";
+import {
+  Client,
+  InMemoryTransport,
+  type ClientOptions,
+  type Tool,
+} from "@modelcontextprotocol/client";
+import { Server, type McpServer } from "@modelcontextprotocol/server";
+import { type ToolCatalog } from "../../src/codemode";
 
 /** Own both ends, including partially completed setup. Each test owns its server handlers. */
 export async function connectMcp(server: Server | McpServer, options?: ClientOptions) {
@@ -17,4 +23,23 @@ export async function connectMcp(server: Server | McpServer, options?: ClientOpt
     serverTransport,
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
+}
+
+/** A server with the tools capability. Given `tools`, it answers `tools/list` with that listing. */
+export function toolServer(tools?: Tool[]) {
+  const server = new Server(
+    { name: "mcm-test", version: "0.0.0" },
+    { capabilities: { tools: {} } },
+  );
+
+  if (tools !== undefined) server.setRequestHandler("tools/list", () => ({ tools }));
+
+  return server;
+}
+
+export function requireTool(catalog: ToolCatalog, name: string) {
+  const tool = catalog.tools[name];
+  if (tool === undefined) throw new Error(`Missing discovered tool ${JSON.stringify(name)}.`);
+
+  return tool;
 }

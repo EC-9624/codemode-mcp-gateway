@@ -1,31 +1,32 @@
-import { execute, ToolResult } from "../../src/sandbox";
-import { superviseWorker, type WorkerControl } from "../../src/worker-execution";
-import { faultWorker, toolWorker } from "../support/workers";
+import { execute, ToolResult } from "../../src/codemode";
+import {
+  faultWorker,
+  interruptFlag,
+  superviseWorker,
+  toolWorker,
+  type WorkerControl,
+} from "../support/workers";
 
 // Run potentially stuck workers in a child process so a broken interrupt cannot hang bun:test.
 const startupDeadline = {
   deadline: { timeoutMs: 100, expiresAt: performance.now() + 100 },
-  interrupt: new Int32Array(new SharedArrayBuffer(4)),
+  interrupt: interruptFlag(),
 } satisfies WorkerControl;
 
 let startupCalled = false;
 console.log(
   JSON.stringify({
     result: (
-      await superviseWorker(
-        faultWorker("startup-loop", ["read"]),
-        new Map([
-          [
-            "read",
-            () => {
-              startupCalled = true;
+      await superviseWorker(faultWorker("startup-loop", ["read"]), {
+        tools: {
+          read: () => {
+            startupCalled = true;
 
-              return ToolResult.success();
-            },
-          ],
-        ]),
-        startupDeadline,
-      )
+            return ToolResult.success();
+          },
+        },
+        control: startupDeadline,
+      })
     ).result,
     called: startupCalled,
   }),
@@ -61,24 +62,20 @@ try {
 }
 
 // No supervisor deadline here: the shared flag alone must interrupt running QuickJS.
-const interrupt = new Int32Array(new SharedArrayBuffer(4));
+const interrupt = interruptFlag();
 const worker = toolWorker("tools.read(); while (true) {}", 10000, interrupt.buffer);
 console.log(
   JSON.stringify(
     (
-      await superviseWorker(
-        worker,
-        new Map([
-          [
-            "read",
-            () => {
-              Atomics.store(interrupt, 0, 1);
+      await superviseWorker(worker, {
+        tools: {
+          read: () => {
+            Atomics.store(interrupt, 0, 1);
 
-              return ToolResult.success();
-            },
-          ],
-        ]),
-      )
+            return ToolResult.success();
+          },
+        },
+      })
     ).result,
   ),
 );

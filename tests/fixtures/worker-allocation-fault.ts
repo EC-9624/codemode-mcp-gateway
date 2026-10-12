@@ -5,4 +5,4 @@ QuickJSContext.prototype.newPromise = () => {
 };
 
 // A static import would start the real entry before the worker-local fault is installed.
-await import("../../src/worker-entry");
+await import("../../src/codemode/runtime/worker");

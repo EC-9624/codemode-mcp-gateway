@@ -1,8 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { execute, ToolResult, type SandboxTool } from "../../src/sandbox";
-import { superviseWorker } from "../../src/worker-execution";
+import { execute, ToolResult, type SandboxTool } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
-import { faultWorker, toolWorker } from "../support/workers";
+import { superviseWorker, faultWorker, toolWorker } from "../support/workers";
 
 describe("worker host tools", () => {
   test("rejects reply transport failures without turning them into guest tool errors", async () => {
@@ -14,7 +13,7 @@ describe("worker host tools", () => {
     });
 
     const error = await executionErrorOf(
-      superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+      superviseWorker(worker, { tools: { read: () => ToolResult.success(42) } }),
     );
 
     expect(error.cause).toBe(failure);
@@ -35,7 +34,7 @@ describe("worker host tools", () => {
 
       const failure = (
         await executionErrorOf(
-          superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+          superviseWorker(worker, { tools: { read: () => ToolResult.success(42) } }),
         )
       ).cause;
 
@@ -58,7 +57,7 @@ describe("worker host tools", () => {
 
     const failure = (
       await executionErrorOf(
-        superviseWorker(worker, new Map([["read", () => ToolResult.success(42)]])),
+        superviseWorker(worker, { tools: { read: () => ToolResult.success(42) } }),
       )
     ).cause;
 
@@ -78,19 +77,15 @@ describe("worker host tools", () => {
       const worker = toolWorker("return 42;");
       let calls = 0;
 
-      const completion = superviseWorker(
-        worker,
-        new Map([
-          [
-            "read",
-            () => {
-              calls += 1;
+      const completion = superviseWorker(worker, {
+        tools: {
+          read: () => {
+            calls += 1;
 
-              return ToolResult.success();
-            },
-          ],
-        ]),
-      );
+            return ToolResult.success();
+          },
+        },
+      });
 
       worker.emit("message", call);
       const error = await executionErrorOf(completion);
@@ -104,41 +99,41 @@ describe("worker host tools", () => {
   test("rejects replayed call IDs without dispatching twice", async () => {
     const worker = toolWorker("return 42;");
     const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
     let calls = 0;
 
-    const completion = superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          () => {
-            calls += 1;
+    const completion = superviseWorker(worker, {
+      tools: {
+        read: () => {
+          calls += 1;
 
-            return late.promise;
-          },
-        ],
-      ]),
-    );
+          return late.promise;
+        },
+      },
+    });
 
     const call = { type: "tool-call", callId: 1, name: "read", argsJson: undefined };
     worker.emit("message", call);
     worker.emit("message", call);
     expect((await executionErrorOf(completion)).cause).toBeInstanceOf(Error);
     expect(calls).toBe(1);
-    late.resolve(ToolResult.success());
   });
 
   test("discards late results after timeout without conversion or transport", async () => {
     const worker = toolWorker("return await tools.read();", 100);
     const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
     let conversions = 0;
     using post = spyOn(worker, "postMessage");
-    expect((await superviseWorker(worker, new Map([["read", () => late.promise]]))).result).toEqual(
-      {
-        ok: false,
-        error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-      },
-    );
+
+    const report = await superviseWorker(worker, { tools: { read: () => late.promise } });
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+    });
     late.resolve(
       ToolResult.success({
         toJSON() {
@@ -156,6 +151,8 @@ describe("worker host tools", () => {
   test("observes late callback failures after a worker crash", async () => {
     const worker = faultWorker("call-and-crash", ["read"]);
     const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
     using post = spyOn(worker, "postMessage");
 
     const read: SandboxTool = () => {
@@ -164,8 +161,7 @@ describe("worker host tools", () => {
       return late.promise;
     };
 
-    const failure = (await executionErrorOf(superviseWorker(worker, new Map([["read", read]]))))
-      .cause;
+    const failure = (await executionErrorOf(superviseWorker(worker, { tools: { read } }))).cause;
 
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).not.toContain("Private fixture");

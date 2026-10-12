@@ -1,26 +1,21 @@
-import { execute, ToolResult } from "../../src/sandbox";
-import { superviseWorker } from "../../src/worker-execution";
-import { faultWorker } from "../support/workers";
+import { execute, ToolResult } from "../../src/codemode";
+import { faultWorker, interruptFlag, superviseWorker } from "../support/workers";
 
 // An outer process timeout bounds regressions that would otherwise hang bun:test.
 const startup = new AbortController();
 console.log(
   JSON.stringify(
     (
-      await superviseWorker(
-        faultWorker("startup-loop", ["read"]),
-        new Map([
-          [
-            "read",
-            () => {
-              startup.abort();
+      await superviseWorker(faultWorker("startup-loop", ["read"]), {
+        tools: {
+          read: () => {
+            startup.abort();
 
-              return ToolResult.success();
-            },
-          ],
-        ]),
-        { signal: startup.signal, interrupt: new Int32Array(new SharedArrayBuffer(4)) },
-      )
+            return ToolResult.success();
+          },
+        },
+        control: { signal: startup.signal, interrupt: interruptFlag() },
+      })
     ).result,
   ),
 );

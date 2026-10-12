@@ -15,7 +15,7 @@ scenario and its expected outcome without stepping through production code.
 
 Classify by the contract being checked, not by counting imported modules or mocks.
 Component tests may finish with a public recovery check. Integration scenarios use
-`src/sandbox.ts`; process fixtures can include internal probes for busy startup
+`src/codemode` and `src/mcp`; process fixtures can include internal probes for busy startup
 and interruption that must run outside the test runner.
 
 The worker/local equivalence test belongs with the supervisor: it checks transport
@@ -71,6 +71,12 @@ test("returns cancelled when the caller aborts before startup", async () => {
 - `installLocalToolBridge` is a test adapter over the real guest bridge. It provides
   visibility into handles and original errors; worker/cancellation guarantees must
   be checked through the supervisor or public execution path.
+- `superviseWorker` in `tests/support/workers.ts` constructs the real internal
+  `WorkerExecution` class with an injected worker. It contains no supervision logic.
+  Build worker requests with `startupData` and flags with `interruptFlag` rather than
+  by hand, so new startup fields need one change.
+- `tests/support/worker-cleanup.ts` holds termination gates and listener assertions.
+  It imports `bun:test`, so process fixtures must not import it.
 
 ## Running and checking stability
 

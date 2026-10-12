@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/sandbox";
+import { execute, ToolResult } from "../../src/codemode";
 
 describe("guest prelude boundary", () => {
   test("does not put raw callbacks or codec helpers in the user function's scope", async () => {
@@ -64,28 +64,39 @@ describe("guest prelude boundary", () => {
     ).toEqual({ ok: true, value: [42, 42, 42] });
   });
 
-  test("rejects function-wrapper escape syntax before executing any user code", async () => {
-    let calls = 0;
+  test.each([
+    ["statements", "}); tools.write(); (async (tools) => { return 3;"],
+    ["comma expressions", "}), tools.write(), (async (tools) => { return 3;"],
+    ["a global assignment", "}); globalThis.escaped = true; (async () => {"],
+  ] as const)(
+    "rejects function-wrapper escape through %s before executing any user code and recovers",
+    async (_name, code) => {
+      let calls = 0;
 
-    const write = () => {
-      calls += 1;
+      const rejected = await execute(code, {
+        write: () => {
+          calls += 1;
 
-      return ToolResult.success();
-    };
+          return ToolResult.success();
+        },
+      });
 
-    for (const code of [
-      "}); tools.write(); (async (tools) => { return 3;",
-      "}), tools.write(), (async (tools) => { return 3;",
-    ]) {
-      const { result } = await execute(code, { write });
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.kind).toBe("script");
+      const recovered = await execute("return 3;");
 
+      expect(rejected).toEqual({
+        result: {
+          ok: false,
+          error: {
+            kind: "script",
+            message: "Source must stay inside the submitted async function body.",
+          },
+        },
+        calls: [],
+      });
       expect(calls).toBe(0);
-    }
-
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
-  });
+      expect(recovered.result).toEqual({ ok: true, value: 3 });
+    },
+  );
 
   test("accepts classes, generators, and wrapper-like text in strings, regexes, and comments", async () => {
     expect(
@@ -141,10 +152,12 @@ describe("guest prelude boundary", () => {
     ).toEqual({ ok: true, value: 42 });
   });
 
-  test("binds guest this to globalThis", async () => {
-    expect((await execute("return this === globalThis;")).result).toEqual({
+  test("binds guest this and public tools to globalThis", async () => {
+    expect(
+      (await execute("return [this === globalThis, tools === globalThis.tools];")).result,
+    ).toEqual({
       ok: true,
-      value: true,
+      value: [true, true],
     });
   });
 

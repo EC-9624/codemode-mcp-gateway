@@ -1,46 +1,43 @@
-import { parse } from "acorn";
 import { Buffer } from "node:buffer";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
-import { createVm, type VmLimits } from "./runtime";
-import { type ToolBridge } from "./guest-tool-bridge";
-import { type GuestResult } from "./sandbox-result";
+import { createVm } from "./vm";
+import { type ToolBridge } from "./guest-bridge";
+import { type ExecutionLimits } from "./limits";
+import { type GuestResult } from "./protocol";
+import { prepareScript, prepareRunner, startScript } from "./script";
 
 const JOBS_PER_TURN = 100;
 
 /** Worker-local engine. Bridge handles belong to the execution's scope. */
 export async function executeEngine(
   code: string,
-  options: VmLimits & { timeoutMs: number; maxOutputBytes: number },
+  limits: ExecutionLimits,
   installToolBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
-  interrupt?: Int32Array<SharedArrayBuffer>,
+  interrupt: Int32Array<SharedArrayBuffer>,
 ): Promise<GuestResult> {
-  using vm = await createVm(options);
+  using vm = await createVm(limits);
   using bridgeScope = new Scope();
   const bridge = installToolBridge(vm, bridgeScope);
 
   const result = await executeScript(
     vm,
     code,
-    options.timeoutMs,
-    options.maxOutputBytes,
+    limits.timeoutMs,
+    limits.maxOutputBytes,
     bridge,
     interrupt,
   );
 
   // Error conversion can invoke tools after the job loop's last failure/limit check.
-  const failure = bridge.failure;
-  if (!failure.ok) {
-    if ("limit" in failure) return { ok: false, error: failure.limit };
-
-    throw failure.error;
-  }
+  const stopped = bridgeOutcome(bridge);
+  if (stopped) return stopped;
 
   if (
     !result.ok &&
     result.error.kind === "script" &&
-    Buffer.byteLength(result.error.message, "utf8") > options.maxOutputBytes
+    Buffer.byteLength(result.error.message, "utf8") > limits.maxOutputBytes
   ) {
-    return outputLimit(options.maxOutputBytes);
+    return outputLimit(limits.maxOutputBytes);
   }
 
   return result;
@@ -52,23 +49,18 @@ async function executeScript(
   timeoutMs: number,
   maxOutputBytes: number,
   bridge: ToolBridge,
-  interrupt: Int32Array<SharedArrayBuffer> | undefined,
+  interrupt: Int32Array<SharedArrayBuffer>,
 ): Promise<GuestResult> {
   const runtime = vm.runtime;
   using deadline = createDeadline(timeoutMs);
 
   // QuickJS polls this shared flag via Atomics even while worker message handling is blocked.
-  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics
-  const interrupted = () => interrupt !== undefined && Atomics.load(interrupt, 0) !== 0;
+  const interrupted = () => Atomics.load(interrupt, 0) !== 0;
 
   // Infrastructure failures throw; admission limits and deadlines are execution results.
   const checkpoint = (): GuestResult | undefined => {
-    const failure = bridge.failure;
-    if (!failure.ok) {
-      if ("limit" in failure) return { ok: false, error: failure.limit };
-
-      throw failure.error;
-    }
+    const stopped = bridgeOutcome(bridge);
+    if (stopped) return stopped;
 
     if (interrupted()) {
       return {
@@ -92,7 +84,9 @@ async function executeScript(
     return checkpoint() ?? result;
   };
 
-  runtime.setInterruptHandler(() => !bridge.failure.ok || interrupted() || deadline.passed());
+  runtime.setInterruptHandler(
+    () => bridge.failure !== undefined || interrupted() || deadline.passed(),
+  );
 
   const submission = prepareScript(code);
   const parsed = checkpoint();
@@ -167,6 +161,16 @@ async function executeScript(
   }
 }
 
+/** Private infrastructure failures throw; a recorded admission limit is the outcome. */
+function bridgeOutcome(bridge: ToolBridge): GuestResult | undefined {
+  const failure = bridge.failure;
+  if (failure === undefined) return undefined;
+
+  if (failure.kind === "limit") return { ok: false, error: failure.limit };
+
+  throw failure.error;
+}
+
 function outputLimit(maximum: number): GuestResult {
   return {
     ok: false,
@@ -192,91 +196,6 @@ function createDeadline(timeoutMs: number) {
     },
   };
 }
-
-function prepareScript(
-  code: string,
-): { ok: true; source: string } | { ok: false; message: string } {
-  const prefix = '(async (tools) => {\n"use strict";\n';
-  const source = `${prefix}${code}\n})`;
-  let program: ReturnType<typeof parse>;
-  try {
-    // Restricting body syntax would reject valid JavaScript; only wrapper escapes are forbidden.
-    program = parse(source, { ecmaVersion: "latest", sourceType: "script" });
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-
-    return { ok: false, message: error.message };
-  }
-
-  const statement = program.body[0];
-  if (
-    program.body.length !== 1 ||
-    statement?.type !== "ExpressionStatement" ||
-    statement.expression.type !== "ArrowFunctionExpression" ||
-    !statement.expression.async ||
-    statement.expression.body.type !== "BlockStatement" ||
-    statement.expression.body.start !== prefix.indexOf("{") ||
-    statement.expression.body.end !== source.length - 1
-  ) {
-    return { ok: false, message: "Source must stay inside the submitted async function body." };
-  }
-
-  return { ok: true, source };
-}
-
-function prepareRunner(vm: QuickJSContext) {
-  // Disposing an error result here would invalidate the handle the caller must inspect.
-  const factory = vm.evalCode(PRELUDE_SOURCE, "sandbox-prelude.js");
-  if (factory.error) return factory;
-
-  using factoryHandle = factory.value;
-  using hostTools = vm.getProp(vm.global, "tools");
-
-  return vm.callFunction(factoryHandle, vm.undefined, hostTools);
-}
-
-function startScript(vm: QuickJSContext, source: string, runner: QuickJSHandle) {
-  const compiled = vm.evalCode(source, "sandbox.js");
-  if (compiled.error) return compiled;
-
-  using script = compiled.value;
-
-  return vm.callFunction(runner, vm.undefined, script);
-}
-
-// Compiling user code inside this closure would expose raw callbacks and captured codecs.
-const PRELUDE_SOURCE = `((hostTools) => {
-    "use strict";
-    const stringify = JSON.stringify;
-    const parse = JSON.parse;
-    const ConversionError = TypeError;
-    const decodeResult = async (call) => {
-      const json = await call;
-      return json === undefined ? undefined : parse(json);
-    };
-
-    const tools = Object.create(null);
-    for (const name of Object.keys(hostTools)) {
-      const invoke = hostTools[name];
-      tools[name] = (args) => {
-        const json = stringify(args);
-        if (json === undefined && args !== undefined) {
-          throw new ConversionError("Tool arguments are not JSON-serializable.");
-        }
-        return decodeResult(invoke(json));
-      };
-    }
-    globalThis.tools = Object.freeze(tools);
-
-    return async (script) => {
-      const value = await script(tools);
-      const json = stringify(value);
-      if (json === undefined && value !== undefined) {
-        throw new ConversionError("Return value is not JSON-serializable.");
-      }
-      return json ?? "null";
-    };
-  })`;
 
 function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): GuestResult {
   // dump consumes promise handles (including nested promise reasons). A thrown

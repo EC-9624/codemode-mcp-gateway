@@ -1,9 +1,10 @@
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { executeEngine } from "../../src/sandbox-engine";
-import { callTool, serializeToolResult, type SandboxTool } from "../../src/tool";
-import { installGuestToolBridge } from "../../src/guest-tool-bridge";
-import { type ToolCallLimits } from "../../src/tool-call-budget";
+import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
+import { executeEngine } from "../../src/codemode/runtime/engine";
+import { callTool, serializeToolResult, type SandboxTool } from "../../src/codemode/tools";
+import { installGuestToolBridge } from "../../src/codemode/runtime/guest-bridge";
+import { type ToolCallLimits } from "../../src/codemode/runtime/budget";
+import { interruptFlag } from "./workers";
 
 export function executeLocally(
   code: string,
@@ -11,8 +12,11 @@ export function executeLocally(
   timeoutMs = 1000,
   limits: ToolCallLimits = DEFAULT_LIMITS,
 ) {
-  return executeEngine(code, { ...DEFAULT_LIMITS, timeoutMs }, (vm, scope) =>
-    installLocalToolBridge(vm, tools, scope, limits),
+  return executeEngine(
+    code,
+    { ...DEFAULT_LIMITS, timeoutMs },
+    (vm, scope) => installLocalToolBridge(vm, tools, scope, limits),
+    interruptFlag(),
   );
 }
 

@@ -3,16 +3,17 @@ import { Ajv2020 } from "ajv/dist/2020";
 import { Client, StreamableHTTPClientTransport, type Tool } from "@modelcontextprotocol/client";
 import { createMcpHandler, Server, type CallToolResult } from "@modelcontextprotocol/server";
 import { createMcpServer } from "../../examples/mcp-tools";
-import { createMcpCatalog, ToolCatalog, ToolResult } from "../../src/sandbox";
-import { callTool } from "../../src/tool";
-import { connectMcp } from "../support/mcp";
+import { ToolCatalog, ToolResult } from "../../src/codemode";
+import { createMcpCatalog } from "../../src/mcp";
+import { callTool } from "../../src/codemode/tools";
+import { connectMcp, requireTool, toolServer } from "../support/mcp";
 import { rejectionOf } from "../support/rejection";
 
 const context = { signal: new AbortController().signal };
 
 describe("MCP catalog discovery", () => {
   test("imports every page, preserves names and metadata, and routes the original name", async () => {
-    const server = new Server({ name: "paged", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer();
     const cursors: (string | undefined)[] = [];
     const invocations: unknown[] = [];
 
@@ -50,8 +51,7 @@ describe("MCP catalog discovery", () => {
     });
     expect(catalog.describe("__proto__")?.description).toBe("MCP tool: __proto__");
     expect(catalog.search("records").map((tool) => tool.name)).toEqual(["records.search"]);
-    const invoke = catalog.tools.__proto__;
-    if (!invoke) throw new Error("Missing discovered tool");
+    const invoke = requireTool(catalog, "__proto__");
 
     expect(await invoke(undefined, context)).toEqual({
       ok: true,
@@ -61,7 +61,7 @@ describe("MCP catalog discovery", () => {
   });
 
   test("refreshes the upstream listing without changing an earlier catalog snapshot", async () => {
-    const server = new Server({ name: "changing", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer();
     let name = "first";
     let listings = 0;
     server.setRequestHandler("tools/list", () => {
@@ -81,11 +81,7 @@ describe("MCP catalog discovery", () => {
   });
 
   test("rejects duplicate names across pages and leaves the borrowed client usable", async () => {
-    const server = new Server(
-      { name: "duplicates", version: "1" },
-      { capabilities: { tools: {} } },
-    );
-
+    const server = toolServer();
     const tools: Tool[] = [{ name: "duplicate", inputSchema: { type: "object" } }];
     server.setRequestHandler("tools/list", ({ params }) =>
       params?.cursor === undefined ? { tools, nextCursor: "second" } : { tools },
@@ -101,7 +97,7 @@ describe("MCP catalog discovery", () => {
   });
 
   test("propagates the SDK page cap rather than returning its partial catalog", async () => {
-    const server = new Server({ name: "endless", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer();
     let pages = 0;
     server.setRequestHandler("tools/list", () => {
       pages++;
@@ -233,11 +229,7 @@ describe("MCP catalog discovery", () => {
   });
 
   test("cancellation stops discovery on a later page and keeps the client open", async () => {
-    const server = new Server(
-      { name: "waiting-list", version: "1" },
-      { capabilities: { tools: {} } },
-    );
-
+    const server = toolServer();
     const started = Promise.withResolvers<void>();
     const stopped = Promise.withResolvers<void>();
     const controller = new AbortController();
@@ -281,7 +273,7 @@ describe("MCP catalog discovery", () => {
   });
 
   test("the overall discovery deadline cancels a pending listing without closing the client", async () => {
-    const server = new Server({ name: "deadline", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer();
     const stopped = Promise.withResolvers<void>();
     server.setRequestHandler("tools/list", async (_request, { mcpReq }) => {
       using cleanup = new DisposableStack();
@@ -313,8 +305,7 @@ describe("MCP invocation boundary", () => {
     using compilation = spyOn(Ajv2020.prototype, "compile");
     const catalog = await createMcpCatalog(connection.client);
     const count = compilation.mock.calls.length;
-    const add = catalog.tools.add;
-    if (!add) throw new Error("Missing add tool");
+    const add = requireTool(catalog, "add");
 
     expect(await add({ a: 1, b: 2 }, context)).toMatchObject({
       ok: true,
@@ -327,12 +318,12 @@ describe("MCP invocation boundary", () => {
     expect(count).toBeGreaterThan(0);
     expect(compilation).toHaveBeenCalledTimes(count);
   });
+
   test("rejects schema-invalid objects before upstream dispatch and preserves valid arguments", async () => {
     await using connection = await connectMcp(createMcpServer());
     const catalog = await createMcpCatalog(connection.client);
     using invocation = spyOn(connection.client, "callTool");
-    const add = catalog.tools.add;
-    if (!add) throw new Error("Missing add tool");
+    const add = requireTool(catalog, "add");
 
     expect(await add({ a: "1", b: 2 }, context)).toEqual(
       ToolResult.failure('Invalid arguments for "add": /a must be number.'),
@@ -351,8 +342,7 @@ describe("MCP invocation boundary", () => {
     await using connection = await connectMcp(createMcpServer());
     const catalog = await createMcpCatalog(connection.client);
     using invocation = spyOn(connection.client, "callTool");
-    const fail = catalog.tools.fail;
-    if (!fail) throw new Error("Missing fail tool");
+    const fail = requireTool(catalog, "fail");
 
     expect(await fail(undefined, context)).toEqual({
       ok: true,
@@ -362,19 +352,12 @@ describe("MCP invocation boundary", () => {
   });
 
   test("fails catalog construction for an invalid upstream schema without closing the client", async () => {
-    const server = new Server(
-      { name: "invalid-schema", version: "1" },
-      { capabilities: { tools: {} } },
-    );
-
-    server.setRequestHandler("tools/list", () => ({
-      tools: [
-        {
-          name: "read",
-          inputSchema: { type: "object", properties: { id: { type: "string", minLength: -1 } } },
-        },
-      ],
-    }));
+    const server = toolServer([
+      {
+        name: "read",
+        inputSchema: { type: "object", properties: { id: { type: "string", minLength: -1 } } },
+      },
+    ]);
 
     await using connection = await connectMcp(server);
     const rejected = await rejectionOf(createMcpCatalog(connection.client));
@@ -386,14 +369,14 @@ describe("MCP invocation boundary", () => {
     expect(rejected.reason.cause).toBeInstanceOf(Error);
     expect(await connection.client.ping()).toEqual({});
   });
+
   test.each([null, [], 42, "text", true])(
     "rejects non-object argument %j before upstream dispatch",
     async (args) => {
       await using connection = await connectMcp(createMcpServer());
       const catalog = await createMcpCatalog(connection.client);
       using invocation = spyOn(connection.client, "callTool");
-      const add = catalog.tools.add;
-      if (!add) throw new Error("Missing add tool");
+      const add = requireTool(catalog, "add");
 
       expect(await add(args, context)).toEqual({
         ok: false,
@@ -407,8 +390,7 @@ describe("MCP invocation boundary", () => {
     await using connection = await connectMcp(createMcpServer());
     const catalog = await createMcpCatalog(connection.client);
     using invocation = spyOn(connection.client, "callTool");
-    const add = catalog.tools.add;
-    if (!add) throw new Error("Missing add tool");
+    const add = requireTool(catalog, "add");
 
     expect(await callTool(add, { a: 1, b: 2 }, { signal: AbortSignal.abort() })).toEqual({
       ok: false,
@@ -418,7 +400,7 @@ describe("MCP invocation boundary", () => {
   });
 
   test("preserves mixed content and error data while excluding top-level metadata and extensions", async () => {
-    const server = new Server({ name: "content", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
 
     const content: CallToolResult["content"] = [
       { type: "text", text: "Public explanation", _meta: { publicBlockMetadata: true } },
@@ -426,9 +408,6 @@ describe("MCP invocation boundary", () => {
       { type: "resource_link", name: "record", uri: "test://record" },
     ];
 
-    server.setRequestHandler("tools/list", () => ({
-      tools: [{ name: "read", inputSchema: { type: "object" } }],
-    }));
     server.setRequestHandler("tools/call", () => ({
       content,
       structuredContent: { detail: "public" },
@@ -439,8 +418,7 @@ describe("MCP invocation boundary", () => {
 
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
-    const read = catalog.tools.read;
-    if (!read) throw new Error("Missing read tool");
+    const read = requireTool(catalog, "read");
 
     expect(await read(undefined, context)).toEqual({
       ok: true,
@@ -452,14 +430,7 @@ describe("MCP invocation boundary", () => {
     "preserves modern structured JSON value %j",
     async (structuredContent) => {
       const handler = createMcpHandler(() => {
-        const server = new Server(
-          { name: "modern", version: "1" },
-          { capabilities: { tools: {} } },
-        );
-
-        server.setRequestHandler("tools/list", () => ({
-          tools: [{ name: "read", inputSchema: { type: "object" } }],
-        }));
+        const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
         server.setRequestHandler("tools/call", () => ({
           content: [],
           structuredContent,
@@ -484,8 +455,7 @@ describe("MCP invocation boundary", () => {
         }),
       );
       const catalog = await createMcpCatalog(client);
-      const read = catalog.tools.read;
-      if (!read) throw new Error("Missing read tool");
+      const read = requireTool(catalog, "read");
 
       expect(await read(undefined, context)).toEqual({
         ok: true,
@@ -495,24 +465,18 @@ describe("MCP invocation boundary", () => {
   );
 
   test("uses SDK output-schema validation and keeps its failure generic at the host boundary", async () => {
-    const server = new Server(
-      { name: "bad-output", version: "1" },
-      { capabilities: { tools: {} } },
-    );
-
-    server.setRequestHandler("tools/list", () => ({
-      tools: [
-        {
-          name: "read",
-          inputSchema: { type: "object" },
-          outputSchema: {
-            type: "object",
-            required: ["sum"],
-            properties: { sum: { type: "number" } },
-          },
+    const server = toolServer([
+      {
+        name: "read",
+        inputSchema: { type: "object" },
+        outputSchema: {
+          type: "object",
+          required: ["sum"],
+          properties: { sum: { type: "number" } },
         },
-      ],
-    }));
+      },
+    ]);
+
     server.setRequestHandler("tools/call", () => ({
       content: [],
       structuredContent: { sum: "invalid" },
@@ -520,8 +484,7 @@ describe("MCP invocation boundary", () => {
 
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
-    const read = catalog.tools.read;
-    if (!read) throw new Error("Missing read tool");
+    const read = requireTool(catalog, "read");
 
     expect(await callTool(read, {}, context)).toEqual({
       ok: false,

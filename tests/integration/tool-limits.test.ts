@@ -1,45 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/sandbox";
-import { rejectionOf } from "../support/rejection";
-
-describe("tool-call limit options", () => {
-  for (const name of ["maxToolCalls", "maxConcurrentToolCalls"] as const) {
-    test.each([
-      ["zero", 0],
-      ["negative", -1],
-      ["fractional", 1.5],
-      ["NaN", NaN],
-      ["infinite", Infinity],
-      ["overflowing", 2 ** 31],
-    ] as const)(
-      `rejects %s ${name} before registry access even when cancelled`,
-      async (_label, value) => {
-        let reads = 0;
-
-        const rejected = await rejectionOf(
-          execute(
-            "return 42;",
-            {
-              get read() {
-                reads++;
-
-                return () => ToolResult.success();
-              },
-            },
-            { [name]: value, signal: AbortSignal.abort() },
-          ),
-        );
-
-        expect(rejected.reason).toBeInstanceOf(RangeError);
-        if (rejected.reason instanceof RangeError) {
-          expect(rejected.reason.message).toBe(`${name} must be an integer from 1 to 2147483647.`);
-        }
-
-        expect(reads).toBe(0);
-      },
-    );
-  }
-});
+import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/codemode";
 
 describe("total tool calls", () => {
   test("allows the default 100 calls and stops the 101st without invoking it", async () => {

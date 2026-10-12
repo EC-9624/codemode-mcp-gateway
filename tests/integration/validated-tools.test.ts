@@ -6,7 +6,7 @@ import {
   execute,
   ToolCatalog,
   ToolResult,
-} from "../../src/sandbox";
+} from "../../src/codemode";
 
 describe("validated native tools", () => {
   test("rejects invalid input before implementation, retains the failure, and lets the guest recover", async () => {

@@ -1,12 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import { MessageChannel } from "node:worker_threads";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { installWorkerToolBridge } from "../../src/worker-tool-bridge";
-import { executeEngine } from "../../src/sandbox-engine";
-import { ToolReply } from "../../src/worker-protocol";
+import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
+import { installWorkerToolBridge } from "../../src/codemode/runtime/worker-bridge";
+import { executeEngine } from "../../src/codemode/runtime/engine";
+import { ToolReply } from "../../src/codemode/runtime/protocol";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
 import { executeLocally } from "../support/local-tools";
 import { rejectionOf } from "../support/rejection";
+import { interruptFlag } from "../support/workers";
 
 test("worker-side posting failures bypass guest catch and release transport listeners", async () => {
   using channel = openChannel();
@@ -22,7 +23,8 @@ test("worker-side posting failures bypass guest catch and release transport list
     executeEngine(
       'try { return await tools.read(); } catch { return "caught"; }',
       { ...DEFAULT_LIMITS, timeoutMs: 1000 },
-      (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
+      (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup, DEFAULT_LIMITS),
+      interruptFlag(),
     ),
   );
 
@@ -53,8 +55,9 @@ test("reply decoder exceptions reject execution and dispose resources without gu
       (vm, scope) => {
         resources.push({ vm, scope });
 
-        return installWorkerToolBridge(vm, ["read"], channel.port1, scope, cleanup);
+        return installWorkerToolBridge(vm, ["read"], channel.port1, scope, cleanup, DEFAULT_LIMITS);
       },
+      interruptFlag(),
     ),
   );
 
@@ -92,7 +95,8 @@ for (const [name, event, message] of [
       executeEngine(
         'try { return await tools.read(); } catch { return "caught"; }',
         { ...DEFAULT_LIMITS, timeoutMs: 1000 },
-        (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup),
+        (vm, scope) => installWorkerToolBridge(vm, ["read"], port1, scope, cleanup, DEFAULT_LIMITS),
+        interruptFlag(),
       ),
     );
 
@@ -119,11 +123,16 @@ test("partial remote listener setup disposes the VM and bridge scope and removes
   });
 
   const result = await rejectionOf(
-    executeEngine("return 42;", { ...DEFAULT_LIMITS, timeoutMs: 1000 }, (vm, scope) => {
-      resources.push({ vm, scope });
+    executeEngine(
+      "return 42;",
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+      (vm, scope) => {
+        resources.push({ vm, scope });
 
-      return installWorkerToolBridge(vm, ["read"], port1, scope, cleanup);
-    }),
+        return installWorkerToolBridge(vm, ["read"], port1, scope, cleanup, DEFAULT_LIMITS);
+      },
+      interruptFlag(),
+    ),
   );
 
   expect(result.reason).toBe(failure);

@@ -1,29 +1,21 @@
-import { type GuestResult } from "./sandbox-result";
-import { type SerializedToolResult } from "./tool";
-import { isByteLimit, isCallCount, MAX_STACK_SIZE_BYTES } from "./execution-limits";
+import { type SandboxResult } from "../types";
+import { type SerializedToolResult } from "../tools";
+import { findInvalidLimit, isPositiveInt, type ExecutionLimits } from "./limits";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
-/** Longer delays overflow host timers, which then fire immediately. */
-export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
-
-export function isTimeoutMs(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isInteger(value) && value > 0 && value <= MAX_TIMEOUT_MS
-  );
-}
+/** Cancellation and source admission limits are classified by the parent, never the worker. */
+export type GuestResult = Exclude<
+  SandboxResult,
+  { error: { kind: "cancelled" } } | { error: { resource: "source" } }
+>;
 
 export type WorkerStartupData = {
   type: "execute";
   code: string;
   toolNames: string[];
-  timeoutMs: number;
-  memoryLimitBytes: number;
-  maxStackSizeBytes: number;
-  maxOutputBytes: number;
-  maxToolCalls: number;
-  maxConcurrentToolCalls: number;
-  interruptBuffer?: SharedArrayBuffer;
+  limits: ExecutionLimits;
+  interruptBuffer: SharedArrayBuffer;
 };
 
 export const WorkerStartupData = {
@@ -33,15 +25,9 @@ export const WorkerStartupData = {
       value.type === "execute" &&
       typeof value.code === "string" &&
       isToolNames(value.toolNames) &&
-      isTimeoutMs(value.timeoutMs) &&
-      isByteLimit(value.memoryLimitBytes) &&
-      isByteLimit(value.maxStackSizeBytes, MAX_STACK_SIZE_BYTES) &&
-      isByteLimit(value.maxOutputBytes) &&
-      isCallCount(value.maxToolCalls) &&
-      isCallCount(value.maxConcurrentToolCalls) &&
-      (value.interruptBuffer === undefined ||
-        (value.interruptBuffer instanceof SharedArrayBuffer &&
-          value.interruptBuffer.byteLength === Int32Array.BYTES_PER_ELEMENT))
+      isExecutionLimits(value.limits) &&
+      value.interruptBuffer instanceof SharedArrayBuffer &&
+      value.interruptBuffer.byteLength === Int32Array.BYTES_PER_ELEMENT
     ) {
       return {
         ok: true,
@@ -49,15 +35,8 @@ export const WorkerStartupData = {
           type: "execute",
           code: value.code,
           toolNames: value.toolNames,
-          timeoutMs: value.timeoutMs,
-          memoryLimitBytes: value.memoryLimitBytes,
-          maxStackSizeBytes: value.maxStackSizeBytes,
-          maxOutputBytes: value.maxOutputBytes,
-          maxToolCalls: value.maxToolCalls,
-          maxConcurrentToolCalls: value.maxConcurrentToolCalls,
-          ...(value.interruptBuffer === undefined
-            ? {}
-            : { interruptBuffer: value.interruptBuffer }),
+          limits: value.limits,
+          interruptBuffer: value.interruptBuffer,
         },
       };
     }
@@ -149,6 +128,10 @@ function isToolNames(value: unknown): value is string[] {
   );
 }
 
+function isExecutionLimits(value: unknown): value is ExecutionLimits {
+  return isRecord(value) && findInvalidLimit(value) === undefined;
+}
+
 function parseJsonText(value: unknown): { ok: true; value: unknown } | { ok: false } {
   if (value === undefined) return { ok: true, value: undefined };
 
@@ -184,11 +167,11 @@ function isGuestResult(value: unknown): value is GuestResult {
     return false;
 
   if (value.error.kind === "limit") {
-    if (value.error.resource === "output") return isByteLimit(value.error.maximum);
-
     return (
-      (value.error.resource === "tool-calls" || value.error.resource === "concurrent-tool-calls") &&
-      isCallCount(value.error.maximum)
+      (value.error.resource === "output" ||
+        value.error.resource === "tool-calls" ||
+        value.error.resource === "concurrent-tool-calls") &&
+      isPositiveInt(value.error.maximum)
     );
   }
 

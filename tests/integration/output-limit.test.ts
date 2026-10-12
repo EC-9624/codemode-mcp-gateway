@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/sandbox";
+import { execute, ToolResult } from "../../src/codemode";
 
 describe("guest output limit", () => {
   test("accepts exactly 256 KiB of JSON by default and rejects one byte more", async () => {

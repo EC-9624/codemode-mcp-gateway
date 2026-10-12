@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { z } from "zod";
-import { defineTool, ToolCatalog, ToolResult, type ToolInputSchema } from "../../src/sandbox";
-import { callTool } from "../../src/tool";
+import { defineTool, ToolCatalog, ToolResult, type ToolInputSchema } from "../../src/codemode";
+import { callTool } from "../../src/codemode/tools";
 import { rejectionOf } from "../support/rejection";
 
 describe("Standard Schema native tools", () => {

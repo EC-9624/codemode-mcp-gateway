@@ -1,7 +1,7 @@
 import { getQuickJS, type QuickJSContext } from "quickjs-emscripten";
-import { DEFAULT_LIMITS, type ExecutionLimits } from "./execution-limits";
+import { DEFAULT_LIMITS, type ExecutionLimits } from "./limits";
 
-export type VmLimits = Pick<ExecutionLimits, "memoryLimitBytes" | "maxStackSizeBytes">;
+type VmLimits = Pick<ExecutionLimits, "memoryLimitBytes" | "maxStackSizeBytes">;
 
 /** Create a fresh context that owns its runtime; the caller owns disposal. */
 export async function createVm(limits: VmLimits = DEFAULT_LIMITS): Promise<QuickJSContext> {

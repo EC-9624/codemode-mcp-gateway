@@ -1,11 +1,10 @@
 import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { listen } from "./listener";
-import { type SerializedToolResult } from "./tool";
-import { installGuestToolBridge } from "./guest-tool-bridge";
-import { ToolReply, type WorkerToMainMessage } from "./worker-protocol";
-import { DEFAULT_LIMITS } from "./execution-limits";
-import { type ToolCallLimits } from "./tool-call-budget";
+import { type SerializedToolResult } from "../tools";
+import { installGuestToolBridge } from "./guest-bridge";
+import { ToolReply, type WorkerToMainMessage } from "./protocol";
+import { type ToolCallLimits } from "./budget";
 
 /** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
 export function installWorkerToolBridge(
@@ -14,7 +13,7 @@ export function installWorkerToolBridge(
   port: MessagePort,
   scope: Scope,
   cleanup: DisposableStack,
-  limits: ToolCallLimits = DEFAULT_LIMITS,
+  limits: ToolCallLimits,
 ) {
   const pendingReplies = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
   let nextCallId = 1;
@@ -47,7 +46,7 @@ export function installWorkerToolBridge(
   });
 
   listen(cleanup, port, "message", (data: unknown) => {
-    if (!bridge.failure.ok) return;
+    if (bridge.failure !== undefined) return;
 
     let decodedReply: ReturnType<typeof ToolReply.decode>;
     try {

@@ -1,4 +1,4 @@
-import { SandboxExecutionError } from "../../src/sandbox";
+import { SandboxExecutionError } from "../../src/codemode";
 import { rejectionOf } from "./rejection";
 
 export async function executionErrorOf(

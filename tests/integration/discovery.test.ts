@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/sandbox";
+import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/codemode";
 
 describe("host tool catalog", () => {
   test("snapshots callback bindings and descriptive fields at creation", async () => {

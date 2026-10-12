@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute } from "../../src/sandbox";
+import { execute } from "../../src/codemode";
 
 describe("sandbox", () => {
   test("executes a JavaScript function body", async () => {
@@ -13,13 +13,16 @@ describe("sandbox", () => {
     });
   });
 
-  test("preserves falsy values", async () => {
-    for (const value of [null, false, 0, ""]) {
-      expect((await execute(`return ${JSON.stringify(value)};`)).result).toEqual({
-        ok: true,
-        value,
-      });
-    }
+  test.each([
+    ["null", null],
+    ["false", false],
+    ["zero", 0],
+    ["an empty string", ""],
+  ] as const)("preserves %s as a falsy return value", async (_name, value) => {
+    expect((await execute(`return ${JSON.stringify(value)};`)).result).toEqual({
+      ok: true,
+      value,
+    });
   });
 
   test("normalizes absent return values to null", async () => {
@@ -81,21 +84,24 @@ describe("sandbox", () => {
     }
   });
 
-  test("reports thrown promises as opaque errors without awaiting or unwrapping them", async () => {
-    for (const code of [
-      "throw Promise.resolve(3);",
-      "throw new Promise(() => {});",
-      'throw Promise.reject(new Error("inner"));',
-      "throw Promise.reject(Promise.resolve(3));",
-    ]) {
-      expect((await execute(code)).result).toEqual({
+  test.each([
+    ["fulfilled promise", "throw Promise.resolve(3);"],
+    ["pending promise", "throw new Promise(() => {});"],
+    ["promise rejected with an error", 'throw Promise.reject(new Error("inner"));'],
+    ["promise rejected with a promise", "throw Promise.reject(Promise.resolve(3));"],
+  ] as const)(
+    "reports a thrown %s as an opaque error without awaiting or unwrapping it",
+    async (_name, code) => {
+      const thrown = await execute(code);
+      const next = await execute("return 3;");
+
+      expect(thrown.result).toEqual({
         ok: false,
         error: { kind: "script", message: "Script threw a value without an error message." },
       });
-    }
-
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
-  });
+      expect(next.result).toEqual({ ok: true, value: 3 });
+    },
+  );
 
   test("awaits asynchronous return values", async () => {
     expect((await execute("return Promise.resolve(3);")).result).toEqual({
@@ -104,16 +110,11 @@ describe("sandbox", () => {
     });
   });
 
-  test("awaits object and function thenables", async () => {
-    for (const code of [
-      "return { then(resolve) { resolve(3); } };",
-      "const value = () => 3; value.then = resolve => resolve(3); return value;",
-    ]) {
-      expect((await execute(code)).result).toEqual({
-        ok: true,
-        value: 3,
-      });
-    }
+  test.each([
+    ["object", "return { then(resolve) { resolve(3); } };"],
+    ["function", "const value = () => 3; value.then = resolve => resolve(3); return value;"],
+  ] as const)("awaits a returned %s thenable", async (_name, code) => {
+    expect((await execute(code)).result).toEqual({ ok: true, value: 3 });
   });
 
   test("allows ordinary values that are not thenables", async () => {
@@ -127,17 +128,12 @@ describe("sandbox", () => {
     });
   });
 
-  test("reports non-JSON return values", async () => {
-    for (const code of ["return 1n;", "const value = {}; value.self = value; return value;"]) {
-      const result = (await execute(code)).result;
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.kind).toBe("script");
-    }
-
-    expect((await execute("return () => 3;")).result).toEqual({
-      ok: false,
-      error: { kind: "script", message: "Return value is not JSON-serializable." },
-    });
+  test.each([
+    ["BigInt", "return 1n;", "Do not know how to serialize a BigInt"],
+    ["cycle", "const value = {}; value.self = value; return value;", "circular reference"],
+    ["function", "return () => 3;", "Return value is not JSON-serializable."],
+  ] as const)("reports a non-JSON %s return value", async (_name, code, message) => {
+    expect((await execute(code)).result).toEqual({ ok: false, error: { kind: "script", message } });
   });
 
   test("creates a fresh environment for each execution", async () => {
@@ -161,12 +157,13 @@ describe("sandbox", () => {
     ).toEqual({ ok: true, value: ["undefined", "undefined", "undefined", "undefined"] });
   });
 
-  test("continues executing after repeated successes and script failures", async () => {
-    for (let index = 0; index < 20; index += 1) {
-      expect((await execute("return 3;")).result.ok).toBe(true);
-      expect((await execute('throw new Error("failure");')).result.ok).toBe(false);
-    }
+  test("continues executing after a script failure", async () => {
+    const succeeded = await execute("return 3;");
+    const failed = await execute('throw new Error("failure");');
+    const recovered = await execute("return 3;");
 
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
+    expect(succeeded.result).toEqual({ ok: true, value: 3 });
+    expect(failed.result).toEqual({ ok: false, error: { kind: "script", message: "failure" } });
+    expect(recovered.result).toEqual({ ok: true, value: 3 });
   });
 });

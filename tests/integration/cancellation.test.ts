@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/sandbox";
-import { rejectionOf } from "../support/rejection";
+import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/codemode";
 
 const cancelled = {
   ok: false,
@@ -29,14 +28,6 @@ describe("caller cancellation", () => {
     expect(result).toEqual(cancelled);
     expect(reads).toBe(0);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
-  });
-
-  test("validates budgets even when the caller has already cancelled", async () => {
-    const signal = AbortSignal.abort();
-
-    const failure = (await rejectionOf(execute("return 42;", {}, { signal, timeoutMs: 0 }))).reason;
-
-    expect(failure).toBeInstanceOf(RangeError);
   });
 
   test("observes cancellation from a registry getter", async () => {
@@ -183,5 +174,25 @@ describe("host tool cancellation", () => {
     expect(contexts[1]?.signal.aborted).toBe(false);
     expect(contexts[0]?.signal).not.toBe(contexts[1]?.signal);
     expect(getEventListeners(survivor.signal, "abort")).toHaveLength(0);
+  });
+
+  test("reports script failure without waiting for unrelated callbacks and recovers", async () => {
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+
+    const failed = await execute('tools.wait(); throw new Error("Script failed");', {
+      wait: () => late.promise,
+    });
+
+    late.resolve(ToolResult.success(3));
+    await Bun.sleep(0);
+    const recovered = await execute("return 3;");
+
+    expect(failed.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Script failed" },
+    });
+    expect(recovered.result).toEqual({ ok: true, value: 3 });
   });
 });

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ToolResult } from "../../src/tool";
-import { createDiscoveryTools, ToolCatalog } from "../../src/tool-catalog";
+import { ToolResult, createDiscoveryTools, ToolCatalog } from "../../src/codemode";
 
-describe("host tool catalog", () => {
+describe("ToolCatalog", () => {
   test("describes tools without invoking or exposing their implementations", () => {
     let calls = 0;
 

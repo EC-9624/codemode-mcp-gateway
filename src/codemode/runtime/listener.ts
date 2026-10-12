@@ -10,8 +10,6 @@ export function listen(
   event: string,
   listener: (arg: unknown) => void,
 ): void {
-  // `defer` registers cleanup now; it runs when the stack is disposed.
-  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DisposableStack/defer
   cleanup.defer(() => {
     source.off(event, listener);
   });

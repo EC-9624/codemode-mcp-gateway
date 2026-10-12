@@ -1,5 +1,8 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 
+/** Descriptive JSON Schema metadata; validation belongs to the tool definition. */
+export type ToolSchema = boolean | Readonly<Record<string, unknown>>;
+
 export type ToolResult = { ok: true; value: unknown } | { ok: false; error: { message: string } };
 
 /** Only explicit failure messages cross into the guest; thrown errors stay private. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/sandbox";
+import { execute, ToolResult } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 
 describe("execution reports", () => {

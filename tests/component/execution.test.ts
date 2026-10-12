@@ -1,48 +1,45 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { execute } from "../../src/sandbox";
+import { execute } from "../../src/codemode";
 import { executeLocally } from "../support/local-tools";
-import { superviseWorker } from "../../src/worker-execution";
-import { WorkerToMainMessage } from "../../src/worker-protocol";
+import { WorkerToMainMessage } from "../../src/codemode/runtime/protocol";
 import { executionErrorOf } from "../support/execution-error";
-import { faultWorker } from "../support/workers";
+import { faultWorker, startupData, superviseWorker } from "../support/workers";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
 
 describe("worker supervisor", () => {
-  test("worker transport preserves engine results for values, promises, and errors", async () => {
-    for (const code of [
-      "return 1 + 2;",
-      'return { name: "mcm", values: [1, true, null] };',
-      "return null;",
-      "return false;",
-      "return 0;",
-      'return "";',
-      "return undefined;",
-      "const value = 3;",
-      "return { omitted: undefined, values: [undefined, NaN, Infinity] };",
-      'JSON.stringify = () => "broken"; return { value: 3 };',
-      "return Promise.resolve(3);",
-      "return { then(resolve) { resolve(3); } };",
-      'throw new Error("Something failed");',
-      'throw "Something failed";',
-      "throw null;",
-      "throw Promise.resolve(3);",
-      "throw new Promise(() => {});",
-      'throw Promise.reject(new Error("inner"));',
-      "return (;",
-      "return 1n;",
-      "const value = {}; value.self = value; return value;",
-      "return () => 3;",
-      "return new Promise(() => {});",
-      "return [typeof process, typeof Bun, typeof require, typeof fetch];",
-      "return Object.keys(tools);",
-    ]) {
-      expect((await execute(code)).result).toEqual(await executeLocally(code));
-    }
+  test.each([
+    "return 1 + 2;",
+    'return { name: "mcm", values: [1, true, null] };',
+    "return null;",
+    "return false;",
+    "return 0;",
+    'return "";',
+    "return undefined;",
+    "const value = 3;",
+    "return { omitted: undefined, values: [undefined, NaN, Infinity] };",
+    'JSON.stringify = () => "broken"; return { value: 3 };',
+    "return Promise.resolve(3);",
+    "return { then(resolve) { resolve(3); } };",
+    'throw new Error("Something failed");',
+    'throw "Something failed";',
+    "throw null;",
+    "throw Promise.resolve(3);",
+    "throw new Promise(() => {});",
+    'throw Promise.reject(new Error("inner"));',
+    "return (;",
+    "return 1n;",
+    "const value = {}; value.self = value; return value;",
+    "return () => 3;",
+    "return new Promise(() => {});",
+    "return [typeof process, typeof Bun, typeof require, typeof fetch];",
+    "return Object.keys(tools);",
+  ])("worker transport preserves the engine result of %s", async (code) => {
+    expect((await execute(code)).result).toEqual(await executeLocally(code));
   });
 
   test("rejects invalid requests at the actual worker boundary", async () => {
-    const worker = new Worker(new URL("../../src/worker-entry.ts", import.meta.url), {
+    const worker = new Worker(new URL("../../src/codemode/runtime/worker.ts", import.meta.url), {
       workerData: { type: "execute", code: 42 },
     });
 
@@ -111,13 +108,7 @@ describe("worker supervisor", () => {
 
   test("keeps actual worker infrastructure exception details out of the response", async () => {
     const worker = new Worker(new URL("../fixtures/worker-parser-fault.ts", import.meta.url), {
-      workerData: {
-        ...DEFAULT_LIMITS,
-        type: "execute",
-        code: "return 42;",
-        toolNames: [],
-        timeoutMs: 1000,
-      },
+      workerData: startupData("return 42;"),
     });
 
     const failure = (await executionErrorOf(superviseWorker(worker))).cause;
@@ -173,13 +164,10 @@ describe("worker supervisor", () => {
 
   test("keeps synchronous VM allocation failures private across the worker boundary", async () => {
     const worker = new Worker(new URL("../fixtures/worker-allocation-fault.ts", import.meta.url), {
-      workerData: {
-        ...DEFAULT_LIMITS,
-        type: "execute",
-        code: "try { await tools.read(); } catch (error) { return error.message; }",
-        toolNames: ["read"],
-        timeoutMs: 1000,
-      },
+      workerData: startupData(
+        "try { await tools.read(); } catch (error) { return error.message; }",
+        ["read"],
+      ),
     });
 
     const failure = (await executionErrorOf(superviseWorker(worker))).cause;
@@ -252,20 +240,7 @@ describe("worker supervisor", () => {
 
   test("awaits termination and observes late errors without changing a completed result", async () => {
     const worker = faultWorker("duplicate");
-    const terminateWorker = worker.terminate.bind(worker);
-    const terminating = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => release.resolve());
-
-    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
-      const code = await terminateWorker();
-      terminating.resolve();
-      await release.promise;
-
-      return code;
-    });
-
+    using termination = gateTermination(worker);
     let settled = false;
 
     const completion = superviseWorker(worker).then((result) => {
@@ -274,15 +249,15 @@ describe("worker supervisor", () => {
       return result;
     });
 
-    await terminating.promise;
+    await termination.terminating;
     expect(settled).toBe(false);
     expect(worker.listenerCount("message")).toBe(0);
     expect(worker.listenerCount("error")).toBe(1);
     worker.emit("error", new Error("Private late worker failure"));
-    release.resolve();
+    termination.release();
     expect((await completion).result).toEqual({ ok: true, value: 42 });
     expectNoExecutionListeners(worker);
-    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(termination.terminate).toHaveBeenCalledTimes(1);
   });
 
   test("unwinds partial listener setup before terminating the worker", async () => {
@@ -318,9 +293,3 @@ describe("worker supervisor", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 });
-
-function expectNoExecutionListeners(worker: Worker) {
-  for (const name of ["message", "messageerror", "exit", "error"]) {
-    expect(worker.listenerCount(name)).toBe(0);
-  }
-}

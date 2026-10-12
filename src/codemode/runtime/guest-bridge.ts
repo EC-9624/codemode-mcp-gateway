@@ -1,15 +1,17 @@
 import { type QuickJSContext, type QuickJSDeferredPromise, type Scope } from "quickjs-emscripten";
-import { type SerializedToolResult } from "./tool";
-import { DEFAULT_LIMITS } from "./execution-limits";
-import { type ToolCallLimit } from "./sandbox-result";
-import { createToolCallBudget, type ToolCallLimits } from "./tool-call-budget";
+import { type SerializedToolResult } from "../tools";
+import { type ToolCallLimit } from "../types";
+import { createToolCallBudget, type ToolCallLimits } from "./budget";
+
+/** Private infrastructure failures throw; admission limits are guest results. */
+export type BridgeFailure =
+  | { kind: "error"; error: unknown }
+  | { kind: "limit"; limit: ToolCallLimit };
 
 export type ToolBridge = {
   pendingCalls: ReadonlySet<Promise<void>>;
-  readonly failure:
-    | { ok: true }
-    | { ok: false; error: unknown }
-    | { ok: false; limit: ToolCallLimit };
+  /** The first failure wins; it stays undefined while the bridge is healthy. */
+  readonly failure: BridgeFailure | undefined;
   failureSignal: Promise<void>;
   fail(error: unknown): void;
 };
@@ -25,25 +27,27 @@ export function installGuestToolBridge(
   toolNames: readonly string[],
   invoke: (name: string, json: string | undefined) => Promise<SerializedToolResult>,
   scope: Scope,
-  limits: ToolCallLimits = DEFAULT_LIMITS,
+  limits: ToolCallLimits,
 ): ToolBridge {
   const budget = createToolCallBudget(limits);
   const pendingCalls = new Set<Promise<void>>();
   const failureSignal = Promise.withResolvers<void>();
-  let failure: ToolBridge["failure"] = { ok: true };
+  let failure: BridgeFailure | undefined;
 
-  const fail = (error: unknown) => {
-    if (!failure.ok) return;
+  const stop = (next: BridgeFailure) => {
+    if (failure !== undefined) return;
 
-    failure = { ok: false, error };
+    failure = next;
     failureSignal.resolve();
   };
+
+  const fail = (error: unknown) => stop({ kind: "error", error });
 
   using toolObject = context.newObject(context.null);
 
   for (const name of toolNames) {
     using callback = context.newFunction(name, (args = context.undefined) => {
-      if (!failure.ok) return context.undefined;
+      if (failure !== undefined) return context.undefined;
 
       let json: string | undefined;
       let deferred: QuickJSDeferredPromise;
@@ -70,8 +74,7 @@ export function installGuestToolBridge(
         // Reserve before deferred allocation or dispatch, including synchronous guest bursts.
         const limit = budget.admit();
         if (limit !== undefined) {
-          failure = { ok: false, limit };
-          failureSignal.resolve();
+          stop({ kind: "limit", limit });
 
           return context.undefined;
         }

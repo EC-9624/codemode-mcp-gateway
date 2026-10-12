@@ -1,7 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
-import { createMcpCatalog, execute } from "../src/sandbox";
+import { CodemodeSandbox } from "../src/codemode";
+import { createMcpCatalog } from "../src/mcp";
 
 const client = new Client({ name: "mcm-example", version: "0.0.0" });
 
@@ -14,9 +15,10 @@ await using cleanup = new AsyncDisposableStack();
 cleanup.defer(() => client.close());
 await client.connect(transport, { timeout: 5_000 });
 const catalog = await createMcpCatalog(client);
+const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 5_000 });
 
 console.log(
-  await execute(
+  await sandbox.execute(
     `
       const sum = await tools.add({ a: 2, b: 3 });
       const failure = await tools.fail();
@@ -31,7 +33,5 @@ console.log(
         validation,
       };
     `,
-    catalog.tools,
-    { timeoutMs: 5_000 },
   ),
 );

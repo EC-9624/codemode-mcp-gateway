@@ -22,7 +22,12 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 ## General Style
 
-- Use strict TypeScript and plain functions. Do not introduce Effect.
+- Use strict TypeScript. Classes own sandbox configuration and per-execution
+  lifetimes; use plain functions for supporting logic. Do not introduce Effect.
+- Organize domains under `src/codemode/` and `src/mcp/`, each with an `index.ts`
+  public entry point and its own types. Codemode runtime details stay internal to
+  `src/codemode/runtime/`. MCP imports only codemode's public API; codemode never
+  imports MCP or its SDK. Applications compose the two modules.
 - Keep logic together unless extraction improves composition, reuse, or clarity.
 - Do not extract single-use helpers preemptively.
 - Extract helpers when they name a real domain concept, isolate a complex

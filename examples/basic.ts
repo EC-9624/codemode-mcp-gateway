@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { createDiscoveryTools, defineTool, execute, ToolCatalog, ToolResult } from "../src/sandbox";
+import {
+  CodemodeSandbox,
+  createDiscoveryTools,
+  defineTool,
+  execute,
+  ToolCatalog,
+  ToolResult,
+} from "../src/codemode";
 
 console.log(await execute("return 1 + 2;"));
 console.log(await execute('throw new Error("An example failure");'));
@@ -89,22 +96,29 @@ const catalog = ToolCatalog.create({
 });
 
 const discovery = createDiscoveryTools(catalog);
+
+const sandbox = new CodemodeSandbox({
+  tools: {
+    ...catalog.tools,
+    searchTools: discovery.searchTools,
+    describeTool: discovery.describeTool,
+  },
+});
+
 console.log(
-  await execute(
+  await sandbox.execute(
     `
   const matches = await tools.searchTools({ query: "answer" });
   return await tools[matches[0].name]();
 `,
-    { ...catalog.tools, searchTools: discovery.searchTools, describeTool: discovery.describeTool },
   ),
 );
 
 console.log(
-  await execute(
+  await sandbox.execute(
     `
   try { await tools.echo(42); }
   catch (error) { return { validation: error.message, recovered: await tools.echo("valid") }; }
 `,
-    catalog.tools,
   ),
 );

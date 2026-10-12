@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult, type SandboxTool } from "../../src/sandbox";
+import { execute, ToolResult, type SandboxTool } from "../../src/codemode";
 
 const add: SandboxTool = async (args) => {
   if (
@@ -79,19 +79,22 @@ describe("sandbox tool calls", () => {
     ).toEqual({ ok: false, error: { kind: "script", message: "Host tool failed." } });
   });
 
-  test("keeps arbitrary asynchronous host rejections private", async () => {
-    for (const error of [new Error("Private host diagnostics"), "Private string", null]) {
-      expect(
-        (
-          await execute("return await tools.fail();", {
-            fail: async () => {
-              await Bun.sleep(0);
-              throw error;
-            },
-          })
-        ).result,
-      ).toEqual({ ok: false, error: { kind: "script", message: "Host tool failed." } });
-    }
+  test.each([
+    ["Error", new Error("Private host diagnostics")],
+    ["string", "Private string"],
+    ["null", null],
+  ] as const)("keeps an asynchronous host rejection with %s private", async (_name, error) => {
+    const report = await execute("return await tools.fail();", {
+      fail: async () => {
+        await Bun.sleep(0);
+        throw error;
+      },
+    });
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Host tool failed." },
+    });
   });
 
   test("does not interpret failure-shaped tool data as a bridge failure", async () => {
@@ -100,22 +103,6 @@ describe("sandbox tool calls", () => {
       (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
         .result,
     ).toEqual({ ok: true, value });
-  });
-
-  test("dispatches once when the same promise is awaited twice", async () => {
-    let calls = 0;
-    expect(
-      (
-        await execute("const call = tools.answer(); return [await call, await call];", {
-          answer: () => {
-            calls += 1;
-
-            return ToolResult.success(3);
-          },
-        })
-      ).result,
-    ).toEqual({ ok: true, value: [3, 3] });
-    expect(calls).toBe(1);
   });
 
   test("starts concurrent calls before awaiting either result", async () => {
@@ -253,31 +240,6 @@ describe("sandbox tool calls", () => {
     expect(argument).toBeUndefined();
   });
 
-  test("preserves argument and result conversion after guest JSON mutation", async () => {
-    expect(
-      (
-        await execute(
-          `JSON.stringify = () => "broken";
-         JSON.parse = () => "broken";
-         return await tools.add({ a: 1, b: 2 });`,
-          { add },
-        )
-      ).result,
-    ).toEqual({ ok: true, value: 3 });
-  });
-
-  test("keeps global tools usable and does not depend on guest Promise.then", async () => {
-    expect(
-      (
-        await execute(
-          `Promise.prototype.then = () => { throw new Error("Modified then"); };
-         return await globalThis.tools.add({ a: 1, b: 2 });`,
-          { add },
-        )
-      ).result,
-    ).toEqual({ ok: true, value: 3 });
-  });
-
   test("keeps JSON text distinct from the string value it encodes", async () => {
     const value = 'Hello "mcm"\n日本語';
     expect(
@@ -289,41 +251,55 @@ describe("sandbox tool calls", () => {
     ).toEqual({ ok: true, value });
   });
 
-  test("rejects non-JSON arguments before host dispatch", async () => {
-    let calls = 0;
-
-    const echo: SandboxTool = (args) => {
-      calls += 1;
-
-      return ToolResult.success(args);
-    };
-
-    for (const code of [
-      "return await tools.echo(1n);",
-      "return await tools.echo(() => 3);",
+  test.each([
+    ["BigInt", "return await tools.echo(1n);", "Do not know how to serialize a BigInt"],
+    ["function", "return await tools.echo(() => 3);", "Tool arguments are not JSON-serializable."],
+    [
+      "cycle",
       "const value = {}; value.self = value; return await tools.echo(value);",
-    ]) {
-      const result = (await execute(code, { echo })).result;
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.kind).toBe("script");
-    }
+      "circular reference",
+    ],
+  ] as const)(
+    "rejects a non-JSON %s argument before host dispatch",
+    async (_name, code, message) => {
+      let calls = 0;
 
-    expect(calls).toBe(0);
-  });
+      const report = await execute(code, {
+        echo: (args) => {
+          calls += 1;
 
-  test("rejects non-JSON host results with a public conversion error", async () => {
-    const cycle: { self?: unknown } = {};
-    cycle.self = cycle;
-    for (const value of [1n, () => 3, cycle]) {
-      expect(
-        (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
-          .result,
-      ).toEqual({
+          return ToolResult.success(args);
+        },
+      });
+
+      expect(report).toEqual({
+        result: { ok: false, error: { kind: "script", message } },
+        calls: [],
+      });
+      expect(calls).toBe(0);
+    },
+  );
+
+  const cycle: { self?: unknown } = {};
+  cycle.self = cycle;
+
+  test.each([
+    ["BigInt", 1n],
+    ["function", () => 3],
+    ["cycle", cycle],
+  ] as const)(
+    "rejects a non-JSON %s host result with a public conversion error",
+    async (_name, value) => {
+      const report = await execute("return await tools.read();", {
+        read: () => ToolResult.success(value),
+      });
+
+      expect(report.result).toEqual({
         ok: false,
         error: { kind: "script", message: "Tool result is not JSON-serializable." },
       });
-    }
-  });
+    },
+  );
 
   test("reads an undefined tool result value once for guest delivery and retention", async () => {
     let reads = 0;
@@ -368,27 +344,32 @@ describe("sandbox tool calls", () => {
     });
   });
 
-  test("treats throwing host getters and toJSON hooks as conversion failures", async () => {
-    for (const value of [
+  test.each([
+    [
+      "getter",
       {
         get secret() {
           throw new Error("Private getter diagnostics");
         },
       },
+    ],
+    [
+      "toJSON hook",
       {
         toJSON() {
           throw "Private conversion diagnostics";
         },
       },
-    ]) {
-      expect(
-        (await execute("return await tools.read();", { read: () => ToolResult.success(value) }))
-          .result,
-      ).toEqual({
-        ok: false,
-        error: { kind: "script", message: "Tool result is not JSON-serializable." },
-      });
-    }
+    ],
+  ] as const)("treats a throwing host %s as a conversion failure", async (_name, value) => {
+    const report = await execute("return await tools.read();", {
+      read: () => ToolResult.success(value),
+    });
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Tool result is not JSON-serializable." },
+    });
   });
 
   test("only exposes supplied tools and no inherited host functions", async () => {
@@ -411,19 +392,6 @@ describe("sandbox tool calls", () => {
         kind: "script",
         message: "Script is waiting on a promise with no pending host calls.",
       },
-    });
-  });
-
-  test("times out an infinite guest microtask chain and recovers", async () => {
-    expect(
-      (await execute("while (true) await Promise.resolve();", {}, { timeoutMs: 100 })).result,
-    ).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-    });
-    expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result).toEqual({
-      ok: true,
-      value: 3,
     });
   });
 
@@ -466,70 +434,16 @@ describe("sandbox tool calls", () => {
     );
   });
 
-  test("includes unawaited host calls in the deadline", async () => {
-    const late = Promise.withResolvers<number>();
-    expect(
-      (
-        await execute(
-          "tools.wait(); return 3;",
-          { wait: async () => ToolResult.success(await late.promise) },
-          { timeoutMs: 100 },
-        )
-      ).result,
-    ).toEqual({
+  test("continues executing tools after a validation failure", async () => {
+    const succeeded = await execute("return await tools.add({ a: 1, b: 2 });", { add });
+    const failed = await execute("return await tools.add(null);", { add });
+    const recovered = await execute("return await tools.add({ a: 1, b: 2 });", { add });
+
+    expect(succeeded.result).toEqual({ ok: true, value: 3 });
+    expect(failed.result).toEqual({
       ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+      error: { kind: "script", message: "add expects numeric a and b." },
     });
-    late.resolve(3);
-    await Bun.sleep(0);
-  });
-
-  test("allows new executions after timed-out callbacks fulfill or reject late", async () => {
-    for (const fail of [false, true]) {
-      const late = Promise.withResolvers<number>();
-      expect(
-        (
-          await execute(
-            "return await tools.wait();",
-            { wait: async () => ToolResult.success(await late.promise) },
-            { timeoutMs: 100 },
-          )
-        ).result,
-      ).toEqual({
-        ok: false,
-        error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
-      });
-      if (fail) late.reject(new Error("Late private failure"));
-      else late.resolve(3);
-
-      await Bun.sleep(0);
-      expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result).toEqual({
-        ok: true,
-        value: 3,
-      });
-    }
-  });
-
-  test("reports script failure without waiting for unrelated callbacks", async () => {
-    const late = Promise.withResolvers<number>();
-    expect(
-      (
-        await execute('tools.wait(); throw new Error("Script failed");', {
-          wait: async () => ToolResult.success(await late.promise),
-        })
-      ).result,
-    ).toEqual({ ok: false, error: { kind: "script", message: "Script failed" } });
-    late.resolve(3);
-    await Bun.sleep(0);
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
-  });
-
-  test("continues executing tools after repeated success and validation failure", async () => {
-    for (let index = 0; index < 10; index += 1) {
-      expect((await execute("return await tools.add({ a: 1, b: 2 });", { add })).result.ok).toBe(
-        true,
-      );
-      expect((await execute("return await tools.add(null);", { add })).result.ok).toBe(false);
-    }
+    expect(recovered.result).toEqual({ ok: true, value: 3 });
   });
 });

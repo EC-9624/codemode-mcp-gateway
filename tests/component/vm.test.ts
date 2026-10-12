@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getQuickJS } from "quickjs-emscripten";
-import { createVm } from "../../src/runtime";
+import { createVm } from "../../src/codemode/runtime/vm";
 import { rejectionOf } from "../support/rejection";
 
 describe("runtime setup", () => {

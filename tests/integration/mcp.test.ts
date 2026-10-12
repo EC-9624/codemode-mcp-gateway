@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { ProtocolError, ProtocolErrorCode, Server } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { createMcpServer } from "../../examples/mcp-tools";
-import { createDiscoveryTools, createMcpCatalog, execute } from "../../src/sandbox";
-import { connectMcp } from "../support/mcp";
+import { createDiscoveryTools, execute } from "../../src/codemode";
+import { createMcpCatalog } from "../../src/mcp";
+import { connectMcp, toolServer } from "../support/mcp";
 import { rejectionOf } from "../support/rejection";
 
 describe("MCP sandbox integration", () => {
   test("discovers and calls a stdio tool, retaining its public response", async () => {
-    await using upstream = mcpProcess();
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
     const discovery = createDiscoveryTools(catalog);
 
@@ -47,8 +47,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("allows a large upstream dataset to become small final guest output", async () => {
-    await using upstream = mcpProcess();
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
 
     const report = await execute(
@@ -129,20 +128,18 @@ describe("MCP sandbox integration", () => {
   });
 
   test("retains local MCP schema failures as rejections and sends only corrected arguments upstream", async () => {
-    const server = new Server({ name: "validated", version: "1" }, { capabilities: { tools: {} } });
-    const received: unknown[] = [];
-    server.setRequestHandler("tools/list", () => ({
-      tools: [
-        {
-          name: "read",
-          inputSchema: {
-            type: "object",
-            properties: { id: { type: "integer" } },
-            required: ["id"],
-          },
+    const server = toolServer([
+      {
+        name: "read",
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "integer" } },
+          required: ["id"],
         },
-      ],
-    }));
+      },
+    ]);
+
+    const received: unknown[] = [];
     server.setRequestHandler("tools/call", ({ params }) => {
       received.push(params.arguments);
 
@@ -181,14 +178,11 @@ describe("MCP sandbox integration", () => {
   });
 
   test("correlates concurrently completed requests and records invocation order", async () => {
-    const server = new Server({ name: "ordered", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
     const first = Promise.withResolvers<void>();
     const second = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const order: number[] = [];
-    server.setRequestHandler("tools/list", () => ({
-      tools: [{ name: "read", inputSchema: { type: "object" } }],
-    }));
     server.setRequestHandler("tools/call", async ({ params }) => {
       if (params.arguments?.id === 1) {
         first.resolve();
@@ -243,8 +237,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("cancellation reaches the stdio handler and leaves the shared client usable", async () => {
-    await using upstream = mcpProcess("invoke");
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
     const controller = new AbortController();
 
@@ -282,8 +275,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("the guest deadline cancels its stdio request and leaves the shared client usable", async () => {
-    await using upstream = mcpProcess("invoke");
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
 
     const report = await execute("return await tools.pending();", catalog.tools, {
@@ -307,13 +299,10 @@ describe("MCP sandbox integration", () => {
   });
 
   test("keeps the cancellation snapshot when an uncooperative server finishes late", async () => {
-    const server = new Server({ name: "late", version: "1" }, { capabilities: { tools: {} } });
+    const server = toolServer([{ name: "wait", inputSchema: { type: "object" } }]);
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const returned = Promise.withResolvers<void>();
-    server.setRequestHandler("tools/list", () => ({
-      tools: [{ name: "wait", inputSchema: { type: "object" } }],
-    }));
     server.setRequestHandler("tools/call", async () => {
       started.resolve();
       await release.promise;
@@ -347,10 +336,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("keeps server protocol-error details out of guest errors and retained failures", async () => {
-    const server = new Server({ name: "private", version: "1" }, { capabilities: { tools: {} } });
-    server.setRequestHandler("tools/list", () => ({
-      tools: [{ name: "read", inputSchema: { type: "object" } }],
-    }));
+    const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
     server.setRequestHandler("tools/call", () => {
       throw new ProtocolError(ProtocolErrorCode.InternalError, "Private upstream details");
     });
@@ -373,8 +359,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("reports a dropped connection as a generic tool failure", async () => {
-    await using upstream = mcpProcess("invoke");
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
     const completion = execute("return await tools.pending();", catalog.tools);
     await upstream.waitFor("request-started");
@@ -415,8 +400,7 @@ describe("MCP sandbox integration", () => {
   });
 
   test("closes the actual child after discovery times out", async () => {
-    await using upstream = mcpProcess("discovery");
-    await upstream.client.connect(upstream.transport, { timeout: 2000 });
+    await using upstream = await connectMcpProcess("discovery");
     const setup = rejectionOf(createMcpCatalog(upstream.client, { timeoutMs: 100 }));
     await upstream.waitFor("request-started");
     const pid = upstream.transport.pid;
@@ -430,7 +414,10 @@ describe("MCP sandbox integration", () => {
   });
 });
 
-function mcpProcess(mode?: string) {
+type McpProcessMode = "invoke" | "initialize" | "discovery";
+
+/** Spawns the example server, or the lifecycle fixture in `mode`, with an unconnected client. */
+function mcpProcess(mode?: McpProcessMode) {
   const file =
     mode === undefined
       ? new URL("../../examples/mcp-server.ts", import.meta.url)
@@ -477,4 +464,14 @@ function mcpProcess(mode?: string) {
       cleanup.defer(() => client.close());
     },
   };
+}
+
+/** Ownership passes to the caller only after the handshake succeeds. */
+async function connectMcpProcess(mode?: McpProcessMode) {
+  await using cleanup = new AsyncDisposableStack();
+  const upstream = cleanup.use(mcpProcess(mode));
+  await upstream.client.connect(upstream.transport, { timeout: 2000 });
+  cleanup.move();
+
+  return upstream;
 }

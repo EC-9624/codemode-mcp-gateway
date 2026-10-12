@@ -1,8 +1,11 @@
 import { type StandardJSONSchemaV1, type StandardSchemaV1 } from "@standard-schema/spec";
-import { ToolResult, validateTool, type SandboxTool, type ToolContext } from "./tool";
-import { type ToolSchema } from "./tool-schema";
-
-export { type ToolSchema } from "./tool-schema";
+import {
+  ToolResult,
+  validateTool,
+  type SandboxTool,
+  type ToolContext,
+  type ToolSchema,
+} from "./tools";
 
 export type ToolDefinition = {
   description: string;

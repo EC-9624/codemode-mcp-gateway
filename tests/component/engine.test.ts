@@ -1,12 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import { type QuickJSDeferredPromise } from "quickjs-emscripten";
 import { Parser } from "acorn";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { execute, ToolResult, type SandboxResult } from "../../src/sandbox";
-import { executeEngine } from "../../src/sandbox-engine";
+import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
+import { ToolResult, type SandboxResult } from "../../src/codemode";
+import { executeEngine } from "../../src/codemode/runtime/engine";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
 import { executeLocally, installLocalToolBridge } from "../support/local-tools";
 import { rejectionOf } from "../support/rejection";
+import { interruptFlag } from "../support/workers";
 
 test("propagates unexpected parser failures instead of reporting a script error", async () => {
   const failure = new Error("Parser infrastructure failed");
@@ -21,12 +22,12 @@ test("propagates unexpected parser failures instead of reporting a script error"
   expect(parser).toHaveBeenCalledTimes(1);
 
   parser.mockRestore();
-  expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
+  expect(await executeLocally("return 3;")).toEqual({ ok: true, value: 3 });
 });
 
 test("shared interruption disposes the VM, runtime, and bridge scope", async () => {
   const resources: ExecutionResources[] = [];
-  const interrupt = new Int32Array(new SharedArrayBuffer(4));
+  const interrupt = interruptFlag();
 
   expect(
     await executeEngine(
@@ -58,7 +59,7 @@ test("shared interruption disposes the VM, runtime, and bridge scope", async () 
 
 test("preserves parent interruption during guest error conversion", async () => {
   const resources: ExecutionResources[] = [];
-  const interrupt = new Int32Array(new SharedArrayBuffer(4));
+  const interrupt = interruptFlag();
 
   const result = await executeEngine(
     'throw { get message() { tools.read(); return "Guest error"; } };',
@@ -105,6 +106,7 @@ test.each([
 
           return installLocalToolBridge(vm, {}, scope);
         },
+        interruptFlag(),
       ),
     );
 
@@ -121,18 +123,23 @@ test("rejects prelude factory invocation failure and disposes execution resource
   const resources: ExecutionResources[] = [];
 
   const failure = await rejectionOf(
-    executeEngine("return 42;", { ...DEFAULT_LIMITS, timeoutMs: 1000 }, (vm, scope) => {
-      resources.push({ vm, scope });
+    executeEngine(
+      "return 42;",
+      { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+      (vm, scope) => {
+        resources.push({ vm, scope });
 
-      // Fail a prelude dependency after compilation, before submitted code runs.
-      using prepared = vm.evalCode(
-        'Object.keys = () => { throw new Error("Private prelude failure"); };',
-      );
+        // Fail a prelude dependency after compilation, before submitted code runs.
+        using prepared = vm.evalCode(
+          'Object.keys = () => { throw new Error("Private prelude failure"); };',
+        );
 
-      expect(prepared.error).toBeUndefined();
+        expect(prepared.error).toBeUndefined();
 
-      return installLocalToolBridge(vm, {}, scope);
-    }),
+        return installLocalToolBridge(vm, {}, scope);
+      },
+      interruptFlag(),
+    ),
   );
 
   expect(failure.reason).toBeInstanceOf(Error);
@@ -157,6 +164,7 @@ test.each([
 
       return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
     },
+    interruptFlag(),
   );
 
   expect(result).toEqual({
@@ -186,6 +194,7 @@ test("preserves timeout classification during prelude initialization", async () 
 
       return installLocalToolBridge(vm, {}, scope);
     },
+    interruptFlag(),
   );
 
   expect(result).toEqual({
@@ -239,6 +248,7 @@ for (const scenario of [
 
         return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
       },
+      interruptFlag(),
     );
 
     expect(result).toEqual(scenario.expected);

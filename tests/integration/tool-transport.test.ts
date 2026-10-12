@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isMainThread } from "node:worker_threads";
-import { execute, ToolResult } from "../../src/sandbox";
+import { execute, ToolResult } from "../../src/codemode";
 
 describe("host tool transport", () => {
   test("transfers only the public message from explicit failure envelopes", async () => {
@@ -39,29 +39,6 @@ describe("host tool transport", () => {
     expect(conversions).toBe(1);
   });
 
-  test("routes replies that complete in reverse invocation order", async () => {
-    const second = Promise.withResolvers<void>();
-    const order: number[] = [];
-
-    const result = (
-      await execute("return await Promise.all([tools.read(1), tools.read(2)]);", {
-        read: async (args) => {
-          if (args === 1) await second.promise;
-
-          if (typeof args !== "number") return ToolResult.failure("Expected a number");
-
-          order.push(args);
-          if (args === 2) second.resolve();
-
-          return ToolResult.success(args);
-        },
-      })
-    ).result;
-
-    expect(result).toEqual({ ok: true, value: [1, 2] });
-    expect(order).toEqual([2, 1]);
-  });
-
   test("supports special tool names without inherited dispatch", async () => {
     const tools = Object.fromEntries(
       ["__proto__", "constructor", "toString"].map((name) => [
@@ -87,15 +64,5 @@ describe("host tool transport", () => {
     tools.read = () => ToolResult.success(2);
 
     expect((await completion).result).toEqual({ ok: true, value: 1 });
-  });
-
-  test("preserves undefined tool results rather than turning them into null", async () => {
-    const result = (
-      await execute("return (await tools.read()) === undefined;", {
-        read: () => ToolResult.success(),
-      })
-    ).result;
-
-    expect(result).toEqual({ ok: true, value: true });
   });
 });

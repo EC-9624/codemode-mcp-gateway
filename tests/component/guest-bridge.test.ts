@@ -1,39 +1,44 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Scope } from "quickjs-emscripten";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { createVm } from "../../src/runtime";
-import { execute, ToolResult } from "../../src/sandbox";
-import { executeEngine } from "../../src/sandbox-engine";
+import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
+import { createVm } from "../../src/codemode/runtime/vm";
+import { ToolResult } from "../../src/codemode";
+import { executeEngine } from "../../src/codemode/runtime/engine";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
-import { installLocalToolBridge } from "../support/local-tools";
+import { executeLocally, installLocalToolBridge } from "../support/local-tools";
 import { rejectionOf } from "../support/rejection";
+import { interruptFlag } from "../support/workers";
 
 describe("guest tool bridge", () => {
-  test("rejects malformed low-level bridge payloads before host dispatch", async () => {
-    using vm = await createVm();
-    using scope = new Scope();
-    let calls = 0;
+  test.each([
+    ["non-JSON argument text", 'tools.echo("not JSON");'],
+    ["non-string arguments", "tools.echo({});"],
+  ] as const)(
+    "rejects low-level bridge calls with %s before host dispatch",
+    async (_name, code) => {
+      using vm = await createVm();
+      using scope = new Scope();
+      let calls = 0;
 
-    const bridge = installLocalToolBridge(
-      vm,
-      {
-        echo: (args) => {
-          calls += 1;
+      const bridge = installLocalToolBridge(
+        vm,
+        {
+          echo: (args) => {
+            calls += 1;
 
-          return ToolResult.success(args);
+            return ToolResult.success(args);
+          },
         },
-      },
-      scope,
-    );
+        scope,
+      );
 
-    for (const code of ['tools.echo("not JSON");', "tools.echo({});"]) {
       using result = vm.evalCode(code);
-      expect(result.error).toBeDefined();
-    }
 
-    expect(calls).toBe(0);
-    expect(bridge.pendingCalls.size).toBe(0);
-  });
+      expect(result.error).toBeDefined();
+      expect(calls).toBe(0);
+      expect(bridge.pendingCalls.size).toBe(0);
+    },
+  );
 
   test.each(["newString", "callFunction"] as const)(
     "propagates %s failure without retrying settlement as a tool rejection",
@@ -114,6 +119,7 @@ describe("guest tool bridge", () => {
             scope,
           );
         },
+        interruptFlag(),
       );
 
       expect((await rejectionOf(completion)).reason).toBe(failure);
@@ -156,7 +162,7 @@ describe("guest tool bridge", () => {
       using result = vm.evalCode(code);
 
       expect(result.error).toBeUndefined();
-      expect(bridge.failure).toEqual({ ok: false, error: failure });
+      expect(bridge.failure).toEqual({ kind: "error", error: failure });
       await bridge.failureSignal;
       expect(bridge.pendingCalls.size).toBe(0);
       expect(calls).toBe(0);
@@ -215,12 +221,13 @@ describe("guest tool bridge", () => {
           scope,
         );
       },
+      interruptFlag(),
     );
 
     expect((await rejectionOf(completion)).reason).toBe(failure);
     expectDisposedExecution(resources);
 
     cleanup.dispose();
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
+    expect(await executeLocally("return 3;")).toEqual({ ok: true, value: 3 });
   });
 });

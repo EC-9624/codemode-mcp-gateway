@@ -1,12 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { DEFAULT_LIMITS } from "../../src/execution-limits";
-import { executeEngine } from "../../src/sandbox-engine";
-import { ToolResult } from "../../src/sandbox";
-import { superviseWorker } from "../../src/worker-execution";
+import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
+import { executeEngine } from "../../src/codemode/runtime/engine";
+import { ToolResult } from "../../src/codemode";
 import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
 import { executionErrorOf } from "../support/execution-error";
 import { installLocalToolBridge } from "../support/local-tools";
-import { toolWorker } from "../support/workers";
+import { interruptFlag, superviseWorker, toolWorker } from "../support/workers";
+import { expectNoExecutionListeners } from "../support/worker-cleanup";
 
 describe("worker-side admission", () => {
   test.each([
@@ -60,6 +60,7 @@ describe("worker-side admission", () => {
             limits,
           );
         },
+        interruptFlag(),
       );
 
       expect(result).toEqual({
@@ -81,6 +82,7 @@ describe("worker-side admission", () => {
           maxToolCalls: 1,
           maxConcurrentToolCalls: 10,
         }),
+      interruptFlag(),
     );
 
     expect(result).toEqual({
@@ -100,12 +102,10 @@ describe("parent-side admission", () => {
     const worker = toolWorker("for (let i = 0; i < 3; i++) await tools.read();");
     let calls = 0;
 
-    const report = await superviseWorker(
-      worker,
-      new Map([["read", () => ToolResult.success(++calls)]]),
-      undefined,
-      { maxToolCalls: 2, maxConcurrentToolCalls: 10 },
-    );
+    const report = await superviseWorker(worker, {
+      tools: { read: () => ToolResult.success(++calls) },
+      limits: { maxToolCalls: 2, maxConcurrentToolCalls: 10 },
+    });
 
     expect(report).toEqual({
       result: {
@@ -134,21 +134,16 @@ describe("parent-side admission", () => {
     let conversions = 0;
     using post = spyOn(worker, "postMessage");
 
-    const report = await superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          (_args, { signal }) => {
-            signals.push(signal);
+    const report = await superviseWorker(worker, {
+      tools: {
+        read: (_args, { signal }) => {
+          signals.push(signal);
 
-            return late.promise;
-          },
-        ],
-      ]),
-      undefined,
-      { maxToolCalls: 100, maxConcurrentToolCalls: 1 },
-    );
+          return late.promise;
+        },
+      },
+      limits: { maxToolCalls: 100, maxConcurrentToolCalls: 1 },
+    });
 
     expect(report).toEqual({
       result: {
@@ -181,9 +176,7 @@ describe("parent-side admission", () => {
     expect(report.calls).toEqual([
       { callId: 1, name: "read", status: "interrupted", reason: "concurrency-limit" },
     ]);
-    for (const name of ["message", "messageerror", "exit", "error"]) {
-      expect(worker.listenerCount(name)).toBe(0);
-    }
+    expectNoExecutionListeners(worker);
   });
 
   test("keeps a limit interruption reason when worker cleanup fails", async () => {
@@ -200,9 +193,9 @@ describe("parent-side admission", () => {
     });
 
     const error = await executionErrorOf(
-      superviseWorker(worker, new Map([["read", () => late.promise]]), undefined, {
-        maxToolCalls: 1,
-        maxConcurrentToolCalls: 1,
+      superviseWorker(worker, {
+        tools: { read: () => late.promise },
+        limits: { maxToolCalls: 1, maxConcurrentToolCalls: 1 },
       }),
     );
 

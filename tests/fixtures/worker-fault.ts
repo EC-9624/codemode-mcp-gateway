@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { WorkerStartupData, type WorkerToMainMessage } from "../../src/worker-protocol";
+import { WorkerStartupData, type WorkerToMainMessage } from "../../src/codemode/runtime/protocol";
 
 if (!parentPort) throw new Error("Fixture requires a parent port");
 

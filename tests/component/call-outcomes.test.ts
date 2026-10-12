@@ -1,91 +1,29 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { ToolResult } from "../../src/sandbox";
-import { superviseWorker } from "../../src/worker-execution";
+import { ToolResult } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
-import { faultWorker, toolWorker } from "../support/workers";
+import { faultWorker, interruptFlag, superviseWorker, toolWorker } from "../support/workers";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
 
 describe("parent-owned call outcomes", () => {
   test("records dispatch before a callback synchronously cancels execution", async () => {
     const controller = new AbortController();
     const worker = toolWorker("return await tools.read();");
 
-    const report = await superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          () => {
-            controller.abort();
+    const report = await superviseWorker(worker, {
+      tools: {
+        read: () => {
+          controller.abort();
 
-            return ToolResult.success(42);
-          },
-        ],
-      ]),
-      { signal: controller.signal, interrupt: new Int32Array(new SharedArrayBuffer(4)) },
-    );
+          return ToolResult.success(42);
+        },
+      },
+      control: { signal: controller.signal, interrupt: interruptFlag() },
+    });
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
       calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
-  });
-
-  test("closes the snapshot before abort listeners settle tools or emit new calls", async () => {
-    const controller = new AbortController();
-    const worker = faultWorker("idle");
-    const late = Promise.withResolvers<ToolResult>();
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => late.resolve(ToolResult.success()));
-    let invocations = 0;
-    let conversions = 0;
-    using post = spyOn(worker, "postMessage");
-
-    const completion = superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          (_args, { signal }) => {
-            invocations++;
-            signal.addEventListener(
-              "abort",
-              () => {
-                late.resolve(
-                  ToolResult.success({
-                    toJSON() {
-                      conversions++;
-
-                      return 42;
-                    },
-                  }),
-                );
-                worker.emit("message", {
-                  type: "tool-call",
-                  callId: 2,
-                  name: "read",
-                  argsJson: undefined,
-                });
-              },
-              { once: true },
-            );
-
-            return late.promise;
-          },
-        ],
-      ]),
-      { signal: controller.signal, interrupt: new Int32Array(new SharedArrayBuffer(4)) },
-    );
-
-    worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
-    controller.abort();
-    const report = await completion;
-
-    expect(report.calls).toEqual([
-      { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
-    ]);
-    expect(invocations).toBe(1);
-    expect(conversions).toBe(0);
-    expect(post).not.toHaveBeenCalled();
   });
 
   test("retains completed and pending calls when the worker fails", async () => {
@@ -95,21 +33,17 @@ describe("parent-owned call outcomes", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
     const error = await executionErrorOf(
-      superviseWorker(
-        worker,
-        new Map([
-          [
-            "read",
-            (args) => {
-              if (args === 1) return ToolResult.success(42);
+      superviseWorker(worker, {
+        tools: {
+          read: (args) => {
+            if (args === 1) return ToolResult.success(42);
 
-              worker.emit("error", new Error("Private worker details"));
+            worker.emit("error", new Error("Private worker details"));
 
-              return late.promise;
-            },
-          ],
-        ]),
-      ),
+            return late.promise;
+          },
+        },
+      }),
     );
 
     expect(error.calls).toEqual([
@@ -125,12 +59,78 @@ describe("parent-owned call outcomes", () => {
     }
   });
 
+  test("closes in-flight calls before aborting tools when listener setup fails", async () => {
+    const worker = faultWorker("idle");
+    const failure = new Error("Listener setup failed");
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+    const addListener = worker.on.bind(worker);
+    let aborted = false;
+    let invocations = 0;
+    let conversions = 0;
+
+    using add = spyOn(worker, "on").mockImplementation((...args: Parameters<typeof worker.on>) => {
+      const added = addListener(...args);
+      if (args[0] === "exit") {
+        worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
+        throw failure;
+      }
+
+      return added;
+    });
+
+    const error = await executionErrorOf(
+      superviseWorker(worker, {
+        tools: {
+          read: (_args, { signal }) => {
+            invocations++;
+            signal.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                worker.emit("message", {
+                  type: "tool-call",
+                  callId: 2,
+                  name: "read",
+                  argsJson: undefined,
+                });
+                late.resolve(
+                  ToolResult.success({
+                    toJSON() {
+                      conversions++;
+
+                      return 42;
+                    },
+                  }),
+                );
+              },
+              { once: true },
+            );
+
+            return late.promise;
+          },
+        },
+      }),
+    );
+
+    expect(error.cause).toBe(failure);
+    expect(error.calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" },
+    ]);
+    expect(aborted).toBe(true);
+    expect(invocations).toBe(1);
+    expect(conversions).toBe(0);
+    expect(add).toHaveBeenCalled();
+    expectNoExecutionListeners(worker);
+  });
+
   test("keeps the timeout interruption reason when cancellation arrives after deadline selection", async () => {
     const controller = new AbortController();
 
     const control = {
       deadline: { timeoutMs: 10000, expiresAt: performance.now() + 10000 },
-      interrupt: new Int32Array(new SharedArrayBuffer(4)),
+      interrupt: interruptFlag(),
       signal: controller.signal,
     };
 
@@ -145,22 +145,18 @@ describe("parent-owned call outcomes", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const completion = superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          (args) => {
-            if (args === 1) return ToolResult.success(42);
+    const completion = superviseWorker(worker, {
+      tools: {
+        read: (args) => {
+          if (args === 1) return ToolResult.success(42);
 
-            started.resolve();
+          started.resolve();
 
-            return late.promise;
-          },
-        ],
-      ]),
+          return late.promise;
+        },
+      },
       control,
-    );
+    });
 
     await started.promise;
     control.deadline.expiresAt = performance.now() - 1;
@@ -182,42 +178,27 @@ describe("parent-owned call outcomes", () => {
   test("does not accept a late response while termination is still pending", async () => {
     const controller = new AbortController();
     const worker = toolWorker("return await tools.read();");
-    const terminateWorker = worker.terminate.bind(worker);
-    const terminating = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    using termination = gateTermination(worker);
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
-    cleanup.defer(() => release.resolve());
     cleanup.defer(() => late.resolve(ToolResult.success()));
     let conversions = 0;
 
-    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
-      const code = await terminateWorker();
-      terminating.resolve();
-      await release.promise;
+    const completion = superviseWorker(worker, {
+      tools: {
+        read: () => {
+          started.resolve();
 
-      return code;
+          return late.promise;
+        },
+      },
+      control: { signal: controller.signal, interrupt: interruptFlag() },
     });
-
-    const completion = superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          () => {
-            started.resolve();
-
-            return late.promise;
-          },
-        ],
-      ]),
-      { signal: controller.signal, interrupt: new Int32Array(new SharedArrayBuffer(4)) },
-    );
 
     await started.promise;
     controller.abort();
-    await terminating.promise;
+    await termination.terminating;
     late.resolve(
       ToolResult.success({
         toJSON() {
@@ -228,13 +209,13 @@ describe("parent-owned call outcomes", () => {
       }),
     );
     await Bun.sleep(0);
-    release.resolve();
+    termination.release();
 
     expect((await completion).calls).toEqual([
       { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
     ]);
     expect(conversions).toBe(0);
-    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(termination.terminate).toHaveBeenCalledTimes(1);
   });
 
   test("retains the cancellation snapshot when worker termination rejects", async () => {
@@ -252,22 +233,18 @@ describe("parent-owned call outcomes", () => {
       throw cause;
     });
 
-    const completion = superviseWorker(
-      worker,
-      new Map([
-        [
-          "read",
-          (args) => {
-            if (args === 1) return ToolResult.success(42);
+    const completion = superviseWorker(worker, {
+      tools: {
+        read: (args) => {
+          if (args === 1) return ToolResult.success(42);
 
-            started.resolve();
+          started.resolve();
 
-            return late.promise;
-          },
-        ],
-      ]),
-      { signal: controller.signal, interrupt: new Int32Array(new SharedArrayBuffer(4)) },
-    );
+          return late.promise;
+        },
+      },
+      control: { signal: controller.signal, interrupt: interruptFlag() },
+    });
 
     await started.promise;
     controller.abort();
@@ -294,7 +271,7 @@ describe("parent-owned call outcomes", () => {
       throw cause;
     });
 
-    const completion = superviseWorker(worker, new Map([["read", () => late.promise]]));
+    const completion = superviseWorker(worker, { tools: { read: () => late.promise } });
 
     worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
     worker.emit("message", {
@@ -331,7 +308,7 @@ describe("parent-owned call outcomes", () => {
       throw cleanupFailure;
     });
 
-    const completion = superviseWorker(worker, new Map([["read", () => late.promise]]));
+    const completion = superviseWorker(worker, { tools: { read: () => late.promise } });
 
     worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
     worker.emit("error", new Error("Private worker details"));

@@ -1,77 +1,66 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/sandbox";
+import { execute, ToolResult, type ExecuteOptions } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 import { rejectionOf } from "../support/rejection";
 
-describe("execution limit options", () => {
-  for (const [name, maximum] of [
-    ["memoryLimitBytes", 2147483647],
-    ["maxStackSizeBytes", 4194304],
-    ["maxSourceBytes", 2147483647],
-    ["maxOutputBytes", 2147483647],
-  ] as const) {
-    test.each([
-      ["zero", 0],
-      ["negative", -1],
-      ["fractional", 1.5],
-      ["NaN", NaN],
-      ["infinite", Infinity],
-      ["overflowing", 2 ** 31],
-    ] as const)(
-      `rejects %s ${name} before registry access even when cancelled`,
-      async (_label, value) => {
-        let reads = 0;
+const maximums = [
+  ["timeoutMs", 2147483647],
+  ["totalTimeoutMs", 2147483647],
+  ["memoryLimitBytes", 2147483647],
+  ["maxStackSizeBytes", 4194304],
+  ["maxSourceBytes", 2147483647],
+  ["maxOutputBytes", 2147483647],
+  ["maxToolCalls", 2147483647],
+  ["maxConcurrentToolCalls", 2147483647],
+] as const;
 
-        const failure = (
-          await rejectionOf(
-            execute(
-              "return 42;",
-              {
-                get read() {
-                  reads++;
+const invalidOptions = [
+  ...maximums.flatMap(([name, maximum]) =>
+    (
+      [
+        ["zero", 0],
+        ["negative", -1],
+        ["fractional", 1.5],
+        ["NaN", NaN],
+        ["infinite", Infinity],
+        ["overflowing", maximum + 1],
+        ["null", null],
+      ] as const
+    ).map(([label, value]) => ({ name, maximum, label, value })),
+  ),
+  { name: "maxStackSizeBytes", maximum: 4194304, label: "8 MiB", value: 8 * 1024 * 1024 },
+  { name: "maxStackSizeBytes", maximum: 4194304, label: "2147483647", value: 2147483647 },
+  { name: "maxStackSizeBytes", maximum: 4194304, label: "2 ** 31", value: 2 ** 31 },
+];
 
-                  return () => ToolResult.success();
-                },
-              },
-              { [name]: value, signal: AbortSignal.abort() },
-            ),
-          )
-        ).reason;
-
-        expect(failure).toBeInstanceOf(RangeError);
-        if (failure instanceof RangeError) {
-          expect(failure.message).toBe(`${name} must be an integer from 1 to ${maximum}.`);
-        }
-
-        expect(reads).toBe(0);
-      },
-    );
-  }
-
-  test.each([4194305, 8 * 1024 * 1024, 2147483647])(
-    "rejects a %i byte stack limit before registry access even when cancelled",
-    async (maxStackSizeBytes) => {
+describe("execution option validation", () => {
+  test.each(invalidOptions)(
+    "rejects $label $name before registry access even when cancelled",
+    async ({ name, maximum, value }) => {
       let reads = 0;
+      const options: ExecuteOptions = { signal: AbortSignal.abort() };
+      // Strict TypeScript rejects null here; JavaScript callers can still send it.
+      Object.assign(options, { [name]: value });
 
-      const failure = await rejectionOf(
-        execute(
-          "return 42;",
-          {
-            get read() {
-              reads++;
+      const failure = (
+        await rejectionOf(
+          execute(
+            "return 42;",
+            {
+              get read() {
+                reads++;
 
-              return () => ToolResult.success();
+                return () => ToolResult.success();
+              },
             },
-          },
-          { maxStackSizeBytes, signal: AbortSignal.abort() },
-        ),
-      );
+            options,
+          ),
+        )
+      ).reason;
 
-      expect(failure.reason).toBeInstanceOf(RangeError);
-      if (failure.reason instanceof RangeError) {
-        expect(failure.reason.message).toBe(
-          "maxStackSizeBytes must be an integer from 1 to 4194304.",
-        );
+      expect(failure).toBeInstanceOf(RangeError);
+      if (failure instanceof RangeError) {
+        expect(failure.message).toBe(`${name} must be an integer from 1 to ${maximum}.`);
       }
 
       expect(reads).toBe(0);
