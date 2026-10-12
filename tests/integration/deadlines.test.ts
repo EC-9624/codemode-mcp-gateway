@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult } from "../../src/codemode";
 
 describe("guest deadline", () => {
   test("applies a custom deadline to infinite computation and permits the next execution", async () => {
     const started = performance.now();
 
-    const { result } = await execute("while (true) {} ", {}, { timeoutMs: 100 });
+    const { result } = await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {} ");
     const elapsed = performance.now() - started;
 
     expect(result).toEqual({
@@ -14,13 +14,16 @@ describe("guest deadline", () => {
     });
     expect(elapsed).toBeGreaterThanOrEqual(100);
     expect(elapsed).toBeLessThan(1000);
-    expect((await execute("return 3;")).result).toEqual({ ok: true, value: 3 });
+    expect((await new CodemodeSandbox().execute("return 3;")).result).toEqual({
+      ok: true,
+      value: 3,
+    });
   });
 
   test("applies the default one-second deadline", async () => {
     const started = performance.now();
 
-    const { result } = await execute("while (true) {} ");
+    const { result } = await new CodemodeSandbox().execute("while (true) {} ");
 
     expect(result).toEqual({
       ok: false,
@@ -30,11 +33,15 @@ describe("guest deadline", () => {
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
-    const timedOut = await execute("while (true) await Promise.resolve();", {}, { timeoutMs: 100 });
+    const timedOut = await new CodemodeSandbox({ timeoutMs: 100 }).execute(
+      "while (true) await Promise.resolve();",
+    );
 
-    const recovered = await execute("return await tools.answer();", {
-      answer: () => ToolResult.success(3),
-    });
+    const recovered = await new CodemodeSandbox({
+      tools: {
+        answer: () => ToolResult.success(3),
+      },
+    }).execute("return await tools.answer();");
 
     expect(timedOut.result).toEqual({
       ok: false,
@@ -48,11 +55,10 @@ describe("guest deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const report = await execute(
-      "tools.wait(); return 3;",
-      { wait: () => late.promise },
-      { timeoutMs: 100 },
-    );
+    const report = await new CodemodeSandbox({
+      tools: { wait: () => late.promise },
+      timeoutMs: 100,
+    }).execute("tools.wait(); return 3;");
 
     expect(report).toEqual({
       result: {
@@ -74,18 +80,19 @@ describe("guest deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const timedOut = await execute(
-      "return await tools.wait();",
-      { wait: () => late.promise },
-      { timeoutMs: 100 },
-    );
+    const timedOut = await new CodemodeSandbox({
+      tools: { wait: () => late.promise },
+      timeoutMs: 100,
+    }).execute("return await tools.wait();");
 
     settle(late);
     await Bun.sleep(0);
 
-    const recovered = await execute("return await tools.answer();", {
-      answer: () => ToolResult.success(3),
-    });
+    const recovered = await new CodemodeSandbox({
+      tools: {
+        answer: () => ToolResult.success(3),
+      },
+    }).execute("return await tools.answer();");
 
     expect(timedOut.result).toEqual({
       ok: false,
@@ -97,7 +104,7 @@ describe("guest deadline", () => {
 
 describe("total deadline", () => {
   test("accepts the minimum total budget", async () => {
-    const { result } = await execute("while (true) {}", {}, { totalTimeoutMs: 1 });
+    const { result } = await new CodemodeSandbox({ totalTimeoutMs: 1 }).execute("while (true) {}");
 
     expect(result).toEqual({
       ok: false,
@@ -106,10 +113,8 @@ describe("total deadline", () => {
   });
 
   test("preserves a guest timeout that arrives before the parent deadline", async () => {
-    const { result } = await execute(
+    const { result } = await new CodemodeSandbox({ timeoutMs: 50, totalTimeoutMs: 2000 }).execute(
       "while (true) {}",
-      {},
-      { timeoutMs: 50, totalTimeoutMs: 2000 },
     );
 
     expect(result).toEqual({
@@ -125,7 +130,7 @@ describe("host responsiveness", () => {
     const timer = setInterval(() => ticks.push(Date.now()), 10);
     try {
       const result = (
-        await execute(`
+        await new CodemodeSandbox().execute(`
         const started = Date.now();
         while (Date.now() - started < 400) {}
         return { started, ended: Date.now() };

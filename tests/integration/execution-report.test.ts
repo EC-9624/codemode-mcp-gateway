@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 
 describe("execution reports", () => {
   test("returns an empty call snapshot when no tool is invoked", async () => {
-    const report = await execute("return 42;");
+    const report = await new CodemodeSandbox().execute("return 42;");
 
     expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
   });
 
   test("returns no calls when cancelled before startup", async () => {
-    const report = await execute("return await tools.read();", {}, { signal: AbortSignal.abort() });
+    const report = await new CodemodeSandbox().execute("return await tools.read();", {
+      signal: AbortSignal.abort(),
+    });
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
@@ -24,18 +26,20 @@ describe("execution reports", () => {
     cleanup.defer(() => second.resolve());
     const order: number[] = [];
 
-    const report = await execute("return await Promise.all([tools.read(1), tools.read(2)]);", {
-      read: async (args) => {
-        if (args === 1) await second.promise;
+    const report = await new CodemodeSandbox({
+      tools: {
+        read: async (args) => {
+          if (args === 1) await second.promise;
 
-        if (typeof args !== "number") return ToolResult.failure("Expected a number");
+          if (typeof args !== "number") return ToolResult.failure("Expected a number");
 
-        order.push(args);
-        if (args === 2) second.resolve();
+          order.push(args);
+          if (args === 2) second.resolve();
 
-        return ToolResult.success(args);
+          return ToolResult.success(args);
+        },
       },
-    });
+    }).execute("return await Promise.all([tools.read(1), tools.read(2)]);");
 
     expect(order).toEqual([2, 1]);
     expect(report).toEqual({
@@ -51,9 +55,8 @@ describe("execution reports", () => {
     let conversions = 0;
     const value = { amount: 42 };
 
-    const report = await execute(
-      "const value = await tools.read(); value.amount = 99; return value;",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: () =>
           ToolResult.success({
             toJSON() {
@@ -63,7 +66,7 @@ describe("execution reports", () => {
             },
           }),
       },
-    );
+    }).execute("const value = await tools.read(); value.amount = 99; return value;");
 
     value.amount = 100;
 
@@ -83,8 +86,12 @@ describe("execution reports", () => {
 
   test("keeps call IDs and responses separate across concurrent executions", async () => {
     const reports = await Promise.all([
-      execute("return await tools.read();", { read: () => ToolResult.success(1) }),
-      execute("return await tools.read();", { read: () => ToolResult.success(2) }),
+      new CodemodeSandbox({ tools: { read: () => ToolResult.success(1) } }).execute(
+        "return await tools.read();",
+      ),
+      new CodemodeSandbox({ tools: { read: () => ToolResult.success(2) } }).execute(
+        "return await tools.read();",
+      ),
     ]);
 
     expect(reports).toEqual([
@@ -100,10 +107,12 @@ describe("execution reports", () => {
   });
 
   test("retains undefined distinctly from null", async () => {
-    const report = await execute("await tools.absent(); return await tools.empty();", {
-      absent: () => ToolResult.success(),
-      empty: () => ToolResult.success(null),
-    });
+    const report = await new CodemodeSandbox({
+      tools: {
+        absent: () => ToolResult.success(),
+        empty: () => ToolResult.success(null),
+      },
+    }).execute("await tools.absent(); return await tools.empty();");
 
     expect(report).toEqual({
       result: { ok: true, value: null },
@@ -123,9 +132,11 @@ describe("execution reports", () => {
       privateCallback: () => {},
     } as const;
 
-    const report = await execute("try { await tools.read(); } catch { return 'caught'; }", {
-      read: () => failure,
-    });
+    const report = await new CodemodeSandbox({
+      tools: {
+        read: () => failure,
+      },
+    }).execute("try { await tools.read(); } catch { return 'caught'; }");
 
     expect(report).toEqual({
       result: { ok: true, value: "caught" },
@@ -141,11 +152,13 @@ describe("execution reports", () => {
   });
 
   test("retains a generic response for thrown host errors without private details", async () => {
-    const report = await execute("return await tools.read();", {
-      read: () => {
-        throw new Error("Private credentials");
+    const report = await new CodemodeSandbox({
+      tools: {
+        read: () => {
+          throw new Error("Private credentials");
+        },
       },
-    });
+    }).execute("return await tools.read();");
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "script", message: "Host tool failed." } },
@@ -161,9 +174,11 @@ describe("execution reports", () => {
   });
 
   test("retains the conversion failure response rather than an unserializable host value", async () => {
-    const report = await execute("return await tools.read();", {
-      read: () => ToolResult.success(1n),
-    });
+    const report = await new CodemodeSandbox({
+      tools: {
+        read: () => ToolResult.success(1n),
+      },
+    }).execute("return await tools.read();");
 
     expect(report).toEqual({
       result: {
@@ -189,9 +204,8 @@ describe("execution reports", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     let conversions = 0;
 
-    const completion = execute(
-      "await tools.create(); return await tools.send();",
-      {
+    const completion = new CodemodeSandbox({
+      tools: {
         create: () => ToolResult.success({ id: "invoice-1" }),
         send: () => {
           started.resolve();
@@ -199,8 +213,7 @@ describe("execution reports", () => {
           return late.promise;
         },
       },
-      { signal: controller.signal },
-    );
+    }).execute("await tools.create(); return await tools.send();", { signal: controller.signal });
 
     await started.promise;
     controller.abort("Private reason");
@@ -241,13 +254,12 @@ describe("execution reports", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const report = await execute(
-      "await tools.done(); tools.pending(); throw new Error('failed');",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         done: () => ToolResult.success(42),
         pending: () => late.promise,
       },
-    );
+    }).execute("await tools.done(); tools.pending(); throw new Error('failed');");
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "script", message: "failed" } },
@@ -263,14 +275,13 @@ describe("execution reports", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const report = await execute(
-      "await tools.done(); return await tools.pending();",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         done: () => ToolResult.success(42),
         pending: () => late.promise,
       },
-      { timeoutMs: 100 },
-    );
+      timeoutMs: 100,
+    }).execute("await tools.done(); return await tools.pending();");
 
     expect(report).toEqual({
       result: {
@@ -290,13 +301,15 @@ describe("execution reports", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve(ToolResult.success()));
 
-    const completion = execute("tools.read(); return 7;", {
-      read: () => {
-        started.resolve();
+    const completion = new CodemodeSandbox({
+      tools: {
+        read: () => {
+          started.resolve();
 
-        return release.promise;
+          return release.promise;
+        },
       },
-    });
+    }).execute("tools.read(); return 7;");
 
     await started.promise;
     release.resolve(ToolResult.success(42));
@@ -311,11 +324,16 @@ describe("execution reports", () => {
     const cause = new Error("Registry unavailable");
 
     const error = await executionErrorOf(
-      execute("return 42;", {
-        get read(): never {
-          throw cause;
-        },
-      }),
+      Promise.resolve().then(
+        () =>
+          new CodemodeSandbox({
+            tools: {
+              get read(): never {
+                throw cause;
+              },
+            },
+          }),
+      ),
     );
 
     expect(error.cause).toBe(cause);

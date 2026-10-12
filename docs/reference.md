@@ -17,36 +17,45 @@ Detailed API behavior, execution contracts, and resource ownership. Start with t
 `src/mcp/index.ts` exports MCP discovery and adaptation. Examples below use paths
 relative to the project root.
 
-`new CodemodeSandbox({ tools, ...defaults })` validates defaults and snapshots tool
+`new CodemodeSandbox({ tools, ...configuration })` validates limits and snapshots tool
 bindings synchronously, before any worker starts. Constructor registry failures
-throw `SandboxExecutionError` with no calls; invalid defaults throw `RangeError`.
-`sandbox.execute(code, options?)` applies per-run overrides and delegates to the
-same execution path as the one-shot function. Each run owns its resources and can
-overlap other runs; caller signals belong to individual runs, not the constructor.
+throw `SandboxExecutionError` with no calls; invalid configuration throws `RangeError`.
+Tools and limits stay fixed for that instance. `sandbox.execute(code, { signal }?)`
+accepts only per-request cancellation; it does not read resource-limit overrides.
+Each run owns its resources and can overlap other runs; caller signals belong to
+individual runs, not the constructor.
 The sandbox holds configuration rather than live workers between runs, so it needs
 no `close()` call. Every execution awaits its own worker cleanup.
 
-```ts
-import { execute, ToolResult } from "./src/codemode";
+The application constructs the sandbox at startup. An agent-facing MCP handler can
+accept `{ code }` and supply the MCP request's cancellation signal separately.
+The standalone `execute(code, tools, options)` export has been removed; move tools
+and limits into the constructor and call the instance method.
 
-await execute("return 1 + 2;");
+```ts
+import { CodemodeSandbox, ToolResult } from "./src/codemode";
+
+const sandbox = new CodemodeSandbox({
+  tools: { answer: () => ToolResult.success(42) },
+});
+
+await sandbox.execute("return 1 + 2;");
 // { result: { ok: true, value: 3 }, calls: [] }
 
-await execute('throw new Error("Something failed");');
+await sandbox.execute('throw new Error("Something failed");');
 // { result: { ok: false, error: { kind: "script", message: "Something failed" } }, calls: [] }
 
-await execute("return await tools.answer();", {
-  answer: async () => ToolResult.success(42),
-});
+await sandbox.execute("return await tools.answer();");
 // {
 //   result: { ok: true, value: 42 },
 //   calls: [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
 // }
 
-(await execute("while (true) {}", {}, { timeoutMs: 100 })).result;
+(await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {}")).result;
 // { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." } }
 
-(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 })).result;
+(await new CodemodeSandbox({ timeoutMs: 1000, totalTimeoutMs: 100 }).execute("while (true) {}"))
+  .result;
 // { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." } }
 ```
 
@@ -66,8 +75,9 @@ ordinary data.
 
 `timeoutMs` defaults to 1000. Optional `totalTimeoutMs` adds a parent deadline
 covering startup through acceptance of completion. Both budgets must be integers
-from 1 to 2147483647; invalid budgets reject with a `RangeError` before a worker
-starts. Either deadline can win; neither must be larger than the other. Omitting
+from 1 to 2147483647; invalid budgets throw `RangeError` during construction.
+Each execution starts fresh deadlines using the stored durations.
+Either deadline can win; neither must be larger than the other. Omitting
 `totalTimeoutMs` retains the guest-only deadline.
 
 The total budget is not a hard response-latency cap: synchronous main-thread work
@@ -75,27 +85,26 @@ can delay enforcement, and worker termination is awaited after an outcome is cho
 
 ### Resource limits
 
-All settings are optional, flat fields on `ExecuteOptions`. Override only what you need:
+All limits are optional, flat fields on `SandboxOptions`. Configure them once:
 
 ```ts
-await execute(code, tools);
-await execute(code, tools, { memoryLimitBytes: 128 * 1024 * 1024 });
+const sandbox = new CodemodeSandbox({ tools, memoryLimitBytes: 128 * 1024 * 1024 });
+await sandbox.execute(code);
 ```
 
-Defaults are listed in the [README options table](../README.md#execution-options).
-Omitted (`undefined`) fields use the sandbox or global default; `null` is invalid.
+Defaults are listed in the [README configuration table](../README.md#sandbox-configuration).
+Omitted (`undefined`) constructor fields use the built-in default; `null` is invalid.
 Each value must be a positive integer.
 Memory, source, and output limits allow up to 2147483647 bytes; the stack limit allows up to
 4 MiB (`4194304`), leaving headroom below the pinned WASM build's 5 MiB stack.
-Invalid values reject with `RangeError` before registry access or worker
-startup, even when the caller signal is already aborted. Zero, negative values,
-and infinity do not disable limits.
+Invalid values throw `RangeError` during construction before registry access or worker
+startup. Zero, negative values, and infinity do not disable limits.
 
-After validating options, pre-aborted cancellation wins. Otherwise oversized source
-returns this report before reading tools, creating the worker, or parsing code:
+At execution time, pre-aborted cancellation wins. Otherwise oversized source
+returns this report before creating the worker or parsing code:
 
 ```ts
-await execute("return 42;", {}, { maxSourceBytes: 5 });
+await new CodemodeSandbox({ maxSourceBytes: 5 }).execute("return 42;");
 // {
 //   result: {
 //     ok: false,
@@ -114,9 +123,9 @@ string length for non-ASCII text. Byte measurement does not allocate an encoded
 copy of the source.
 
 ```text
-resolve defaults -> validate options -> check pre-aborted cancellation
-  -> measure source bytes -> reject oversized source with no calls
-  -> snapshot tools -> start worker with resolved memory/stack limits
+construction: apply defaults -> validate configuration -> snapshot tools
+execution: check pre-aborted cancellation -> measure source bytes
+  -> reject oversized source with no calls, or start worker with stored limits
   -> worker validates startup data -> configure VM -> execute
 ```
 
@@ -136,7 +145,7 @@ guest parsing remains covered by `timeoutMs` and the optional parent deadline.
 `maxOutputBytes` bounds the guest's final return value and script-error message:
 
 ```ts
-await execute('return "too much";', {}, { maxOutputBytes: 5 });
+await new CodemodeSandbox({ maxOutputBytes: 5 }).execute('return "too much";');
 // {
 //   result: {
 //     ok: false,
@@ -181,17 +190,17 @@ host memory.
 ### Tool-call limits
 
 Each execution defaults to **100 total calls** and **10 outstanding calls**.
-Override either field independently:
+Configure either field independently on the sandbox:
 
 ```ts
-await execute(code, tools);
-await execute(code, tools, { maxToolCalls: 200, maxConcurrentToolCalls: 5 });
+const sandbox = new CodemodeSandbox({ tools, maxToolCalls: 200, maxConcurrentToolCalls: 5 });
+await sandbox.execute(code);
 ```
 
-Both counts must be integers from 1 to 2147483647. Invalid counts reject with
-`RangeError` before source admission, registry access, or worker startup, including
-when cancellation is already requested. A total limit below the concurrency limit
-is valid; there is no required relationship between them.
+Both counts must be integers from 1 to 2147483647. Invalid counts throw
+`RangeError` during construction before registry access or worker startup.
+A total limit below the concurrency limit is valid; there is no required relationship
+between them.
 
 - Each admitted invocation consumes one total call, including tool failures,
   discovery, and unawaited calls. Awaiting the same promise twice counts once.
@@ -206,13 +215,14 @@ is valid; there is no required relationship between them.
   identifies the total-call limit.
 
 ```ts
-await execute(
-  "await tools.read(); return await tools.read();",
-  {
+const sandbox = new CodemodeSandbox({
+  tools: {
     read: () => ToolResult.success(42),
   },
-  { maxToolCalls: 1 },
-);
+  maxToolCalls: 1,
+});
+
+await sandbox.execute("await tools.read(); return await tools.read();");
 // {
 //   result: {
 //     ok: false,
@@ -252,7 +262,7 @@ their execution has ended.
 
 ### Execution reports and retained calls
 
-`execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
+`sandbox.execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
 Callers migrating from the earlier API read `report.result` for the execution outcome.
 The worker-local engine still returns `GuestResult`; only the parent owns call records.
 
@@ -312,21 +322,23 @@ const report = {
 
 `bun run example` demonstrates this sequence using an explicit start gate.
 
-Registry setup, worker construction, supervision, and cleanup failures reject with
-host-only `SandboxExecutionError`. Its `calls` carries the same snapshot and its
+Registry setup failures throw host-only `SandboxExecutionError` during construction.
+Worker construction, supervision, and cleanup failures reject execution with
+`SandboxExecutionError`. Its `calls` carries the same snapshot and its
 `cause` preserves the original host-side failure. If execution and cleanup both
 throw, the cause retains the disposal `SuppressedError` chain. Invalid budgets
-continue to reject with `RangeError` before execution.
+throw `RangeError` during sandbox construction.
 
 Once selected, interruption reasons do not change during cleanup. For example,
 cancellation followed by a termination failure rejects with `SandboxExecutionError`,
 but pending calls keep `reason: "cancelled"`. Completed responses remain completed.
 
 ```ts
-import { execute, SandboxExecutionError } from "./src/codemode";
+import { CodemodeSandbox, SandboxExecutionError } from "./src/codemode";
 
 try {
-  const report = await execute("return 42;");
+  const sandbox = new CodemodeSandbox();
+  const report = await sandbox.execute("return 42;");
   console.log(report.result, report.calls);
 } catch (error) {
   if (error instanceof SandboxExecutionError) {
@@ -344,17 +356,17 @@ signal to cancellable APIs such as `fetch`:
 
 ```ts
 const controller = new AbortController();
-const completion = execute(
-  "return await tools.read();",
-  {
+const sandbox = new CodemodeSandbox({
+  tools: {
     read: async (_args, { signal }) => {
       const response = await fetch("https://example.com/data", { signal });
 
       return ToolResult.success(await response.text());
     },
   },
-  { signal: controller.signal },
-);
+});
+
+const completion = sandbox.execute("return await tools.read();", { signal: controller.signal });
 
 controller.abort();
 await completion;
@@ -381,7 +393,7 @@ metadata and the callback owns validation. Discovery schema objects should be
 treated as read-only.
 
 ```ts
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "./src/codemode";
+import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "./src/codemode";
 
 const catalog = ToolCatalog.create({
   answer: {
@@ -394,18 +406,21 @@ catalog.search("answer"); // [{ name: "answer", description: "..." }]
 catalog.describe("answer"); // metadata; undefined for an unknown name
 
 const discovery = createDiscoveryTools(catalog);
-await execute(
+const sandbox = new CodemodeSandbox({
+  tools: {
+    ...catalog.tools,
+    searchTools: discovery.searchTools,
+    describeTool: discovery.describeTool,
+  },
+});
+
+await sandbox.execute(
   `
   const matches = await tools.searchTools({ query: "answer" });
   const name = matches[0].name;
   const description = await tools.describeTool({ name });
   return { description, value: await tools[name]() };
 `,
-  {
-    ...catalog.tools,
-    searchTools: discovery.searchTools,
-    describeTool: discovery.describeTool,
-  },
 );
 ```
 
@@ -433,7 +448,7 @@ schema's inferred **output** type, including intentional transformations:
 
 ```ts
 import { z } from "zod";
-import { defineTool, execute, ToolCatalog, ToolResult } from "./src/codemode";
+import { defineTool, CodemodeSandbox, ToolCatalog, ToolResult } from "./src/codemode";
 
 const catalog = ToolCatalog.create({
   length: defineTool({
@@ -446,7 +461,8 @@ const catalog = ToolCatalog.create({
   }),
 });
 
-await execute('return await tools.length("hello");', catalog.tools);
+const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+await sandbox.execute('return await tools.length("hello");');
 // result: { ok: true, value: 6 }
 ```
 
@@ -495,18 +511,18 @@ protocol negotiation, and closing the client. The adapter borrows it on both
 success and failure; cancelling one execution does not close the shared client.
 
 ```ts
-import { execute } from "./src/codemode";
+import { CodemodeSandbox } from "./src/codemode";
 import { createMcpCatalog } from "./src/mcp";
 
 // client is an application-owned, connected @modelcontextprotocol/client Client.
 const catalog = await createMcpCatalog(client);
-const report = await execute(
+const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+const report = await sandbox.execute(
   `
     const response = await tools.add({ a: 2, b: 3 });
     if (response.isError) return response.content;
     return response.structuredContent.sum;
   `,
-  catalog.tools,
 );
 ```
 
@@ -640,9 +656,9 @@ exports its public API through `index.ts`; worker/VM details live in
 Main app
   codemode/index.ts: public exports
   codemode/types.ts: execution options, results, and call contracts
-  codemode/sandbox.ts: CodemodeSandbox configuration and one-shot admission
+  codemode/sandbox.ts: fixed CodemodeSandbox configuration and execution admission
   codemode/errors.ts: host infrastructure errors carrying a call snapshot
-  codemode/runtime/options.ts: validate options and resolve defaults
+  codemode/runtime/options.ts: apply defaults and validate constructor configuration
   codemode/runtime/execution.ts: WorkerExecution owns each run and its cleanup
   codemode/runtime/report.ts: call records and snapshots
   codemode/tools.ts: callback invocation, validation, and result serialization
@@ -712,7 +728,7 @@ to any execution or cleanup exception.
 
 | Owner                        | Resources                                                                           |
 | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `CodemodeSandbox`            | Snapshotted defaults and callback bindings                                          |
+| `CodemodeSandbox`            | Fixed resource limits and snapshotted callback bindings                             |
 | `WorkerExecution`            | Worker, listeners, parent timer/interrupt flag, tool abort controller, call records |
 | Worker entry's cleanup stack | Transport listeners and pending remote replies                                      |
 | Engine                       | QuickJS context and runtime, deadline, and bridge scope                             |
@@ -809,13 +825,14 @@ executable methods are never shared between host and guest.
 
 ### Parent-supervised deadline
 
-`totalTimeoutMs` records a separate monotonic deadline before registry snapshotting
-and worker construction. Every execution has a parent-owned one-word shared interrupt
+`totalTimeoutMs` records a fresh monotonic deadline after source admission and before
+worker construction. Registry snapshotting belongs to sandbox construction, outside
+execution deadlines. Every execution has a parent-owned one-word shared interrupt
 flag; the total budget adds a parent timer. The flag is supplied only to trusted worker
 code; it is never exposed to the guest.
 
 ```text
-validate options -> admit source -> record parent deadline -> construct worker -> supervise
+admit source -> record parent deadline -> construct worker -> supervise
   -> on messages and callback settlements: check the clock before continuing
   -> on expiry: select total-timeout result, close dispatch/call snapshot, set shared flag
   -> clear parent timer, remove normal listeners, request worker termination
@@ -842,16 +859,16 @@ validate options -> admit source -> record parent deadline -> construct worker -
 ### Cancellation and cleanup ordering
 
 ```text
-validate options -> if already aborted: return cancelled report with no calls
-  -> admit source -> snapshot registry -> recheck cancellation -> create worker and supervise
+if already aborted: return cancelled report with no calls
+  -> admit source -> create worker using fixed registry and limits -> supervise
   -> caller abort: check total deadline, choose timeout or cancelled outcome
   -> close dispatch and call snapshot -> set shared interrupt flag -> abort host-tool signal
   -> remove caller/worker listeners and timer -> terminate worker
   -> await termination -> remove worker error listener -> return report
 ```
 
-- Invalid budgets or byte limits reject even when the caller signal is already aborted. A
-  pre-aborted execution skips registry access and worker creation.
+- Invalid budgets or byte limits throw during construction. A pre-aborted execution
+  skips source admission and worker creation; tool bindings were already snapshotted.
 - The first accepted outcome wins. If the total deadline has already elapsed when
   cancellation is observed, the result is `timeout`; otherwise it is `cancelled`.
   Later cancellation cannot replace a completed result or infrastructure failure.

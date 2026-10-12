@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult, type ExecuteOptions } from "../../src/codemode";
+import {
+  CodemodeSandbox,
+  ToolResult,
+  type ExecuteOptions,
+  type SandboxOptions,
+} from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
-import { rejectionOf } from "../support/rejection";
 
 describe("CodemodeSandbox", () => {
   test("snapshots tool bindings at construction", async () => {
@@ -14,7 +18,7 @@ describe("CodemodeSandbox", () => {
     expect(report.result).toEqual({ ok: true, value: "original" });
   });
 
-  test("snapshots defaults at construction", async () => {
+  test("snapshots configuration at construction", async () => {
     const options = { maxSourceBytes: 1 };
     const sandbox = new CodemodeSandbox(options);
     options.maxSourceBytes = 100;
@@ -35,7 +39,7 @@ describe("CodemodeSandbox", () => {
     });
   });
 
-  test("overrides a limit for one execution without changing the sandbox default", async () => {
+  test("ignores per-request limit overrides from JavaScript callers", async () => {
     const sandbox = new CodemodeSandbox({
       tools: { read: () => ToolResult.success(42) },
       maxToolCalls: 1,
@@ -43,45 +47,39 @@ describe("CodemodeSandbox", () => {
 
     const code = "await tools.read(); return await tools.read();";
 
-    const overridden = await sandbox.execute(code, { maxToolCalls: 2 });
-    const defaulted = await sandbox.execute(code);
+    const options: ExecuteOptions = {};
+    Object.assign(options, { maxToolCalls: 2 });
 
-    expect(overridden.result).toEqual({ ok: true, value: 42 });
-    expect(overridden.calls).toHaveLength(2);
-    expect(defaulted.result).toEqual({
-      ok: false,
-      error: {
-        kind: "limit",
-        resource: "tool-calls",
-        maximum: 1,
-        message: "Execution exceeded the 1 tool-call limit.",
-      },
-    });
-    expect(defaulted.calls).toHaveLength(1);
+    const attempted = await sandbox.execute(code, options);
+    const subsequent = await sandbox.execute(code);
+
+    for (const report of [attempted, subsequent]) {
+      expect(report.result).toEqual({
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "tool-calls",
+          maximum: 1,
+          message: "Execution exceeded the 1 tool-call limit.",
+        },
+      });
+      expect(report.calls).toHaveLength(1);
+    }
   });
 
-  test("keeps sandbox defaults when a JavaScript caller passes explicit undefined", async () => {
-    const sandbox = new CodemodeSandbox({
+  test("uses built-in defaults for explicitly undefined constructor settings", async () => {
+    const options: SandboxOptions = {
       tools: { read: () => ToolResult.success(42) },
-      maxToolCalls: 1,
-    });
+    };
 
     // Strict TypeScript rejects this literal; JavaScript and non-strict callers can still send it.
-    const options: ExecuteOptions = {};
     Object.assign(options, { maxToolCalls: undefined });
 
-    const report = await sandbox.execute("await tools.read(); return await tools.read();", options);
+    const sandbox = new CodemodeSandbox(options);
+    const report = await sandbox.execute("await tools.read(); return await tools.read();");
 
-    expect(report.result).toEqual({
-      ok: false,
-      error: {
-        kind: "limit",
-        resource: "tool-calls",
-        maximum: 1,
-        message: "Execution exceeded the 1 tool-call limit.",
-      },
-    });
-    expect(report.calls).toHaveLength(1);
+    expect(report.result).toEqual({ ok: true, value: 42 });
+    expect(report.calls).toHaveLength(2);
   });
 
   test("starts each execution with fresh guest state, call IDs, and budgets", async () => {
@@ -104,7 +102,7 @@ describe("CodemodeSandbox", () => {
     }
   });
 
-  test("validates defaults before accessing constructor tools", () => {
+  test("validates configuration before accessing constructor tools", () => {
     let reads = 0;
 
     expect(
@@ -139,17 +137,37 @@ describe("CodemodeSandbox", () => {
     expect(failure.calls).toEqual([]);
   });
 
-  test("validates per-call overrides before accepting pre-aborted cancellation", async () => {
-    const sandbox = new CodemodeSandbox();
+  test("reads configuration and tool bindings only during construction", async () => {
+    let limitReads = 0;
+    let toolReads = 0;
 
-    const failure = await rejectionOf(
-      sandbox.execute("return 42;", {
-        maxToolCalls: 0,
-        signal: AbortSignal.abort(),
-      }),
-    );
+    const sandbox = new CodemodeSandbox({
+      get maxToolCalls() {
+        limitReads++;
+        if (limitReads > 1) throw new Error("Configuration read after construction");
 
-    expect(failure.reason).toBeInstanceOf(RangeError);
+        return 1;
+      },
+      tools: {
+        get read() {
+          toolReads++;
+          if (toolReads > 1) throw new Error("Binding read after construction");
+
+          return () => ToolResult.success(42);
+        },
+      },
+    });
+
+    expect(limitReads).toBe(1);
+    expect(toolReads).toBe(1);
+
+    const first = await sandbox.execute("return await tools.read();");
+    const second = await sandbox.execute("return await tools.read();");
+
+    expect(first.result).toEqual({ ok: true, value: 42 });
+    expect(second.result).toEqual({ ok: true, value: 42 });
+    expect(limitReads).toBe(1);
+    expect(toolReads).toBe(1);
   });
 
   test("cancelling one concurrent execution leaves the other running", async () => {

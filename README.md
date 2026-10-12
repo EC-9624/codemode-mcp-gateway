@@ -36,12 +36,11 @@ console.log(report.calls);
 // [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
 ```
 
-`CodemodeSandbox` snapshots tool bindings and defaults at construction. Each
-`execute(code, options?)` gets a fresh worker, VM, call budget, and report; executions
-can overlap. Per-call options override defaults for that run, and cancellation is
-per call. Worker cleanup completes before each execution settles.
-
-For one-shot use, `execute(code, tools?, options?)` is also exported by `src/codemode`.
+`CodemodeSandbox` validates configuration and snapshots tool bindings at construction.
+The application owns this fixed policy. Each `sandbox.execute(code, { signal }?)`
+gets a fresh worker, VM, call budget, and report; executions can overlap.
+Request options contain only cancellation. Worker cleanup completes before each
+execution settles.
 
 Tool callbacks receive unknown arguments and an execution-scoped `AbortSignal`.
 Use `defineTool` with a Standard Schema validator for typed handlers, or validate
@@ -52,8 +51,8 @@ rejection; unexpected callback exceptions produce a generic, private-error-safe 
 
 | Export                                                | Purpose                                                                |
 | ----------------------------------------------------- | ---------------------------------------------------------------------- |
-| `CodemodeSandbox`                                     | Reusable tool bindings and execution defaults                          |
-| `execute(code, tools?, options?)`                     | Run code and return its result plus observed tool calls                |
+| `CodemodeSandbox`                                     | Fixed resource limits and reusable tool bindings                       |
+| `sandbox.execute(code, { signal }?)`                  | Run code and return its result plus observed tool calls                |
 | `ToolResult.success(value)` / `.failure(message)`     | Explicit host-tool outcomes                                            |
 | `defineTool(definition)`                              | Bind a typed Standard Schema validator to a handler                    |
 | `validateTool(schema, handler, name?)`                | Adapt a Standard Schema validator and typed handler to a host callback |
@@ -64,7 +63,7 @@ rejection; unexpected callback exceptions produce a generic, private-error-safe 
 
 Script errors, timeouts, cancellation, and admission/output limits resolve in
 `report.result`. Infrastructure failures reject with `SandboxExecutionError`;
-invalid execution options reject with `RangeError`.
+invalid sandbox configuration throws `RangeError` during construction.
 
 MCP composition uses the same tool contract:
 
@@ -78,9 +77,10 @@ const sandbox = new CodemodeSandbox({ tools: catalog.tools });
 const report = await sandbox.execute("return await tools.add({ a: 2, b: 3 });");
 ```
 
-### Execution options
+### Sandbox configuration
 
-All fields are optional. Byte/count settings must be positive integers within
+Set limits on `new CodemodeSandbox({ tools, ...configuration })`; executions cannot
+override them. All fields are optional. Byte/count settings must be positive integers within
 their supported ranges; [the reference](docs/reference.md#resource-limits) describes
 validation and exact boundaries.
 
@@ -88,13 +88,21 @@ validation and exact boundaries.
 | ------------------------ | -------- | --------------------------------------------------------------------- |
 | `timeoutMs`              | 1,000 ms | Guest execution, including host-call waits                            |
 | `totalTimeoutMs`         | Unset    | Parent deadline covering worker startup through completion acceptance |
-| `signal`                 | Unset    | Caller cancellation                                                   |
 | `memoryLimitBytes`       | 64 MiB   | QuickJS guest heap                                                    |
 | `maxStackSizeBytes`      | 1 MiB    | QuickJS stack guard                                                   |
 | `maxSourceBytes`         | 256 KiB  | Submitted UTF-8 source                                                |
 | `maxOutputBytes`         | 256 KiB  | Final JSON return value or script-error message                       |
 | `maxToolCalls`           | 100      | Total admitted tool calls                                             |
 | `maxConcurrentToolCalls` | 10       | Outstanding tool calls                                                |
+
+Pass cancellation separately for each request:
+
+```ts
+const report = await sandbox.execute(code, { signal });
+```
+
+The standalone `execute(code, tools, options)` API has been removed. Construct a
+sandbox with tools and limits once, then reuse its `execute` method.
 
 ### Important boundaries
 
@@ -116,7 +124,7 @@ src/
   codemode/
     index.ts       public API
     types.ts       execution options, results, and call contracts
-    sandbox.ts     CodemodeSandbox and one-shot execute
+    sandbox.ts     fixed CodemodeSandbox configuration and execution admission
     errors.ts      host infrastructure errors
     tools.ts       host-tool contracts, validation, serialization
     catalog.ts     metadata and discovery

@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { execute } from "../../src/codemode";
+import { CodemodeSandbox } from "../../src/codemode";
+
+const sandbox = new CodemodeSandbox();
 
 describe("sandbox", () => {
   test("executes a JavaScript function body", async () => {
-    expect((await execute("return 1 + 2;")).result).toEqual({ ok: true, value: 3 });
+    expect((await sandbox.execute("return 1 + 2;")).result).toEqual({ ok: true, value: 3 });
   });
 
   test("returns JSON data", async () => {
-    expect((await execute('return { name: "mcm", values: [1, true, null] };')).result).toEqual({
+    expect(
+      (await sandbox.execute('return { name: "mcm", values: [1, true, null] };')).result,
+    ).toEqual({
       ok: true,
       value: { name: "mcm", values: [1, true, null] },
     });
@@ -19,34 +23,35 @@ describe("sandbox", () => {
     ["zero", 0],
     ["an empty string", ""],
   ] as const)("preserves %s as a falsy return value", async (_name, value) => {
-    expect((await execute(`return ${JSON.stringify(value)};`)).result).toEqual({
+    expect((await sandbox.execute(`return ${JSON.stringify(value)};`)).result).toEqual({
       ok: true,
       value,
     });
   });
 
   test("normalizes absent return values to null", async () => {
-    expect((await execute("const value = 3;")).result).toEqual({ ok: true, value: null });
-    expect((await execute("return undefined;")).result).toEqual({ ok: true, value: null });
+    expect((await sandbox.execute("const value = 3;")).result).toEqual({ ok: true, value: null });
+    expect((await sandbox.execute("return undefined;")).result).toEqual({ ok: true, value: null });
   });
 
   test("uses native JSON conversion", async () => {
     expect(
-      (await execute("return { omitted: undefined, values: [undefined, NaN, Infinity] };")).result,
+      (await sandbox.execute("return { omitted: undefined, values: [undefined, NaN, Infinity] };"))
+        .result,
     ).toEqual({ ok: true, value: { values: [null, null, null] } });
   });
 
   test("keeps serialization working after JSON.stringify is replaced", async () => {
-    expect((await execute('JSON.stringify = () => "broken"; return { value: 3 };')).result).toEqual(
-      {
-        ok: true,
-        value: { value: 3 },
-      },
-    );
+    expect(
+      (await sandbox.execute('JSON.stringify = () => "broken"; return { value: 3 };')).result,
+    ).toEqual({
+      ok: true,
+      value: { value: 3 },
+    });
   });
 
   test("reports script errors", async () => {
-    expect((await execute('throw new Error("Something failed");')).result).toEqual({
+    expect((await sandbox.execute('throw new Error("Something failed");')).result).toEqual({
       ok: false,
       error: { kind: "script", message: "Something failed" },
     });
@@ -56,7 +61,7 @@ describe("sandbox", () => {
     ["message getter", "throw { get message() { while (true) {} } };"],
     ["toJSON", "throw { toJSON() { while (true) {} } };"],
   ])("reports timeout when error conversion loops in %s", async (_name, code) => {
-    const report = await execute(code, {}, { timeoutMs: 100 });
+    const report = await new CodemodeSandbox({ timeoutMs: 100 }).execute(code);
 
     expect(report.result).toEqual({
       ok: false,
@@ -65,18 +70,18 @@ describe("sandbox", () => {
   });
 
   test("reports thrown strings and values without messages", async () => {
-    expect((await execute('throw "Something failed";')).result).toEqual({
+    expect((await sandbox.execute('throw "Something failed";')).result).toEqual({
       ok: false,
       error: { kind: "script", message: "Something failed" },
     });
-    expect((await execute("throw null;")).result).toEqual({
+    expect((await sandbox.execute("throw null;")).result).toEqual({
       ok: false,
       error: { kind: "script", message: "Script threw a value without an error message." },
     });
   });
 
   test("reports syntax errors", async () => {
-    const result = (await execute("return (; ")).result;
+    const result = (await sandbox.execute("return (; ")).result;
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe("script");
@@ -92,8 +97,8 @@ describe("sandbox", () => {
   ] as const)(
     "reports a thrown %s as an opaque error without awaiting or unwrapping it",
     async (_name, code) => {
-      const thrown = await execute(code);
-      const next = await execute("return 3;");
+      const thrown = await sandbox.execute(code);
+      const next = await sandbox.execute("return 3;");
 
       expect(thrown.result).toEqual({
         ok: false,
@@ -104,7 +109,7 @@ describe("sandbox", () => {
   );
 
   test("awaits asynchronous return values", async () => {
-    expect((await execute("return Promise.resolve(3);")).result).toEqual({
+    expect((await sandbox.execute("return Promise.resolve(3);")).result).toEqual({
       ok: true,
       value: 3,
     });
@@ -114,15 +119,15 @@ describe("sandbox", () => {
     ["object", "return { then(resolve) { resolve(3); } };"],
     ["function", "const value = () => 3; value.then = resolve => resolve(3); return value;"],
   ] as const)("awaits a returned %s thenable", async (_name, code) => {
-    expect((await execute(code)).result).toEqual({ ok: true, value: 3 });
+    expect((await sandbox.execute(code)).result).toEqual({ ok: true, value: 3 });
   });
 
   test("allows ordinary values that are not thenables", async () => {
-    const result = (await execute("return { then: 3 };")).result;
+    const result = (await sandbox.execute("return { then: 3 };")).result;
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toHaveProperty("then", 3);
 
-    expect((await execute("Number.prototype.then = () => {}; return 3;")).result).toEqual({
+    expect((await sandbox.execute("Number.prototype.then = () => {}; return 3;")).result).toEqual({
       ok: true,
       value: 3,
     });
@@ -133,18 +138,22 @@ describe("sandbox", () => {
     ["cycle", "const value = {}; value.self = value; return value;", "circular reference"],
     ["function", "return () => 3;", "Return value is not JSON-serializable."],
   ] as const)("reports a non-JSON %s return value", async (_name, code, message) => {
-    expect((await execute(code)).result).toEqual({ ok: false, error: { kind: "script", message } });
+    expect((await sandbox.execute(code)).result).toEqual({
+      ok: false,
+      error: { kind: "script", message },
+    });
   });
 
   test("creates a fresh environment for each execution", async () => {
     expect(
-      (await execute("globalThis.marker = 3; Array.prototype.marker = 3; return marker;")).result,
+      (await sandbox.execute("globalThis.marker = 3; Array.prototype.marker = 3; return marker;"))
+        .result,
     ).toEqual({
       ok: true,
       value: 3,
     });
     expect(
-      (await execute("return [typeof marker, typeof Array.prototype.marker];")).result,
+      (await sandbox.execute("return [typeof marker, typeof Array.prototype.marker];")).result,
     ).toEqual({
       ok: true,
       value: ["undefined", "undefined"],
@@ -153,14 +162,15 @@ describe("sandbox", () => {
 
   test("does not expose host APIs", async () => {
     expect(
-      (await execute("return [typeof process, typeof Bun, typeof require, typeof fetch];")).result,
+      (await sandbox.execute("return [typeof process, typeof Bun, typeof require, typeof fetch];"))
+        .result,
     ).toEqual({ ok: true, value: ["undefined", "undefined", "undefined", "undefined"] });
   });
 
   test("continues executing after a script failure", async () => {
-    const succeeded = await execute("return 3;");
-    const failed = await execute('throw new Error("failure");');
-    const recovered = await execute("return 3;");
+    const succeeded = await sandbox.execute("return 3;");
+    const failed = await sandbox.execute('throw new Error("failure");');
+    const recovered = await sandbox.execute("return 3;");
 
     expect(succeeded.result).toEqual({ ok: true, value: 3 });
     expect(failed.result).toEqual({ ok: false, error: { kind: "script", message: "failure" } });

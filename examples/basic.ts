@@ -3,15 +3,12 @@ import {
   CodemodeSandbox,
   createDiscoveryTools,
   defineTool,
-  execute,
   ToolCatalog,
   ToolResult,
 } from "../src/codemode";
 
-console.log(await execute("return 1 + 2;"));
-console.log(await execute('throw new Error("An example failure");'));
-console.log(
-  await execute("return await tools.add({ a: 1, b: 2 });", {
+const basic = new CodemodeSandbox({
+  tools: {
     add: async (args) => {
       if (
         typeof args !== "object" ||
@@ -28,38 +25,40 @@ console.log(
 
       return ToolResult.success(args.a + args.b);
     },
-  }),
+  },
+});
+
+console.log(await basic.execute("return 1 + 2;"));
+console.log(await basic.execute('throw new Error("An example failure");'));
+console.log(await basic.execute("return await tools.add({ a: 1, b: 2 });"));
+
+console.log(await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {}"));
+console.log(
+  await new CodemodeSandbox({ timeoutMs: 1000, totalTimeoutMs: 100 }).execute("while (true) {}"),
 );
 
-console.log(await execute("while (true) {}", {}, { timeoutMs: 100 }));
-console.log(await execute("while (true) {}", {}, { timeoutMs: 1000, totalTimeoutMs: 100 }));
-
-console.log(await execute("return 42;", {}, { maxSourceBytes: 5 }));
-console.log(await execute('return "too much";', {}, { maxOutputBytes: 5 }));
+console.log(await new CodemodeSandbox({ maxSourceBytes: 5 }).execute("return 42;"));
+console.log(await new CodemodeSandbox({ maxOutputBytes: 5 }).execute('return "too much";'));
 console.log(
-  await execute(
+  await new CodemodeSandbox({ memoryLimitBytes: 8 * 1024 * 1024 }).execute(
     "return new ArrayBuffer(1024).byteLength;",
-    {},
-    { memoryLimitBytes: 8 * 1024 * 1024 },
   ),
 );
 
 console.log(
-  await execute(
-    "await tools.read(); return await tools.read();",
-    {
+  await new CodemodeSandbox({
+    tools: {
       read: () => ToolResult.success(42),
     },
-    { maxToolCalls: 1 },
-  ),
+    maxToolCalls: 1,
+  }).execute("await tools.read(); return await tools.read();"),
 );
 
 const controller = new AbortController();
 const started = Promise.withResolvers<void>();
 
-const cancelled = execute(
-  "await tools.createInvoice(); return await tools.wait();",
-  {
+const invoicing = new CodemodeSandbox({
+  tools: {
     createInvoice: () => ToolResult.success({ id: "invoice-1" }),
     wait: async (_args, { signal }) => {
       const stopped = Promise.withResolvers<void>();
@@ -73,8 +72,11 @@ const cancelled = execute(
       return ToolResult.failure("Stopped");
     },
   },
-  { signal: controller.signal },
-);
+});
+
+const cancelled = invoicing.execute("await tools.createInvoice(); return await tools.wait();", {
+  signal: controller.signal,
+});
 
 await started.promise;
 controller.abort();

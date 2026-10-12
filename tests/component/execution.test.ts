@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { execute } from "../../src/codemode";
+import { CodemodeSandbox } from "../../src/codemode";
 import { executeLocally } from "../support/local-tools";
 import { WorkerToMainMessage } from "../../src/codemode/runtime/protocol";
 import { executionErrorOf } from "../support/execution-error";
@@ -35,7 +35,7 @@ describe("worker supervisor", () => {
     "return [typeof process, typeof Bun, typeof require, typeof fetch];",
     "return Object.keys(tools);",
   ])("worker transport preserves the engine result of %s", async (code) => {
-    expect((await execute(code)).result).toEqual(await executeLocally(code));
+    expect((await new CodemodeSandbox().execute(code)).result).toEqual(await executeLocally(code));
   });
 
   test("rejects invalid requests at the actual worker boundary", async () => {
@@ -58,7 +58,10 @@ describe("worker supervisor", () => {
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
 
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 
   for (const [scenario, message] of [
@@ -80,7 +83,10 @@ describe("worker supervisor", () => {
 
       expectNoExecutionListeners(worker);
       expect(terminate).toHaveBeenCalledTimes(1);
-      expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+      expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+        ok: true,
+        value: 42,
+      });
     });
   }
 
@@ -118,7 +124,10 @@ describe("worker supervisor", () => {
       expect(failure.message).not.toContain("Private parser infrastructure details");
     }
 
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 
   test("captures unexpected message decoder failures and releases the worker", async () => {
@@ -178,7 +187,10 @@ describe("worker supervisor", () => {
     }
 
     expectNoExecutionListeners(worker);
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 
   for (const errorPhase of ["listener setup", "termination"]) {

@@ -1,4 +1,4 @@
-export { CodemodeSandbox, execute } from "./sandbox";
+export { CodemodeSandbox } from "./sandbox";
 export { SandboxExecutionError } from "./errors";
 export {
   type CallOutcome,

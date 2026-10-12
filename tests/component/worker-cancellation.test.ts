@@ -1,6 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/codemode";
+import {
+  CodemodeSandbox,
+  ToolResult,
+  type SandboxResult,
+  type ToolContext,
+} from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 import {
   faultWorker,
@@ -30,7 +35,10 @@ describe("worker cancellation", () => {
     expect((await completion).result).toEqual(cancelled);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker, controller.signal);
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 
   test("observes an already-aborted signal when taking worker ownership", async () => {

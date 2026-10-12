@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/codemode";
+import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "../../src/codemode";
 
 describe("host tool catalog", () => {
   test("snapshots callback bindings and descriptive fields at creation", async () => {
@@ -13,7 +13,10 @@ describe("host tool catalog", () => {
     definition.description = "Changed description";
     definition.execute = () => ToolResult.success(2);
     expect(catalog.describe("read")?.description).toBe("Original description");
-    expect((await execute("return await tools.read();", catalog.tools)).result).toEqual({
+    expect(
+      (await new CodemodeSandbox({ tools: catalog.tools }).execute("return await tools.read();"))
+        .result,
+    ).toEqual({
       ok: true,
       value: 1,
     });
@@ -33,11 +36,10 @@ describe("host tool catalog", () => {
     expect(catalog.describe("missing")).toBeUndefined();
     expect(
       (
-        await execute(
+        await new CodemodeSandbox({ tools: catalog.tools }).execute(
           `return await Promise.all([
       tools["billing.list-invoices"](), tools.__proto__(), tools.constructor(),
     ]);`,
-          catalog.tools,
         )
       ).result,
     ).toEqual({ ok: true, value: ["billing.list-invoices", "__proto__", "constructor"] });
@@ -76,7 +78,13 @@ describe("catalog discovery through the sandbox", () => {
     const discovery = createDiscoveryTools(catalog);
     expect(
       (
-        await execute(
+        await new CodemodeSandbox({
+          tools: {
+            ...catalog.tools,
+            searchTools: discovery.searchTools,
+            describeTool: discovery.describeTool,
+          },
+        }).execute(
           `
       const matches = await tools.searchTools({ query: "customer invoices" });
       const name = matches[0].name;
@@ -86,11 +94,6 @@ describe("catalog discovery through the sandbox", () => {
         invoices: await tools[name]({ customerId: "123" }),
       };
     `,
-          {
-            ...catalog.tools,
-            searchTools: discovery.searchTools,
-            describeTool: discovery.describeTool,
-          },
         )
       ).result,
     ).toEqual({
@@ -100,9 +103,8 @@ describe("catalog discovery through the sandbox", () => {
     expect(calls).toBe(1);
     expect(
       (
-        await execute(
+        await new CodemodeSandbox({ tools: catalog.tools }).execute(
           'return await tools["billing.listInvoices"]({ customerId: 123 });',
-          catalog.tools,
         )
       ).result,
     ).toEqual({
@@ -117,9 +119,8 @@ describe("catalog discovery through the sandbox", () => {
 
     expect(
       (
-        await execute(
+        await new CodemodeSandbox({ tools: discovery }).execute(
           'try { await tools.describeTool({ name: "missing" }); } catch (error) { return error.message; }',
-          discovery,
         )
       ).result,
     ).toEqual({
@@ -127,7 +128,11 @@ describe("catalog discovery through the sandbox", () => {
       value: "Tool not found in this catalog.",
     });
     expect(
-      (await execute('return await tools.searchTools({ query: "unmatched" });', discovery)).result,
+      (
+        await new CodemodeSandbox({ tools: discovery }).execute(
+          'return await tools.searchTools({ query: "unmatched" });',
+        )
+      ).result,
     ).toEqual({ ok: true, value: [] });
   });
 
@@ -139,12 +144,13 @@ describe("catalog discovery through the sandbox", () => {
     const discovery = createDiscoveryTools(catalog);
     expect(
       (
-        await execute(
+        await new CodemodeSandbox({
+          tools: { ...catalog.tools, findTools: discovery.searchTools },
+        }).execute(
           `return {
       value: await tools.searchTools(),
       names: (await tools.findTools({ query: "application" })).map(tool => tool.name),
     };`,
-          { ...catalog.tools, findTools: discovery.searchTools },
         )
       ).result,
     ).toEqual({ ok: true, value: { value: 42, names: ["searchTools"] } });
@@ -159,10 +165,11 @@ describe("catalog discovery through the sandbox", () => {
 
         const discovery = createDiscoveryTools(catalog);
 
-        return execute(
+        return new CodemodeSandbox({
+          tools: { ...catalog.tools, searchTools: discovery.searchTools },
+        }).execute(
           `const matches = await tools.searchTools({ query: "value" });
         return await tools[matches[0].name]();`,
-          { ...catalog.tools, searchTools: discovery.searchTools },
         );
       }),
     );

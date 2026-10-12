@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, execute, ToolCatalog, ToolResult } from "../../src/codemode";
+import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "../../src/codemode";
 
 describe("total tool calls", () => {
   test("allows the default 100 calls and stops the 101st without invoking it", async () => {
     let calls = 0;
 
-    const report = await execute("for (let i = 0; i < 101; i++) await tools.read();", {
-      read: () => ToolResult.success(++calls),
-    });
+    const report = await new CodemodeSandbox({
+      tools: {
+        read: () => ToolResult.success(++calls),
+      },
+    }).execute("for (let i = 0; i < 101; i++) await tools.read();");
 
     expect(report.result).toEqual({
       ok: false,
@@ -32,13 +34,13 @@ describe("total tool calls", () => {
   test("permits a larger total limit and resets counters for the next execution", async () => {
     const tools = { read: () => ToolResult.success(42) };
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools, maxToolCalls: 101 }).execute(
       "for (let i = 0; i < 101; i++) await tools.read(); return 42;",
-      tools,
-      { maxToolCalls: 101 },
     );
 
-    const next = await execute("return await tools.read();", tools, { maxToolCalls: 1 });
+    const next = await new CodemodeSandbox({ tools, maxToolCalls: 1 }).execute(
+      "return await tools.read();",
+    );
 
     expect(report.result).toEqual({ ok: true, value: 42 });
     expect(report.calls).toHaveLength(101);
@@ -51,13 +53,12 @@ describe("total tool calls", () => {
   test("counts a shared promise once even when awaited repeatedly", async () => {
     let calls = 0;
 
-    const report = await execute(
-      "const p = tools.read(); return [await p, await p];",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: () => ToolResult.success(++calls),
       },
-      { maxToolCalls: 1 },
-    );
+      maxToolCalls: 1,
+    }).execute("const p = tools.read(); return [await p, await p];");
 
     expect(report.result).toEqual({ ok: true, value: [1, 1] });
     expect(report.calls).toHaveLength(1);
@@ -67,17 +68,16 @@ describe("total tool calls", () => {
   test("does not charge argument serialization failures before admission", async () => {
     let calls = 0;
 
-    const report = await execute(
-      "try { await tools.read(1n); } catch {} return await tools.read(42);",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: (args) => {
           calls++;
 
           return ToolResult.success(args);
         },
       },
-      { maxToolCalls: 1 },
-    );
+      maxToolCalls: 1,
+    }).execute("try { await tools.read(1n); } catch {} return await tools.read(42);");
 
     expect(report.result).toEqual({ ok: true, value: 42 });
     expect(report.calls).toHaveLength(1);
@@ -87,17 +87,17 @@ describe("total tool calls", () => {
   test("failed responses release concurrency but still consume total calls", async () => {
     let calls = 0;
 
-    const report = await execute(
-      "for (let i = 0; i < 3; i++) { try { await tools.read(); } catch {} }",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: () => {
           calls++;
 
           return ToolResult.failure("Public failure");
         },
       },
-      { maxToolCalls: 2, maxConcurrentToolCalls: 1 },
-    );
+      maxToolCalls: 2,
+      maxConcurrentToolCalls: 1,
+    }).execute("for (let i = 0; i < 3; i++) { try { await tools.read(); } catch {} }");
 
     expect(report.result).toEqual({
       ok: false,
@@ -134,14 +134,13 @@ describe("total tool calls", () => {
 
     const discovery = createDiscoveryTools(catalog);
 
-    const report = await execute(
-      'await tools.searchTools({ query: "read" }); return await tools.read();',
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         ...catalog.tools,
         ...discovery,
       },
-      { maxToolCalls: 1 },
-    );
+      maxToolCalls: 1,
+    }).execute('await tools.searchTools({ query: "read" }); return await tools.read();');
 
     expect(report.result).toMatchObject({
       ok: false,
@@ -158,9 +157,8 @@ describe("total tool calls", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     const signals: AbortSignal[] = [];
 
-    const report = await execute(
-      "await tools.done(); tools.pending(); tools.extra();",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         done: () => ToolResult.success(42),
         pending: (_args, { signal }) => {
           signals.push(signal);
@@ -171,8 +169,8 @@ describe("total tool calls", () => {
           throw new Error("Must not dispatch");
         },
       },
-      { maxToolCalls: 2 },
-    );
+      maxToolCalls: 2,
+    }).execute("await tools.done(); tools.pending(); tools.extra();");
 
     expect(report).toEqual({
       result: {
@@ -201,16 +199,15 @@ describe("concurrent tool calls", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     let calls = 0;
 
-    const report = await execute(
-      "for (let i = 0; i < 10000; i++) { try { tools.read(); } catch {} }",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: () => {
           calls++;
 
           return late.promise;
         },
       },
-    );
+    }).execute("for (let i = 0; i < 10000; i++) { try { tools.read(); } catch {} }");
 
     expect(report.result).toEqual({
       ok: false,
@@ -230,24 +227,23 @@ describe("concurrent tool calls", () => {
     ).toBe(true);
   });
 
-  test("allows exactly the configured overlap and a higher override than the default", async () => {
+  test("allows exactly the configured overlap above the built-in default", async () => {
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve(ToolResult.success()));
     let calls = 0;
 
-    const completion = execute(
-      "await Promise.all(Array.from({length: 11}, () => tools.read())); return 42;",
-      {
+    const completion = new CodemodeSandbox({
+      tools: {
         read: () => {
           if (++calls === 11) started.resolve();
 
           return release.promise;
         },
       },
-      { maxConcurrentToolCalls: 11 },
-    );
+      maxConcurrentToolCalls: 11,
+    }).execute("await Promise.all(Array.from({length: 11}, () => tools.read())); return 42;");
 
     await started.promise;
     release.resolve(ToolResult.success(7));
@@ -261,13 +257,12 @@ describe("concurrent tool calls", () => {
   test("reuses a single slot for sequential successful calls", async () => {
     let calls = 0;
 
-    const report = await execute(
-      "for (let i = 0; i < 5; i++) await tools.read(); return 42;",
-      {
+    const report = await new CodemodeSandbox({
+      tools: {
         read: () => ToolResult.success(++calls),
       },
-      { maxConcurrentToolCalls: 1 },
-    );
+      maxConcurrentToolCalls: 1,
+    }).execute("for (let i = 0; i < 5; i++) await tools.read(); return 42;");
 
     expect(report.result).toEqual({ ok: true, value: 42 });
     expect(calls).toBe(5);
@@ -287,17 +282,14 @@ describe("concurrent tool calls", () => {
       return release.promise;
     };
 
-    const first = execute(
-      "return await tools.read();",
-      { read },
-      { maxToolCalls: 1, maxConcurrentToolCalls: 1 },
-    );
+    const sandbox = new CodemodeSandbox({
+      tools: { read },
+      maxToolCalls: 1,
+      maxConcurrentToolCalls: 1,
+    });
 
-    const second = execute(
-      "return await tools.read();",
-      { read },
-      { maxToolCalls: 1, maxConcurrentToolCalls: 1 },
-    );
+    const first = sandbox.execute("return await tools.read();");
+    const second = sandbox.execute("return await tools.read();");
 
     await started.promise;
     release.resolve(ToolResult.success(42));

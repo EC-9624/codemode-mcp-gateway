@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { execute, ToolResult, type SandboxTool } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult, type SandboxTool } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 import { superviseWorker, faultWorker, toolWorker } from "../support/workers";
 
@@ -169,6 +169,9 @@ describe("worker host tools", () => {
     late.reject(new Error("Private late failure"));
     await Bun.sleep(0);
     expect(post).toHaveBeenCalledTimes(1);
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 });

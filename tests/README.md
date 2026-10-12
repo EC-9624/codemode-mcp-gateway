@@ -42,7 +42,8 @@ cannot pass solely because both paths agree.
 test("returns cancelled when the caller aborts before startup", async () => {
   const signal = AbortSignal.abort();
 
-  const report = await execute("return 42;", {}, { signal });
+  const sandbox = new CodemodeSandbox();
+  const report = await sandbox.execute("return 42;", { signal });
 
   expect(report).toEqual({
     result: {

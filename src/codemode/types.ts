@@ -39,12 +39,17 @@ export type ExecutionReport = {
   readonly calls: readonly CallOutcome[];
 };
 export type ExecuteOptions = {
+  /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
+  signal?: AbortSignal;
+};
+
+/** Fixed configuration and tool bindings, snapshotted at construction. */
+export type SandboxOptions = {
+  tools?: Readonly<Record<string, SandboxTool>>;
   /** Guest deadline after VM creation, including host waits. Defaults to 1000 ms. */
   timeoutMs?: number;
   /** Optional parent deadline through completion acceptance; worker cleanup follows. */
   totalTimeoutMs?: number;
-  /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
-  signal?: AbortSignal;
   /** QuickJS guest heap limit. Defaults to 64 MiB. */
   memoryLimitBytes?: number;
   /** QuickJS stack guard, at most 4 MiB. Defaults to 1 MiB. */
@@ -57,9 +62,4 @@ export type ExecuteOptions = {
   maxToolCalls?: number;
   /** Outstanding calls. Exceeding this limit stops execution. Defaults to 10. */
   maxConcurrentToolCalls?: number;
-};
-
-/** Defaults and tool bindings are snapshotted at construction; cancellation is per execution. */
-export type SandboxOptions = Omit<ExecuteOptions, "signal"> & {
-  tools?: Readonly<Record<string, SandboxTool>>;
 };

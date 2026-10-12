@@ -5,24 +5,17 @@ import {
   MAX_LIMIT,
   type ExecutionLimits,
 } from "./limits";
-import { type ExecuteOptions } from "../types";
+import { type SandboxOptions } from "../types";
 
-/** Validated budgets. The per-execution signal is never a default. */
+/** Fixed, validated configuration. Cancellation belongs to each execution. */
 export type ResolvedOptions = {
   readonly limits: ExecutionLimits;
   readonly totalTimeoutMs: number | undefined;
 };
 
-/**
- * Validate every budget before observing cancellation or accessing the tool registry.
- * Merging per field matters: spreading `{ ...defaults, ...options }` would let an explicit
- * undefined replace a sandbox default with the global one.
- */
-export function resolveOptions(
-  options: ExecuteOptions,
-  defaults: ResolvedOptions = { limits: DEFAULT_LIMITS, totalTimeoutMs: undefined },
-): ResolvedOptions {
-  const fallback = defaults.limits;
+/** Apply built-in defaults and validate once, before reading tool bindings. */
+export function resolveOptions(options: SandboxOptions): ResolvedOptions {
+  const fallback = DEFAULT_LIMITS;
 
   const limits = {
     timeoutMs: orDefault(options.timeoutMs, fallback.timeoutMs),
@@ -42,7 +35,7 @@ export function resolveOptions(
     throw new RangeError(`${invalid.name} must be an integer from 1 to ${invalid.maximum}.`);
   }
 
-  const totalTimeoutMs = orDefault(options.totalTimeoutMs, defaults.totalTimeoutMs);
+  const totalTimeoutMs = options.totalTimeoutMs;
   if (totalTimeoutMs !== undefined && !isPositiveInt(totalTimeoutMs)) {
     throw new RangeError(`totalTimeoutMs must be an integer from 1 to ${MAX_LIMIT}.`);
   }

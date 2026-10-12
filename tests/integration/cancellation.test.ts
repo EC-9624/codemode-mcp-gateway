@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { execute, ToolResult, type SandboxResult, type ToolContext } from "../../src/codemode";
+import {
+  CodemodeSandbox,
+  ToolResult,
+  type SandboxResult,
+  type ToolContext,
+} from "../../src/codemode";
 
 const cancelled = {
   ok: false,
@@ -8,43 +13,39 @@ const cancelled = {
 } satisfies SandboxResult;
 
 describe("caller cancellation", () => {
-  test("pre-aborted execution skips registry access and keeps the reason private", async () => {
+  test("pre-aborted execution skips tool dispatch and keeps the reason private", async () => {
     const controller = new AbortController();
     controller.abort(() => "Private cancellation reason");
     let reads = 0;
 
-    const { result } = await execute(
-      "return await tools.read();",
-      {
-        get read() {
+    const { result } = await new CodemodeSandbox({
+      tools: {
+        read: () => {
           reads++;
 
-          return () => ToolResult.success();
+          return ToolResult.success();
         },
       },
-      { signal: controller.signal },
-    );
+    }).execute("return await tools.read();", { signal: controller.signal });
 
     expect(result).toEqual(cancelled);
     expect(reads).toBe(0);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   });
 
-  test("observes cancellation from a registry getter", async () => {
+  test("observes cancellation requested during sandbox construction", async () => {
     const controller = new AbortController();
     let calls = 0;
 
-    const { result } = await execute(
-      "return await tools.read();",
-      {
+    const { result } = await new CodemodeSandbox({
+      tools: {
         get read() {
           controller.abort();
 
           return () => ToolResult.success(++calls);
         },
       },
-      { signal: controller.signal },
-    );
+    }).execute("return await tools.read();", { signal: controller.signal });
 
     expect(result).toEqual(cancelled);
     expect(calls).toBe(0);
@@ -58,9 +59,8 @@ describe("host tool cancellation", () => {
     const signals: AbortSignal[] = [];
     let stopped = 0;
 
-    const completion = execute(
-      "return await Promise.all([tools.read(), tools.read()]);",
-      {
+    const completion = new CodemodeSandbox({
+      tools: {
         read: async (_args, { signal }) => {
           signals.push(signal);
           const aborted = Promise.withResolvers<void>();
@@ -76,8 +76,9 @@ describe("host tool cancellation", () => {
           return ToolResult.failure("Stopped");
         },
       },
-      { signal: controller.signal },
-    );
+    }).execute("return await Promise.all([tools.read(), tools.read()]);", {
+      signal: controller.signal,
+    });
 
     await started.promise;
     controller.abort();
@@ -108,17 +109,16 @@ describe("host tool cancellation", () => {
       using cleanup = new DisposableStack();
       cleanup.defer(() => late.resolve(ToolResult.success()));
 
-      const { result } = await execute(
-        code,
-        {
+      const { result } = await new CodemodeSandbox({
+        tools: {
           read: (_args, context) => {
             contexts.push(context);
 
             return late.promise;
           },
         },
-        options,
-      );
+        ...options,
+      }).execute(code);
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe(kind);
@@ -137,9 +137,8 @@ describe("host tool cancellation", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const first = execute(
-      "return await tools.read();",
-      {
+    const first = new CodemodeSandbox({
+      tools: {
         read: (_args, context) => {
           contexts.push(context);
           started.resolve();
@@ -147,14 +146,12 @@ describe("host tool cancellation", () => {
           return late.promise;
         },
       },
-      { signal: controller.signal },
-    );
+    }).execute("return await tools.read();", { signal: controller.signal });
 
     await started.promise;
 
-    const second = await execute(
-      "return await tools.read();",
-      {
+    const second = await new CodemodeSandbox({
+      tools: {
         read: (_args, context) => {
           contexts.push(context);
           controller.abort();
@@ -162,8 +159,7 @@ describe("host tool cancellation", () => {
           return ToolResult.success(42);
         },
       },
-      { signal: survivor.signal },
-    );
+    }).execute("return await tools.read();", { signal: survivor.signal });
 
     survivor.abort();
 
@@ -181,13 +177,15 @@ describe("host tool cancellation", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const failed = await execute('tools.wait(); throw new Error("Script failed");', {
-      wait: () => late.promise,
-    });
+    const failed = await new CodemodeSandbox({
+      tools: {
+        wait: () => late.promise,
+      },
+    }).execute('tools.wait(); throw new Error("Script failed");');
 
     late.resolve(ToolResult.success(3));
     await Bun.sleep(0);
-    const recovered = await execute("return 3;");
+    const recovered = await new CodemodeSandbox().execute("return 3;");
 
     expect(failed.result).toEqual({
       ok: false,

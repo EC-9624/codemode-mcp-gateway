@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execute, ToolResult, type ExecuteOptions } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult, type SandboxOptions } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 import { rejectionOf } from "../support/rejection";
 
@@ -33,29 +33,27 @@ const invalidOptions = [
   { name: "maxStackSizeBytes", maximum: 4194304, label: "2 ** 31", value: 2 ** 31 },
 ];
 
-describe("execution option validation", () => {
+describe("sandbox configuration validation", () => {
   test.each(invalidOptions)(
-    "rejects $label $name before registry access even when cancelled",
+    "rejects $label $name during construction before registry access",
     async ({ name, maximum, value }) => {
       let reads = 0;
-      const options: ExecuteOptions = { signal: AbortSignal.abort() };
+
+      const options: SandboxOptions = {
+        tools: {
+          get read() {
+            reads++;
+
+            return () => ToolResult.success();
+          },
+        },
+      };
+
       // Strict TypeScript rejects null here; JavaScript callers can still send it.
       Object.assign(options, { [name]: value });
 
       const failure = (
-        await rejectionOf(
-          execute(
-            "return 42;",
-            {
-              get read() {
-                reads++;
-
-                return () => ToolResult.success();
-              },
-            },
-            options,
-          ),
-        )
+        await rejectionOf(Promise.resolve().then(() => new CodemodeSandbox(options)))
       ).reason;
 
       expect(failure).toBeInstanceOf(RangeError);
@@ -69,19 +67,22 @@ describe("execution option validation", () => {
 });
 
 describe("source admission", () => {
-  test("accepts exactly the default 256 KiB and rejects one byte more before registry access", async () => {
+  test("accepts exactly the default 256 KiB and rejects one byte more before tool dispatch", async () => {
     const code = "return 42;".padEnd(256 * 1024, " ");
     let reads = 0;
 
-    const accepted = await execute(code);
+    const sandbox = new CodemodeSandbox({
+      tools: {
+        read: () => {
+          reads++;
 
-    const rejected = await execute(code + " ", {
-      get read() {
-        reads++;
-
-        return () => ToolResult.success();
+          return ToolResult.success();
+        },
       },
     });
+
+    const accepted = await sandbox.execute(code);
+    const rejected = await sandbox.execute(code + " ");
 
     expect(accepted).toEqual({ result: { ok: true, value: 42 }, calls: [] });
     expect(rejected).toEqual({
@@ -104,8 +105,8 @@ describe("source admission", () => {
     ["accent", 'return "é";', 12, "é"],
     ["emoji", 'return "😀";', 14, "😀"],
   ] as const)("measures %s source in UTF-8 bytes", async (_name, code, bytes, value) => {
-    const accepted = await execute(code, {}, { maxSourceBytes: bytes });
-    const rejected = await execute(code, {}, { maxSourceBytes: bytes - 1 });
+    const accepted = await new CodemodeSandbox({ maxSourceBytes: bytes }).execute(code);
+    const rejected = await new CodemodeSandbox({ maxSourceBytes: bytes - 1 }).execute(code);
 
     expect(accepted).toEqual({ result: { ok: true, value }, calls: [] });
     expect(rejected).toEqual({
@@ -125,17 +126,15 @@ describe("source admission", () => {
   test("allows increasing the source limit without configuring VM limits", async () => {
     const code = "return 42;".padEnd(256 * 1024 + 1, " ");
 
-    const report = await execute(code, {}, { maxSourceBytes: 512 * 1024 });
+    const report = await new CodemodeSandbox({ maxSourceBytes: 512 * 1024 }).execute(code);
 
     expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
   });
 
   test("honors pre-aborted cancellation before source admission", async () => {
-    const report = await execute(
-      "return 42;",
-      {},
-      { maxSourceBytes: 1, signal: AbortSignal.abort() },
-    );
+    const report = await new CodemodeSandbox({ maxSourceBytes: 1 }).execute("return 42;", {
+      signal: AbortSignal.abort(),
+    });
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
@@ -144,8 +143,8 @@ describe("source admission", () => {
   });
 
   test("rejects oversized invalid syntax before parsing and permits the next execution", async () => {
-    const rejected = await execute("return (;", {}, { maxSourceBytes: 1 });
-    const recovered = await execute("return 42;");
+    const rejected = await new CodemodeSandbox({ maxSourceBytes: 1 }).execute("return (;");
+    const recovered = await new CodemodeSandbox().execute("return 42;");
 
     expect(rejected.result).toMatchObject({
       ok: false,
@@ -158,7 +157,9 @@ describe("source admission", () => {
 
 describe("worker VM limits", () => {
   test("executes at the maximum supported stack limit", async () => {
-    const report = await execute("return 42;", {}, { maxStackSizeBytes: 4 * 1024 * 1024 });
+    const report = await new CodemodeSandbox({ maxStackSizeBytes: 4 * 1024 * 1024 }).execute(
+      "return 42;",
+    );
 
     expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
   });
@@ -169,7 +170,7 @@ describe("worker VM limits", () => {
   ] as const)(
     "rejects prelude setup failure under a tiny %s limit and recovers",
     async (_name, options) => {
-      const failure = await executionErrorOf(execute("return 42;", {}, options));
+      const failure = await executionErrorOf(new CodemodeSandbox(options).execute("return 42;"));
 
       expect(failure.calls).toEqual([]);
       expect(failure.cause).toBeInstanceOf(Error);
@@ -179,16 +180,23 @@ describe("worker VM limits", () => {
         );
       }
 
-      expect(await execute("return 42;")).toEqual({ result: { ok: true, value: 42 }, calls: [] });
+      expect(await new CodemodeSandbox().execute("return 42;")).toEqual({
+        result: { ok: true, value: 42 },
+        calls: [],
+      });
     },
   );
 
-  test("applies a memory override and isolates it from subsequent executions", async () => {
+  test("isolates memory limits between sandbox instances", async () => {
     const code = "return new ArrayBuffer(2 * 1024 * 1024).byteLength;";
 
-    const limited = await execute(code, {}, { memoryLimitBytes: 1024 * 1024 });
-    const increased = await execute(code, {}, { memoryLimitBytes: 4 * 1024 * 1024 });
-    const defaults = await execute(code);
+    const limited = await new CodemodeSandbox({ memoryLimitBytes: 1024 * 1024 }).execute(code);
+
+    const increased = await new CodemodeSandbox({ memoryLimitBytes: 4 * 1024 * 1024 }).execute(
+      code,
+    );
+
+    const defaults = await new CodemodeSandbox().execute(code);
 
     expect(limited.result).toMatchObject({
       ok: false,
@@ -201,7 +209,7 @@ describe("worker VM limits", () => {
     expect(defaults).toEqual({ result: { ok: true, value: 2097152 }, calls: [] });
   });
 
-  test("applies a stack override while preserving catchable guest recursion errors", async () => {
+  test("applies configured stack limits while preserving catchable guest recursion errors", async () => {
     const code = `
       let depth = 0;
       function recurse() { depth++; recurse(); }
@@ -211,8 +219,8 @@ describe("worker VM limits", () => {
       return depth;
     `;
 
-    const lower = await execute(code, {}, { maxStackSizeBytes: 64 * 1024 });
-    const higher = await execute(code, {}, { maxStackSizeBytes: 256 * 1024 });
+    const lower = await new CodemodeSandbox({ maxStackSizeBytes: 64 * 1024 }).execute(code);
+    const higher = await new CodemodeSandbox({ maxStackSizeBytes: 256 * 1024 }).execute(code);
 
     expect(lower.result.ok).toBe(true);
     expect(higher.result.ok).toBe(true);
@@ -224,6 +232,9 @@ describe("worker VM limits", () => {
 
     expect(lower.result.value).toBeGreaterThan(0);
     expect(higher.result.value).toBeGreaterThan(lower.result.value);
-    expect((await execute("return 42;")).result).toEqual({ ok: true, value: 42 });
+    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      ok: true,
+      value: 42,
+    });
   });
 });

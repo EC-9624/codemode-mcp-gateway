@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   createDiscoveryTools,
   defineTool,
-  execute,
+  CodemodeSandbox,
   ToolCatalog,
   ToolResult,
 } from "../../src/codemode";
@@ -24,13 +24,12 @@ describe("validated native tools", () => {
       }),
     });
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
       `
       let message;
       try { await tools.read({ id: "1" }); } catch (error) { message = error.message; }
       return { message, value: await tools.read({ id: 1 }) };
     `,
-      catalog.tools,
     );
 
     expect(received).toEqual([{ id: 1 }]);
@@ -64,10 +63,8 @@ describe("validated native tools", () => {
       }),
     });
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools, maxToolCalls: 1 }).execute(
       'try { await tools.read("wrong"); } catch {} return await tools.read(1);',
-      catalog.tools,
-      { maxToolCalls: 1 },
     );
 
     expect(calls).toBe(0);
@@ -123,7 +120,7 @@ describe("validated native tools", () => {
       }),
     });
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
       `
       const plain = await tools.plain();
       const unrestricted = await tools.unrestricted();
@@ -132,7 +129,6 @@ describe("validated native tools", () => {
       try { await tools.forbidden({}); } catch (error) { failures.push(error.message); }
       return { plain, unrestricted, failures };
     `,
-      catalog.tools,
     );
 
     expect(received).toEqual([undefined, undefined]);
@@ -159,12 +155,13 @@ describe("validated native tools", () => {
       }),
     });
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({
+      tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
+    }).execute(
       `
       const description = await tools.describeTool({ name: "read" });
       return { type: description.inputSchema.type, value: await tools.read("2") };
     `,
-      { ...catalog.tools, ...createDiscoveryTools(catalog) },
     );
 
     expect(report.result).toEqual({ ok: true, value: { type: "string", value: 3 } });
@@ -196,7 +193,9 @@ describe("validated native tools", () => {
 
     const controller = new AbortController();
 
-    const completion = execute('return await tools.read("hello");', catalog.tools, {
+    const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+
+    const completion = sandbox.execute('return await tools.read("hello");', {
       signal: controller.signal,
     });
 
@@ -211,7 +210,7 @@ describe("validated native tools", () => {
     expect(report.calls).toEqual([
       { callId: 1, name: "read", status: "interrupted", reason: "cancelled" },
     ]);
-    expect((await execute('return await tools.read("ok");', catalog.tools)).result).toEqual({
+    expect((await sandbox.execute('return await tools.read("ok");')).result).toEqual({
       ok: true,
       value: 2,
     });

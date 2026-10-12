@@ -6,7 +6,7 @@ import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { createMcpServer } from "../../examples/mcp-tools";
-import { createDiscoveryTools, execute } from "../../src/codemode";
+import { createDiscoveryTools, CodemodeSandbox } from "../../src/codemode";
 import { createMcpCatalog } from "../../src/mcp";
 import { connectMcp, toolServer } from "../support/mcp";
 import { rejectionOf } from "../support/rejection";
@@ -17,14 +17,13 @@ describe("MCP sandbox integration", () => {
     const catalog = await createMcpCatalog(upstream.client);
     const discovery = createDiscoveryTools(catalog);
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: { ...catalog.tools, ...discovery } }).execute(
       `
       const matches = await tools.searchTools({ query: "Add numbers" });
       const tool = await tools.describeTool({ name: matches[0].name });
       const response = await tools[tool.name]({ a: 2, b: 3 });
       return response.structuredContent.sum;
     `,
-      { ...catalog.tools, ...discovery },
     );
 
     expect(report.result).toEqual({ ok: true, value: 5 });
@@ -50,13 +49,11 @@ describe("MCP sandbox integration", () => {
     await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools, maxOutputBytes: 4 }).execute(
       `
       const response = await tools.dataset({ count: 3000 });
       return response.structuredContent.records.filter(row => row.id % 2 === 0).length;
     `,
-      catalog.tools,
-      { maxOutputBytes: 4 },
     );
 
     expect(report.result).toEqual({ ok: true, value: 1500 });
@@ -81,13 +78,12 @@ describe("MCP sandbox integration", () => {
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
       `
       const explicit = await tools.fail();
       const invalid = await tools.add({ a: "wrong", b: 3 });
       return { explicit, invalid: invalid.isError, message: invalid.content[0].text };
     `,
-      catalog.tools,
     );
 
     expect(report.result).toMatchObject({
@@ -106,13 +102,12 @@ describe("MCP sandbox integration", () => {
     await using connection = await connectMcp(createMcpServer());
     const catalog = await createMcpCatalog(connection.client);
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
       `
       let message;
       try { await tools.add(null); } catch (error) { message = error.message; }
       return { message, sum: (await tools.add({ a: 1, b: 2 })).structuredContent.sum };
     `,
-      catalog.tools,
     );
 
     expect(report.result).toEqual({
@@ -149,13 +144,12 @@ describe("MCP sandbox integration", () => {
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
 
-    const report = await execute(
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
       `
       let message;
       try { await tools.read({ id: "1" }); } catch (error) { message = error.message; }
       return { message, response: await tools.read({ id: 1 }) };
     `,
-      catalog.tools,
     );
 
     expect(received).toEqual([{ id: 1 }]);
@@ -203,9 +197,8 @@ describe("MCP sandbox integration", () => {
     cleanup.defer(() => release.resolve());
     const catalog = await createMcpCatalog(connection.client);
 
-    const completion = execute(
+    const completion = new CodemodeSandbox({ tools: catalog.tools }).execute(
       "return await Promise.all([tools.read({ id: 1 }), tools.read({ id: 2 })]);",
-      catalog.tools,
     );
 
     await Promise.all([first.promise, second.promise]);
@@ -241,11 +234,11 @@ describe("MCP sandbox integration", () => {
     const catalog = await createMcpCatalog(upstream.client);
     const controller = new AbortController();
 
-    const completion = execute(
+    const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 2000 });
+
+    const completion = sandbox.execute(
       "await tools.add({ a: 1, b: 2 }); return await tools.pending();",
-      catalog.tools,
       {
-        timeoutMs: 2000,
         signal: controller.signal,
       },
     );
@@ -265,12 +258,8 @@ describe("MCP sandbox integration", () => {
       reason: "cancelled",
     });
     expect(
-      (
-        await execute(
-          "return (await tools.add({ a: 4, b: 5 })).structuredContent.sum;",
-          catalog.tools,
-        )
-      ).result,
+      (await sandbox.execute("return (await tools.add({ a: 4, b: 5 })).structuredContent.sum;"))
+        .result,
     ).toEqual({ ok: true, value: 9 });
   });
 
@@ -278,9 +267,8 @@ describe("MCP sandbox integration", () => {
     await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
 
-    const report = await execute("return await tools.pending();", catalog.tools, {
-      timeoutMs: 200,
-    });
+    const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 200 });
+    const report = await sandbox.execute("return await tools.pending();");
 
     await upstream.waitFor("request-started");
     await upstream.waitFor("request-cancelled");
@@ -290,9 +278,8 @@ describe("MCP sandbox integration", () => {
       { callId: 1, name: "pending", status: "interrupted", reason: "timeout" },
     ]);
 
-    const recovery = await execute(
+    const recovery = await sandbox.execute(
       "return (await tools.add({ a: 4, b: 5 })).structuredContent.sum;",
-      catalog.tools,
     );
 
     expect(recovery.result).toEqual({ ok: true, value: 9 });
@@ -317,9 +304,12 @@ describe("MCP sandbox integration", () => {
     const catalog = await createMcpCatalog(connection.client);
     const controller = new AbortController();
 
-    const completion = execute("return await tools.wait();", catalog.tools, {
-      signal: controller.signal,
-    });
+    const completion = new CodemodeSandbox({ tools: catalog.tools }).execute(
+      "return await tools.wait();",
+      {
+        signal: controller.signal,
+      },
+    );
 
     await started.promise;
     controller.abort();
@@ -343,7 +333,10 @@ describe("MCP sandbox integration", () => {
 
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
-    const report = await execute("return await tools.read();", catalog.tools);
+
+    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
+      "return await tools.read();",
+    );
 
     expect(report).toEqual({
       result: { ok: false, error: { kind: "script", message: "Host tool failed." } },
@@ -361,7 +354,11 @@ describe("MCP sandbox integration", () => {
   test("reports a dropped connection as a generic tool failure", async () => {
     await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
-    const completion = execute("return await tools.pending();", catalog.tools);
+
+    const completion = new CodemodeSandbox({ tools: catalog.tools }).execute(
+      "return await tools.pending();",
+    );
+
     await upstream.waitFor("request-started");
     const pid = upstream.transport.pid;
     if (pid === null) throw new Error("Missing child PID");

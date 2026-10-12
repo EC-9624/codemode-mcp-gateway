@@ -1,4 +1,4 @@
-import { execute, ToolResult } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult } from "../../src/codemode";
 import {
   faultWorker,
   interruptFlag,
@@ -37,9 +37,8 @@ const timer = setInterval(() => ticks++, 10);
 let startedTicks = 0;
 let called = false;
 try {
-  const { result } = await execute(
-    "tools.started(); while (true) {}",
-    {
+  const { result } = await new CodemodeSandbox({
+    tools: {
       started: () => {
         called = true;
         startedTicks = ticks;
@@ -47,8 +46,9 @@ try {
         return ToolResult.success();
       },
     },
-    { timeoutMs: 10000, totalTimeoutMs: 500 },
-  );
+    timeoutMs: 10000,
+    totalTimeoutMs: 500,
+  }).execute("tools.started(); while (true) {}");
 
   console.log(
     JSON.stringify({
@@ -82,5 +82,7 @@ console.log(
 
 // An uncleared parent timer would keep this child alive after successful completion.
 console.log(
-  JSON.stringify((await execute("return 42;", {}, { totalTimeoutMs: 2 ** 31 - 1 })).result),
+  JSON.stringify(
+    (await new CodemodeSandbox({ totalTimeoutMs: 2 ** 31 - 1 }).execute("return 42;")).result,
+  ),
 );

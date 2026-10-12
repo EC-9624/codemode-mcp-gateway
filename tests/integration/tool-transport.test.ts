@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isMainThread } from "node:worker_threads";
-import { execute, ToolResult } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult } from "../../src/codemode";
 
 describe("host tool transport", () => {
   test("transfers only the public message from explicit failure envelopes", async () => {
@@ -11,9 +11,11 @@ describe("host tool transport", () => {
     } as const;
 
     const result = (
-      await execute("try { await tools.read(); } catch (error) { return error.message; }", {
-        read: () => failure,
-      })
+      await new CodemodeSandbox({
+        tools: {
+          read: () => failure,
+        },
+      }).execute("try { await tools.read(); } catch (error) { return error.message; }")
     ).result;
 
     expect(result).toEqual({ ok: true, value: "Public failure" });
@@ -23,16 +25,18 @@ describe("host tool transport", () => {
     let conversions = 0;
 
     const result = (
-      await execute("return await tools.read();", {
-        read: () =>
-          ToolResult.success({
-            toJSON() {
-              conversions += 1;
+      await new CodemodeSandbox({
+        tools: {
+          read: () =>
+            ToolResult.success({
+              toJSON() {
+                conversions += 1;
 
-              return { mainThread: isMainThread, omitted: undefined, values: [undefined, NaN] };
-            },
-          }),
-      })
+                return { mainThread: isMainThread, omitted: undefined, values: [undefined, NaN] };
+              },
+            }),
+        },
+      }).execute("return await tools.read();")
     ).result;
 
     expect(result).toEqual({ ok: true, value: { mainThread: true, values: [null, null] } });
@@ -48,9 +52,8 @@ describe("host tool transport", () => {
     );
 
     const result = (
-      await execute(
+      await new CodemodeSandbox({ tools }).execute(
         "return await Promise.all([tools.__proto__(), tools.constructor(), tools.toString()]);",
-        tools,
       )
     ).result;
 
@@ -60,7 +63,7 @@ describe("host tool transport", () => {
   test("snapshots the supplied registry before worker startup", async () => {
     const tools = { read: () => ToolResult.success(1) };
 
-    const completion = execute("return await tools.read();", tools);
+    const completion = new CodemodeSandbox({ tools }).execute("return await tools.read();");
     tools.read = () => ToolResult.success(2);
 
     expect((await completion).result).toEqual({ ok: true, value: 1 });

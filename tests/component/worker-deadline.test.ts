@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { execute, ToolResult, type SandboxResult } from "../../src/codemode";
+import { CodemodeSandbox, ToolResult, type SandboxResult } from "../../src/codemode";
 import { executionErrorOf } from "../support/execution-error";
 import {
   faultWorker,
@@ -21,7 +21,9 @@ describe("parent deadline", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
 
-    expect((await execute("return 42;", {}, { totalTimeoutMs: 2000 })).result).toEqual({
+    expect(
+      (await new CodemodeSandbox({ totalTimeoutMs: 2000 }).execute("return 42;")).result,
+    ).toEqual({
       ok: true,
       value: 42,
     });
