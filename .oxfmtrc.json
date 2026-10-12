@@ -9,5 +9,5 @@
   "arrowParens": "always",
   "endOfLine": "lf",
   "proseWrap": "preserve",
-  "ignorePatterns": ["node_modules/**", "coverage/**"]
+  "ignorePatterns": ["**/node_modules/**", "coverage/**", "**/dist/**"]
 }

@@ -3,24 +3,61 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "mcm",
-      "dependencies": {
+      "name": "codemode-mcp-gateway-workspace",
+      "devDependencies": {
+        "@cmg/codemode": "workspace:*",
+        "@cmg/mcp": "workspace:*",
         "@modelcontextprotocol/client": "2.3.1",
         "@modelcontextprotocol/server": "2.3.1",
         "@standard-schema/spec": "1.1.0",
+        "@stylistic/eslint-plugin": "5.10.0",
+        "@types/bun": "1.4.2",
         "acorn": "8.19.0",
         "ajv": "8.18.0",
         "ajv-formats": "3.0.1",
-        "quickjs-emscripten": "0.32.0",
-        "zod": "4.3.6",
-      },
-      "devDependencies": {
-        "@stylistic/eslint-plugin": "5.10.0",
-        "@types/bun": "1.4.2",
+        "codemode-mcp-gateway": "workspace:*",
         "oxfmt": "0.72.0",
         "oxlint": "1.87.0",
         "oxlint-tsgolint": "7.0.2003",
+        "quickjs-emscripten": "0.32.0",
         "typescript": "7.0.2",
+        "zod": "4.3.6",
+      },
+    },
+    "packages/codemode": {
+      "name": "@cmg/codemode",
+      "version": "0.0.0",
+      "dependencies": {
+        "@standard-schema/spec": "1.1.0",
+        "acorn": "8.19.0",
+        "quickjs-emscripten": "0.32.0",
+      },
+    },
+    "packages/gateway": {
+      "name": "codemode-mcp-gateway",
+      "version": "0.0.0",
+      "bin": {
+        "cmg": "./dist/cli.js",
+      },
+      "dependencies": {
+        "@cmg/codemode": "workspace:*",
+        "@cmg/mcp": "workspace:*",
+        "@modelcontextprotocol/client": "2.3.1",
+        "@modelcontextprotocol/server": "2.3.1",
+        "zod": "4.3.6",
+      },
+    },
+    "packages/mcp": {
+      "name": "@cmg/mcp",
+      "version": "0.0.0",
+      "dependencies": {
+        "@cmg/codemode": "workspace:*",
+        "@modelcontextprotocol/client": "2.3.1",
+        "@modelcontextprotocol/server": "2.3.1",
+        "@standard-schema/spec": "1.1.0",
+        "ajv": "8.18.0",
+        "ajv-formats": "3.0.1",
+        "zod": "4.3.6",
       },
     },
   },
@@ -28,6 +65,10 @@
     "@cacheable/memory": ["@cacheable/memory@2.2.0", "", { "dependencies": { "@cacheable/utils": "^2.5.0", "@keyv/bigmap": "^1.3.1", "hookified": "^1.15.1", "keyv": "^5.6.0" } }, "sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ=="],
 
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
+
+    "@cmg/codemode": ["@cmg/codemode@workspace:packages/codemode"],
+
+    "@cmg/mcp": ["@cmg/mcp@workspace:packages/mcp"],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.10.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg=="],
 
@@ -232,6 +273,8 @@
     "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
 
     "cacheable": ["cacheable@2.5.0", "", { "dependencies": { "@cacheable/memory": "^2.2.0", "@cacheable/utils": "^2.5.0", "hookified": "^1.15.0", "keyv": "^5.6.0", "qified": "^0.10.1" } }, "sha512-60cyAOytib/OzBw1JNSoSV/boK1AtHryDIjvVBk7XbN4ugfkM3+Sry7fEjNgPMGgOjuaZPAp8ruZ0Cxafwyq9g=="],
+
+    "codemode-mcp-gateway": ["codemode-mcp-gateway@workspace:packages/gateway"],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
 

@@ -5,7 +5,7 @@ import {
   defineTool,
   ToolCatalog,
   ToolResult,
-} from "../src/codemode";
+} from "@cmg/codemode";
 
 const basic = new CodemodeSandbox({
   tools: {

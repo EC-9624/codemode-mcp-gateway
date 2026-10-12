@@ -2,13 +2,14 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
-const client = new Client({ name: "mcm-agent-example", version: "0.0.0" });
+const client = new Client({ name: "cmg-agent-example", version: "0.0.0" });
 
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [
-    fileURLToPath(new URL("../src/server.ts", import.meta.url)),
-    fileURLToPath(new URL("./mcm.json", import.meta.url)),
+    "--conditions=development",
+    fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
+    fileURLToPath(new URL("./cmg.json", import.meta.url)),
   ],
 });
 

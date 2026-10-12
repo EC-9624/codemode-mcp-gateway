@@ -1,4 +1,4 @@
-# MCM
+# codemode-mcp-gateway
 
 A code-mode sandbox built from first principles in explainable slices toward
 production readiness. Pi and Executor are design references, not runtime
@@ -24,10 +24,17 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use strict TypeScript. Classes own sandbox configuration and per-execution
   lifetimes; use plain functions for supporting logic. Do not introduce Effect.
-- Organize domains under `src/codemode/` and `src/mcp/`, each with an `index.ts`
-  public entry point and its own types. Codemode runtime details stay internal to
-  `src/codemode/runtime/`. MCP imports only codemode's public API; codemode never
-  imports MCP or its SDK. Applications compose the two modules.
+- Organize reusable packages under `packages/codemode/` and `packages/mcp/`, each
+  with a `src/index.ts` public entry point, its own types, and a package README.
+  Codemode runtime details stay internal to `packages/codemode/src/runtime/`.
+  MCP imports only codemode's public API; codemode never imports MCP or its SDK.
+  `packages/gateway/` owns composition, engine selection, configuration, and transports,
+  with a programmatic `src/index.ts` and a thin `src/cli.ts` exposing `cmg`.
+  Importing the programmatic entry must not start the CLI or install process listeners.
+  The MCP server borrows an executor rather than constructing a concrete sandbox.
+- Published package imports use the export map; runtime deep imports are unsupported.
+  Internal relative imports use explicit `.js` paths for compiled ESM. Repository
+  source runs use the `development` export condition; packed consumers use `dist/`.
 - Keep logic together unless extraction improves composition, reuse, or clarity.
 - Do not extract single-use helpers preemptively.
 - Extract helpers when they name a real domain concept, isolate a complex
@@ -157,9 +164,14 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use `bun:test`.
 - Test actual implementation and observable semantics.
-- Organize tests by boundary: `tests/unit/` for isolated logic, `tests/component/`
+- Prefer public contract tests with explicit expected results. Give each behavior
+  one primary owner; additional boundary tests must cover a distinct failure risk.
+  Test shared validation rules once, then verify boundary wiring and field-specific limits.
+- Each package owns its tests, helpers, and fixtures. Organize them by boundary:
+  `tests/unit/` for isolated logic, `tests/component/`
   for focused subsystem/ownership tests, and `tests/integration/` for public
-  execution and process lifecycle. See `tests/README.md` for placement and examples.
+  execution and process lifecycle. See `docs/testing.md` for placement and examples.
+  Tests may use another package's public API, never its internals or test files.
 - Keep one behavior per test, with visible setup, action, and assertions. Use named
   table cases for data variations; separate scenarios with different event sequences.
 - Share mechanical setup in `tests/support/`; keep scenario inputs, ordering, and
@@ -181,9 +193,12 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 - Avoid modifying host globals unless there is no practical alternative.
 - Guest-global mutation tests are legitimate sandbox boundary tests.
 - Cover disposal, recovery, late completion, and private-error handling.
-- Preserve tests for supported behavior.
+- Preserve coverage of supported behavior when consolidating tests. Remove a
+  redundant case only when a named surviving test protects the same contract.
 - Do not weaken or remove a correct test to make checks pass.
-- Run tests from this package directory; the repository root is its package root.
+- Run package-local suites with `bun run --cwd packages/<package> test` or `check`.
+  Root commands coordinate package checks; there is no root test suite. `bun run check`
+  also verifies built tarballs in isolated consumers; do not substitute source-only checks.
 
 ## Formatting, Linting, and Checks
 

@@ -1,7 +1,7 @@
 # Sandbox reference
 
 Detailed API behavior, execution contracts, and resource ownership. Start with the
-[README](../README.md) for setup and a minimal example. Run commands from the package root.
+[README](../README.md) for setup and a minimal example. Run commands from the workspace root.
 
 - [Usage](#usage)
 - [Resource limits](#resource-limits), [output limits](#final-output-limit), and [tool-call limits](#tool-call-limits)
@@ -14,9 +14,10 @@ Detailed API behavior, execution contracts, and resource ownership. Start with t
 
 ## Usage
 
-`src/codemode/index.ts` exports the sandbox API and its public types.
-`src/mcp/index.ts` exports MCP discovery, adaptation, and the execute-only server. Examples below use paths
-relative to the project root.
+`@cmg/codemode` exports the standalone sandbox API and its public types.
+`@cmg/mcp` exports MCP discovery, adaptation, and the executor-backed server.
+`codemode-mcp-gateway` exports programmatic composition and provides the `cmg` executable.
+Package READMEs document responsibilities and usage; examples below use public package imports.
 
 `new CodemodeSandbox({ tools, ...configuration })` validates limits and snapshots tool
 bindings synchronously, before any worker starts. Constructor registry failures
@@ -34,7 +35,7 @@ The standalone `execute(code, tools, options)` export has been removed; move too
 and limits into the constructor and call the instance method.
 
 ```ts
-import { CodemodeSandbox, ToolResult } from "./src/codemode";
+import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
 
 const sandbox = new CodemodeSandbox({
   tools: { answer: () => ToolResult.success(42) },
@@ -93,7 +94,7 @@ const sandbox = new CodemodeSandbox({ tools, memoryLimitBytes: 128 * 1024 * 1024
 await sandbox.execute(code);
 ```
 
-Defaults are listed in the [README configuration table](../README.md#sandbox-configuration).
+Defaults are listed in the [codemode configuration table](../packages/codemode/README.md#limits-and-boundaries).
 Omitted (`undefined`) constructor fields use the built-in default; `null` is invalid.
 Each value must be a positive integer.
 Memory, source, and output limits allow up to 2147483647 bytes; the stack limit allows up to
@@ -335,7 +336,7 @@ cancellation followed by a termination failure rejects with `SandboxExecutionErr
 but pending calls keep `reason: "cancelled"`. Completed responses remain completed.
 
 ```ts
-import { CodemodeSandbox, SandboxExecutionError } from "./src/codemode";
+import { CodemodeSandbox, SandboxExecutionError } from "@cmg/codemode";
 
 try {
   const sandbox = new CodemodeSandbox();
@@ -394,7 +395,7 @@ metadata and the callback owns validation. Discovery schema objects should be
 treated as read-only.
 
 ```ts
-import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "./src/codemode";
+import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
 
 const catalog = ToolCatalog.create({
   answer: {
@@ -449,7 +450,7 @@ schema's inferred **output** type, including intentional transformations:
 
 ```ts
 import { z } from "zod";
-import { defineTool, CodemodeSandbox, ToolCatalog, ToolResult } from "./src/codemode";
+import { defineTool, CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
 
 const catalog = ToolCatalog.create({
   length: defineTool({
@@ -479,7 +480,7 @@ Validation uses `~standard.validate`; discovery uses
 `~standard.jsonSchema.input({ target: "draft-2020-12" })`. Standard Schema alone
 does not guarantee JSON export. Export failures reject definition setup on the
 host. Native refinements may enforce rules richer than the exported description.
-MCM never compiles native schema objects with Ajv or clones their executable methods.
+CMG never compiles native schema objects with Ajv or clones their executable methods.
 Treat the supplied schema as immutable after definition.
 
 Both synchronous and asynchronous validators are supported. The schema determines
@@ -487,7 +488,7 @@ coercion, defaults, refinements, and transformations; the implementation receive
 the validated output. Native omitted arguments arrive at the schema as `undefined`.
 One reported issue becomes a catchable failure such as
 `Invalid arguments: /id: Expected a number.`. Standard issue paths are rendered
-as JSON Pointers, including escaped object keys. MCM does not append the arguments;
+as JSON Pointers, including escaped object keys. CMG does not append the arguments;
 custom validators own the content of their public issue messages.
 
 Locally rejected calls consume the existing call budget and are retained as
@@ -500,7 +501,7 @@ Synchronous validator work runs on the host thread and cannot be preempted.
 
 Dependency note: Zod 4.3.6's Standard adapter first attempts synchronous parsing.
 A throwing async transform can leave a rejected promise from that probe outside
-the returned validation promise. MCM can handle returned promises, not promises a
+the returned validation promise. CMG can handle returned promises, not promises a
 validator discards; use reported validation issues for expected failures and keep
 schema validation free of side effects.
 
@@ -512,8 +513,8 @@ protocol negotiation, and closing the client. The adapter borrows it on both
 success and failure; cancelling one execution does not close the shared client.
 
 ```ts
-import { CodemodeSandbox } from "./src/codemode";
-import { createMcpCatalog } from "./src/mcp";
+import { CodemodeSandbox } from "@cmg/codemode";
+import { createMcpCatalog } from "@cmg/mcp";
 
 // client is an application-owned, connected @modelcontextprotocol/client Client.
 const catalog = await createMcpCatalog(client);
@@ -626,7 +627,7 @@ deadlines do not cover the preceding connect/list phase. Discovery's signal is
 not captured by invocation callbacks. Each invocation instead forwards the
 execution's `ToolContext.signal`; server handlers must cooperate with cancellation.
 Late completions cannot change the closed execution report. The SDK's own request
-timeout can also end an individual call before MCM's execution deadline.
+timeout can also end an individual call before CMG's execution deadline.
 Discovery checks its overall deadline again after synchronous schema compilation;
 it rejects an over-budget result but cannot interrupt compilation mid-operation.
 
@@ -641,23 +642,30 @@ The adapter adds no retries. SDK protocol flows may issue multiple wire requests
 per invocation; execution call budgets count host-tool invocations, not wire
 attempts. Catalog refresh is explicit, and client reuse, authentication, and
 interactive request handlers remain application-owned. Tool payloads and retained
-response bytes still have no MCM-specific cap; SDK transport limits also apply.
+response bytes still have no CMG-specific cap; SDK transport limits also apply.
 
 ## Agent-facing MCP server
 
-`createCodemodeServer({ catalog, sandbox? })` returns an SDK `McpServer` exposing
-exactly one tool, `execute`. It constructs a fixed-policy `CodemodeSandbox` from
-the catalog's tools plus `searchTools` and `describeTool`. `sandbox` accepts the
-constructor limits, with the same library defaults, and excludes tool bindings.
-An upstream name matching either helper rejects construction instead of being overwritten.
+`createCodemodeServer({ execute, description? })` returns an SDK `McpServer` exposing
+exactly one tool, `execute`. It borrows an application-supplied execution callback
+and does not construct a sandbox or inject discovery. The callback receives code
+and `{ signal }`, returns `Promise<ExecutionReport>`, and must settle only after
+owned execution cleanup. Synchronous callback exceptions use the same private
+infrastructure rejection path as asynchronous failures. An optional description
+documents the supplied environment; the default makes no engine-specific claims.
 
 ```ts
-import { createCodemodeServer, createMcpCatalog } from "./src/mcp";
+import { CodemodeSandbox } from "@cmg/codemode";
+import { createCodemodeServer, createMcpCatalog } from "@cmg/mcp";
 
 const catalog = await createMcpCatalog(client);
+const sandbox = new CodemodeSandbox({
+  tools: catalog.tools,
+  timeoutMs: 5_000,
+  totalTimeoutMs: 10_000,
+});
 const server = createCodemodeServer({
-  catalog,
-  sandbox: { timeoutMs: 5_000, totalTimeoutMs: 10_000 },
+  execute: (code, options) => sandbox.execute(code, options),
 });
 // Connect server to an application-owned MCP transport.
 // await server.connect(transport);
@@ -665,17 +673,22 @@ const server = createCodemodeServer({
 ```
 
 The application retains ownership of the upstream client. `server.close()` is
-idempotent: it cancels active sandbox executions, closes the agent-facing
-connection, and waits for worker cleanup. The application then closes its upstream
-client. Cancellation is cooperative for host tools, as described above.
+idempotent: it aborts this server's active execution signals, closes the agent-facing
+connection, and awaits execution promises. It does not globally close a shared
+executor. Our sandbox awaits its worker cleanup before settling; alternative
+executors must implement the same cleanup contract. The application then closes
+its upstream client. Cancellation is cooperative for host tools.
 
 ### Requests and discovery
 
 The input schema is a strict `{ code: string }` object. Unknown keys, including
 resource-limit overrides, fail MCP input validation before execution. Input is an
-async JavaScript function body; a final `return` selects the result.
+JavaScript source interpreted by the injected executor. The CMG gateway
+selects our async-function-body contract; a final `return` selects its result.
 
-Discovery runs inside the sandbox using the same host-call budget:
+The CMG gateway combines catalog tools with local discovery helpers, rejecting
+upstream helper-name collisions before serving. These helpers are not supplied by
+the generic MCP server. In CMG, discovery runs with the same host-call budget:
 
 ```js
 return await tools.searchTools({ query: "customer invoices" });
@@ -710,9 +723,10 @@ delivery of its final response even though worker cleanup still completes.
 
 ### Stdio application
 
-Run `bun run server <configuration.json>`. See the [README](../README.md#agent-facing-mcp-server)
-and `examples/mcm.json` for configuration. `bun run example:server` runs the full
-client → MCM → upstream demonstration.
+Run `bun run cmg <configuration.json>` from the repository, or `cmg <configuration.json>`
+after installation. See the [gateway README](../packages/gateway/README.md#configuration)
+and `examples/cmg.json` for configuration. `bun run example:server` runs the full
+client → CMG → upstream demonstration.
 
 The application validates its configuration, connects one stdio or Streamable HTTP upstream using the SDK's
 default legacy handshake, and discovers its catalog. Its agent-facing stdio entry
@@ -751,16 +765,22 @@ Configuration and catalogs do not reload during a run.
 
 **Guest** means JavaScript inside QuickJS. **Worker** means the Bun thread
 embedding QuickJS. **Main app** means the main thread holding tool implementations
-and the catalog. `src/codemode/` owns execution, tool contracts, and discovery.
-`src/mcp/` owns the SDK adapter and JSON Schema compilation, depending only on
-codemode's public exports. Codemode has no MCP or Ajv dependency. Each module
-exports its public API through `index.ts`; worker/VM details live in
-`src/codemode/runtime/`.
+and the catalog. `packages/codemode/` owns execution, tool contracts, and discovery.
+`packages/mcp/` owns MCP adapters and JSON Schema compilation, depending only on
+codemode's public exports, not its runtime. `packages/gateway/` selects and composes the
+executor and owns process lifecycle. Codemode has no MCP or Ajv dependency. Each
+library exports through `src/index.ts`; worker/VM details stay internal to
+`packages/codemode/src/runtime/`. In the diagram below, codemode and mcp paths are
+relative to their package's `src/`; gateway files live in `packages/gateway/src/`.
+The gateway's public entry does not start the executable or install shutdown listeners.
 
 ```text
 Main app
+  cli.ts: thin cmg executable entry
+  main.ts: argument handling and exit status
   config.ts: typed transport configuration and host HTTP header templates
   server.ts: stdio entry, startup configuration, upstream process, and shutdown
+  composition.ts: application-owned discovery, helper collision checks, and QuickJS selection
   codemode/index.ts: public exports
   codemode/types.ts: execution options, results, and call contracts
   codemode/limits.ts: shared resource defaults and upper bounds
@@ -1113,7 +1133,8 @@ bun run lint
 bun run typecheck
 ```
 
-Tests are grouped by the boundary they verify:
+Each package owns its tests and groups them by the boundary they verify. Paths
+below are relative to that package:
 
 - `tests/unit/`: protocol decoding, catalog logic, and rejection helpers.
 - `tests/component/`: real QuickJS/bridge ownership, worker supervision, and fault injection.
@@ -1123,9 +1144,11 @@ Tests are grouped by the boundary they verify:
 
 `executeEngine` accepts `installToolBridge`. Production supplies
 `installWorkerToolBridge`; engine tests use `installLocalToolBridge` from
-`tests/support/local-tools.ts`. Both use the real `installGuestToolBridge`.
+`packages/codemode/tests/support/local-tools.ts`. Both use the real `installGuestToolBridge`.
 The local adapter keeps VM handles and original exceptions observable.
 
-See [Testing conventions](../tests/README.md) for placement, readability, and async
-ordering rules. `bun run test` runs every layer; `bun test ./tests/component` runs
-one layer. Typechecking includes all test helpers and fixtures.
+See [Testing conventions](testing.md) for placement, readability, and async
+ordering rules. `bun run --cwd packages/codemode test` runs that package's layers;
+each other package has its own equivalent command. Root `bun run test` coordinates
+the package suites. Typechecking includes all test helpers and fixtures, and root
+`bun run check` also verifies compiled tarballs in isolated consumers.

@@ -3,6 +3,7 @@
     "target": "ESNext",
     "module": "Preserve",
     "moduleResolution": "Bundler",
+    "customConditions": ["development"],
     "lib": ["ESNext"],
     "types": ["bun"],
     "strict": true,
@@ -16,5 +17,10 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/tests/**/*.ts",
+    "examples/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }

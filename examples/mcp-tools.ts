@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-/** One synthetic upstream shared by the stdio example and focused integration tests. */
+/** Synthetic tools for the stdio example. */
 export function createMcpServer() {
-  const server = new McpServer({ name: "mcm-example", version: "0.0.0" });
+  const server = new McpServer({ name: "cmg-example", version: "0.0.0" });
 
   server.registerTool(
     "add",

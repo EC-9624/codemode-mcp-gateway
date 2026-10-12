@@ -1,10 +1,10 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
-import { CodemodeSandbox } from "../src/codemode";
-import { createMcpCatalog } from "../src/mcp";
+import { CodemodeSandbox } from "@cmg/codemode";
+import { createMcpCatalog } from "@cmg/mcp";
 
-const client = new Client({ name: "mcm-example", version: "0.0.0" });
+const client = new Client({ name: "cmg-example", version: "0.0.0" });
 
 const transport = new StdioClientTransport({
   command: process.execPath,

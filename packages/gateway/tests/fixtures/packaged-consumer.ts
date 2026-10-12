@@ -1,0 +1,107 @@
+import { ok, deepEqual } from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { CodemodeSandbox, createDiscoveryTools } from "@cmg/codemode";
+import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { createServer } from "codemode-mcp-gateway";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
+
+// This fixture is copied into an unrelated directory and imports only installed public exports.
+const installed = fileURLToPath(import.meta.resolve("@cmg/codemode"));
+ok(installed.startsWith(fileURLToPath(new URL("./node_modules/", import.meta.url))));
+ok(installed.endsWith("/dist/index.js"));
+
+await using cleanup = new AsyncDisposableStack();
+const upstream = new McpServer({ name: "packed-upstream", version: "1" });
+upstream.registerTool(
+  "add",
+  { inputSchema: z.object({ a: z.number(), b: z.number() }) },
+  ({ a, b }) => ({
+    content: [],
+    structuredContent: { sum: a + b },
+  }),
+);
+const upstreamClient = new Client({ name: "packed-catalog", version: "1" });
+const [clientWire, upstreamWire] = InMemoryTransport.createLinkedPair();
+cleanup.defer(() => upstream.close());
+cleanup.defer(() => upstreamClient.close());
+await upstream.connect(upstreamWire);
+await upstreamClient.connect(clientWire);
+const catalog = await createMcpCatalog(upstreamClient);
+
+const executor = new CodemodeSandbox({
+  tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
+});
+
+const server = createCodemodeServer({
+  execute: (code, options) => executor.execute(code, options),
+});
+
+const agent = new Client({ name: "packed-agent", version: "1" });
+const [agentWire, serverWire] = InMemoryTransport.createLinkedPair();
+cleanup.defer(() => server.close());
+cleanup.defer(() => agent.close());
+await server.connect(serverWire);
+await agent.connect(agentWire);
+deepEqual(
+  (await agent.listTools()).tools.map((tool) => tool.name),
+  ["execute"],
+);
+
+const sum = await agent.callTool({
+  name: "execute",
+  arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+});
+
+deepEqual(sum.structuredContent, {
+  result: { ok: true, value: 5 },
+  calls: [{ callId: 1, name: "add", status: "completed" }],
+});
+
+const gateway = createServer(catalog);
+const gatewayAgent = new Client({ name: "packed-gateway", version: "1" });
+const [gatewayAgentWire, gatewayWire] = InMemoryTransport.createLinkedPair();
+cleanup.defer(() => gateway.close());
+cleanup.defer(() => gatewayAgent.close());
+await gateway.connect(gatewayWire);
+await gatewayAgent.connect(gatewayAgentWire);
+
+const composed = await gatewayAgent.callTool({
+  name: "execute",
+  arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
+});
+
+deepEqual(composed.structuredContent, {
+  result: { ok: true, value: 42 },
+  calls: [{ callId: 1, name: "add", status: "completed" }],
+});
+
+const binary = process.argv[2];
+const config = process.argv[3];
+if (binary === undefined || config === undefined)
+  throw new Error("Expected packaged CLI and configuration paths.");
+
+const cli = new Client({ name: "packed-cli", version: "1" });
+const transport = new StdioClientTransport({ command: binary, args: [config], stderr: "pipe" });
+const closed = Promise.withResolvers<void>();
+transport.onclose = () => closed.resolve();
+const connecting = cli.connect(transport, { timeout: 5_000 });
+const spawned = transport.pid !== null;
+cleanup.defer(async () => {
+  if (spawned) await closed.promise;
+});
+cleanup.defer(() => transport.close());
+cleanup.defer(() => cli.close());
+await connecting;
+
+const response = await cli.callTool({
+  name: "execute",
+  arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
+});
+
+deepEqual(response.structuredContent, {
+  result: { ok: true, value: 42 },
+  calls: [{ callId: 1, name: "add", status: "completed" }],
+});
