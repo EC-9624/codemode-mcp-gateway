@@ -13,11 +13,11 @@
  */
 import { Buffer } from "node:buffer";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
-import { createVm } from "./vm.js";
-import { type ToolBridge } from "./guest-bridge.js";
-import { type ExecutionLimits } from "./limits.js";
-import { type GuestResult } from "./protocol.js";
-import { prepareScript, prepareRunner, startScript } from "./script.js";
+import { createVm } from "./vm.ts";
+import { type ToolBridge } from "./guest-bridge.ts";
+import { type ExecutionLimits } from "./limits.ts";
+import { type GuestResult } from "./protocol.ts";
+import { prepareScript, prepareRunner, startScript } from "./script.ts";
 
 const JOBS_PER_TURN = 100;
 

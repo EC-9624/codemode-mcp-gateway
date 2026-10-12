@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CodemodeSandbox, type SandboxOptions } from "@cmg/codemode";
-import { isPositiveInt } from "../../src/runtime/limits.js";
+import { isPositiveInt } from "../../src/runtime/limits.ts";
 
 describe("positive integer limits", () => {
   test.each([

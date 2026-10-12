@@ -2,11 +2,11 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { Ajv2020 } from "ajv/dist/2020";
 import { Client, StreamableHTTPClientTransport, type Tool } from "@modelcontextprotocol/client";
 import { createMcpHandler, Server, type CallToolResult } from "@modelcontextprotocol/server";
-import { createMcpServer } from "../fixtures/mcp-tools";
+import { createMcpServer } from "../fixtures/mcp-tools.ts";
 import { CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
-import { connectMcp, requireTool, toolServer } from "../support/mcp";
-import { rejectionOf } from "../support/rejection";
+import { connectMcp, requireTool, toolServer } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 const context = { signal: new AbortController().signal };
 

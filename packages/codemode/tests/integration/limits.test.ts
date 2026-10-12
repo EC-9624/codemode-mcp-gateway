@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
+import { executionErrorOf } from "../support/execution-error.ts";
 
 describe("source admission", () => {
   test("accepts exactly the default 256 KiB and rejects one byte more before tool dispatch", async () => {

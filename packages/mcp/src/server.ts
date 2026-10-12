@@ -13,7 +13,7 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { SandboxExecutionError, type CallOutcome, type ExecutionReport } from "@cmg/codemode";
-import { type CodemodeServerOptions, type CallSummary, type CodemodeResponse } from "./types.js";
+import { type CodemodeServerOptions, type CallSummary, type CodemodeResponse } from "./types.ts";
 
 /** Borrows an executor. Closing aborts this server's requests and awaits their execution cleanup. */
 export function createCodemodeServer(options: CodemodeServerOptions): McpServer {

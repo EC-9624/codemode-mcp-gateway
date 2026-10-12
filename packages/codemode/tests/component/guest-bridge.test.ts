@@ -1,15 +1,15 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Scope } from "quickjs-emscripten";
-import { DEFAULT_LIMITS } from "../../src/runtime/limits";
-import { createVm } from "../../src/runtime/vm";
+import { DEFAULT_LIMITS } from "../../src/runtime/limits.ts";
+import { createVm } from "../../src/runtime/vm.ts";
 import { ToolResult } from "@cmg/codemode";
-import { executeEngine } from "../../src/runtime/engine";
-import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
-import { executeLocally, installLocalToolBridge, prepareTools } from "../support/local-tools";
-import { GuestCall } from "../../src/runtime/protocol";
-import { installGuestToolBridge } from "../../src/runtime/guest-bridge";
-import { rejectionOf } from "../support/rejection";
-import { interruptFlag } from "../support/workers";
+import { executeEngine } from "../../src/runtime/engine.ts";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal.ts";
+import { executeLocally, installLocalToolBridge, prepareTools } from "../support/local-tools.ts";
+import { GuestCall } from "../../src/runtime/protocol.ts";
+import { installGuestToolBridge } from "../../src/runtime/guest-bridge.ts";
+import { rejectionOf } from "../support/rejection.ts";
+import { interruptFlag } from "../support/workers.ts";
 
 describe("guest tool bridge", () => {
   test.each([

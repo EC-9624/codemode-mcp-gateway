@@ -1,14 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { CodemodeSandbox, ToolResult, type SandboxResult } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
+import { executionErrorOf } from "../support/execution-error.ts";
 import {
   faultWorker,
   interruptFlag,
   superviseWorker,
   toolWorker,
   type WorkerControl,
-} from "../support/workers";
-import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
+} from "../support/workers.ts";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup.ts";
 
 describe("parent deadline", () => {
   test("expires while worker startup is stalled and recovers", async () => {

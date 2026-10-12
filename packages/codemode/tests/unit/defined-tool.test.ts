@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { z } from "zod";
 import { defineTool, ToolCatalog, ToolResult, type ToolInputSchema } from "@cmg/codemode";
-import { callTool } from "../../src/tools";
-import { rejectionOf } from "../support/rejection";
+import { callTool } from "../../src/tools.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("Standard Schema native tools", () => {
   test("infers handler arguments and passes the transformed output", async () => {

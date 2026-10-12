@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Client, type ClientOptions } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { type SandboxOptions } from "@cmg/codemode";
-import { type Configuration } from "../../src/config";
+import { type Configuration } from "../../src/config.ts";
 
 /** Owns a real CLI process; the watchdog makes shutdown regressions fail instead of hanging. */
 export async function gatewayProcess(

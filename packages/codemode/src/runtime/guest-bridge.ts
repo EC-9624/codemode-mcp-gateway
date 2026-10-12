@@ -12,9 +12,9 @@
  * expose them as catchable guest errors instead of terminal infrastructure failures.
  */
 import { type QuickJSContext, type QuickJSHandle, type Scope } from "quickjs-emscripten";
-import { type ToolCallLimit } from "../types.js";
-import { createToolCallBudget, type ToolCallLimits } from "./budget.js";
-import { GuestCall, GuestReply, ToolReply } from "./protocol.js";
+import { type ToolCallLimit } from "../types.ts";
+import { createToolCallBudget, type ToolCallLimits } from "./budget.ts";
+import { GuestCall, GuestReply, ToolReply } from "./protocol.ts";
 
 /** Private infrastructure failures throw; admission limits are guest results. */
 export type BridgeFailure =

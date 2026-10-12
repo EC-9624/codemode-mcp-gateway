@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getQuickJS } from "quickjs-emscripten";
-import { createVm } from "../../src/runtime/vm";
-import { rejectionOf } from "../support/rejection";
+import { createVm } from "../../src/runtime/vm.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("runtime setup", () => {
   test("creates a fresh context and runtime for each call", async () => {

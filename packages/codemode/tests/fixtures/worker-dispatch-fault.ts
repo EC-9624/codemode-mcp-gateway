@@ -5,4 +5,4 @@ QuickJSContext.prototype.getString = () => {
 };
 
 // A static import would start the real entry before the worker-local fault is installed.
-await import("../../src/runtime/worker");
+await import("../../src/runtime/worker.ts");

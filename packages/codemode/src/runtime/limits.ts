@@ -1,4 +1,4 @@
-import { SandboxLimits } from "../limits.js";
+import { SandboxLimits } from "../limits.ts";
 
 /** Longer delays overflow host timers, which then fire immediately; sizes and counts share the range. */
 export const MAX_LIMIT = SandboxLimits.totalTimeoutMs.maximum;

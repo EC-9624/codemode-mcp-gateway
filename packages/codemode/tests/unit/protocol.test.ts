@@ -6,8 +6,8 @@ import {
   GuestReply,
   WorkerStartupData,
   WorkerToMainMessage,
-} from "../../src/runtime/protocol";
-import { interruptFlag, startupData } from "../support/workers";
+} from "../../src/runtime/protocol.ts";
+import { interruptFlag, startupData } from "../support/workers.ts";
 
 const request = startupData("return 42;");
 

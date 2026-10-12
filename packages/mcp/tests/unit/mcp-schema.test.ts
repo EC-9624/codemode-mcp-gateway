@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileToolSchema } from "../../src/schema";
+import { compileToolSchema } from "../../src/schema.ts";
 import { type ToolSchema } from "@cmg/codemode";
 
 describe("tool schema compilation", () => {

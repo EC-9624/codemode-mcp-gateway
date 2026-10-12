@@ -1,5 +1,5 @@
 import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
-import { faultWorker, interruptFlag, superviseWorker } from "../support/workers";
+import { faultWorker, interruptFlag, superviseWorker } from "../support/workers.ts";
 
 // An outer process timeout bounds regressions that would otherwise hang bun:test.
 const startup = new AbortController();

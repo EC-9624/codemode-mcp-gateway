@@ -13,18 +13,18 @@
  * selected, so run() wraps execution and cleanup failures with the same call observations.
  */
 import { type Worker } from "node:worker_threads";
-import { createCallLog } from "./report.js";
-import { listen } from "./listener.js";
-import { type ExecutionReport, type InterruptionReason, type SandboxResult } from "../types.js";
-import { SandboxExecutionError } from "../errors.js";
-import { callTool, serializeToolResult, type SandboxTool } from "../tools.js";
-import { createToolCallBudget, type ToolCallLimits } from "./budget.js";
+import { createCallLog } from "./report.ts";
+import { listen } from "./listener.ts";
+import { type ExecutionReport, type InterruptionReason, type SandboxResult } from "../types.ts";
+import { SandboxExecutionError } from "../errors.ts";
+import { callTool, serializeToolResult, type SandboxTool } from "../tools.ts";
+import { createToolCallBudget, type ToolCallLimits } from "./budget.ts";
 import {
   type DecodedWorkerMessage,
   type GuestResult,
   type ToolReply,
   WorkerToMainMessage,
-} from "./protocol.js";
+} from "./protocol.ts";
 
 type WorkerCompletion =
   | { ok: true; result: GuestResult | ReturnType<typeof cancelled> }

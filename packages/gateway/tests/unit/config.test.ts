@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Configuration, resolveHeaders } from "../../src/config";
+import { Configuration, resolveHeaders } from "../../src/config.ts";
 
 describe("application configuration", () => {
   test("keeps command-only configurations as stdio upstreams", () => {

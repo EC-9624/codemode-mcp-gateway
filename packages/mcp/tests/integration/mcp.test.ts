@@ -5,11 +5,11 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { createMcpServer } from "../fixtures/mcp-tools";
+import { createMcpServer } from "../fixtures/mcp-tools.ts";
 import { createDiscoveryTools, CodemodeSandbox } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
-import { connectMcp, toolServer } from "../support/mcp";
-import { rejectionOf } from "../support/rejection";
+import { connectMcp, toolServer } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("MCP sandbox integration", () => {
   test("discovers and calls a stdio tool, retaining its public response", async () => {

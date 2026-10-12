@@ -1,7 +1,7 @@
 /** Standalone execution and tool contracts. MCP and application lifecycle are separate packages. */
-export { CodemodeSandbox } from "./sandbox.js";
-export { SandboxLimits } from "./limits.js";
-export { SandboxExecutionError } from "./errors.js";
+export { CodemodeSandbox } from "./sandbox.ts";
+export { SandboxLimits } from "./limits.ts";
+export { SandboxExecutionError } from "./errors.ts";
 export {
   type CallOutcome,
   type ExecutionReport,
@@ -9,7 +9,7 @@ export {
   type SandboxResult,
   type ExecuteOptions,
   type SandboxOptions,
-} from "./types.js";
+} from "./types.ts";
 export {
   ToolResult,
   validateTool,
@@ -17,7 +17,7 @@ export {
   type SandboxTool,
   type ToolContext,
   type ToolSchema,
-} from "./tools.js";
+} from "./tools.ts";
 export {
   createDiscoveryTools,
   defineTool,
@@ -25,4 +25,4 @@ export {
   type ToolDefinition,
   type ToolDescription,
   type ToolInputSchema,
-} from "./catalog.js";
+} from "./catalog.ts";

@@ -94,7 +94,8 @@ No package is published by these commands.
 Builds emit ESM JavaScript and declarations into each package's `dist/`, including
 the codemode worker. Dependencies are not bundled. Export maps expose only package
 roots; repository scripts use the `development` condition, while installed consumers
-use compiled exports.
+use compiled exports. Relative source imports use `.ts`; TypeScript rewrites them
+to JavaScript extensions during the build.
 
 ## Development
 

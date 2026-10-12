@@ -1,11 +1,11 @@
 import { Worker } from "node:worker_threads";
-import { DEFAULT_LIMITS, type ExecutionLimits } from "../../src/runtime/limits";
-import { type WorkerStartupData } from "../../src/runtime/protocol";
-import { WorkerExecution, type WorkerControl } from "../../src/runtime/execution";
+import { DEFAULT_LIMITS, type ExecutionLimits } from "../../src/runtime/limits.ts";
+import { type WorkerStartupData } from "../../src/runtime/protocol.ts";
+import { WorkerExecution, type WorkerControl } from "../../src/runtime/execution.ts";
 import { type SandboxTool } from "@cmg/codemode";
-import { type ToolCallLimits } from "../../src/runtime/budget";
+import { type ToolCallLimits } from "../../src/runtime/budget.ts";
 
-export { type WorkerControl } from "../../src/runtime/execution";
+export { type WorkerControl } from "../../src/runtime/execution.ts";
 
 /** A fresh parent/worker interrupt flag, initially clear. */
 export function interruptFlag() {

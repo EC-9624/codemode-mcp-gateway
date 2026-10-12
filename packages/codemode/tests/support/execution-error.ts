@@ -1,5 +1,5 @@
 import { SandboxExecutionError } from "@cmg/codemode";
-import { rejectionOf } from "./rejection";
+import { rejectionOf } from "./rejection.ts";
 
 export async function executionErrorOf(
   operation: Promise<unknown>,

@@ -33,8 +33,9 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
   Importing the programmatic entry must not start the CLI or install process listeners.
   The MCP server borrows an executor rather than constructing a concrete sandbox.
 - Published package imports use the export map; runtime deep imports are unsupported.
-  Internal relative imports use explicit `.js` paths for compiled ESM. Repository
-  source runs use the `development` export condition; packed consumers use `dist/`.
+  Internal relative imports use explicit `.ts` paths; TypeScript rewrites them for
+  compiled ESM. Repository source runs use the `development` export condition;
+  packed consumers use `dist/`.
 - Keep logic together unless extraction improves composition, reuse, or clarity.
 - Do not extract single-use helpers preemptively.
 - Extract helpers when they name a real domain concept, isolate a complex

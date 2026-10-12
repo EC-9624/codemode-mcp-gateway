@@ -1,10 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 import { CodemodeSandbox } from "@cmg/codemode";
-import { WorkerToMainMessage } from "../../src/runtime/protocol";
-import { executionErrorOf } from "../support/execution-error";
-import { faultWorker, startupData, superviseWorker } from "../support/workers";
-import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
+import { WorkerToMainMessage } from "../../src/runtime/protocol.ts";
+import { executionErrorOf } from "../support/execution-error.ts";
+import { faultWorker, startupData, superviseWorker } from "../support/workers.ts";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup.ts";
 
 describe("worker supervisor", () => {
   test("rejects invalid requests at the actual worker boundary", async () => {

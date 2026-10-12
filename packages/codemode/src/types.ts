@@ -1,4 +1,4 @@
-import { type SandboxTool, type SerializedToolResult } from "./tools.js";
+import { type SandboxTool, type SerializedToolResult } from "./tools.ts";
 
 export type ToolCallLimit = {
   kind: "limit";

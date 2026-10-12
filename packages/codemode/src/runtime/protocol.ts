@@ -1,6 +1,6 @@
-import { type SandboxResult } from "../types.js";
-import { type SerializedToolResult } from "../tools.js";
-import { findInvalidLimit, isPositiveInt, type ExecutionLimits } from "./limits.js";
+import { type SandboxResult } from "../types.ts";
+import { type SerializedToolResult } from "../tools.ts";
+import { findInvalidLimit, isPositiveInt, type ExecutionLimits } from "./limits.ts";
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { createMcpServer } from "../fixtures/mcp-tools";
+import { createMcpServer } from "../fixtures/mcp-tools.ts";
 import { createMcpCatalog } from "@cmg/mcp";
-import { createServer } from "../../src/composition";
-import { connectMcp, toolServer } from "../support/mcp";
-import { rejectionOf } from "../support/rejection";
+import { createServer } from "../../src/composition.ts";
+import { connectMcp, toolServer } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("MCP client through codemode to upstream MCP", () => {
   test("discovers a tool, describes its schema, and calls its exact name through JavaScript", async () => {

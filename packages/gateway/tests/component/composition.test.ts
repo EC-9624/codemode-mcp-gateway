@@ -1,9 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 import { ToolCatalog, ToolResult } from "@cmg/codemode";
-import { createServer } from "../../src/composition";
-import { connectMcp } from "../support/mcp";
-import { rejectionOf } from "../support/rejection";
+import { createServer } from "../../src/composition.ts";
+import { connectMcp } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("gateway composition", () => {
   test("describes the injected discovery helpers", async () => {

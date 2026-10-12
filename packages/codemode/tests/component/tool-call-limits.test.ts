@@ -1,12 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { DEFAULT_LIMITS } from "../../src/runtime/limits";
-import { executeEngine } from "../../src/runtime/engine";
+import { DEFAULT_LIMITS } from "../../src/runtime/limits.ts";
+import { executeEngine } from "../../src/runtime/engine.ts";
 import { ToolResult } from "@cmg/codemode";
-import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
-import { executionErrorOf } from "../support/execution-error";
-import { installLocalToolBridge } from "../support/local-tools";
-import { interruptFlag, superviseWorker, toolWorker } from "../support/workers";
-import { expectNoExecutionListeners } from "../support/worker-cleanup";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal.ts";
+import { executionErrorOf } from "../support/execution-error.ts";
+import { installLocalToolBridge } from "../support/local-tools.ts";
+import { interruptFlag, superviseWorker, toolWorker } from "../support/workers.ts";
+import { expectNoExecutionListeners } from "../support/worker-cleanup.ts";
 
 describe("worker-side admission", () => {
   test.each([

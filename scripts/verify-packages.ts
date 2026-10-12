@@ -98,7 +98,13 @@ await Bun.write(
     },
   }),
 );
-await Bun.write(join(consumer, "tsconfig.json"), JSON.stringify(compiler));
+await Bun.write(
+  join(consumer, "tsconfig.json"),
+  JSON.stringify({
+    ...compiler,
+    compilerOptions: { ...compiler.compilerOptions, allowImportingTsExtensions: true },
+  }),
+);
 
 for (const [source, target] of [
   ["packages/gateway/tests/fixtures/packaged-consumer.ts", "consumer.ts"],

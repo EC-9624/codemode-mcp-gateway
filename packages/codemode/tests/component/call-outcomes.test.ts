@@ -1,8 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { ToolResult } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
-import { faultWorker, interruptFlag, superviseWorker, toolWorker } from "../support/workers";
-import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
+import { executionErrorOf } from "../support/execution-error.ts";
+import { faultWorker, interruptFlag, superviseWorker, toolWorker } from "../support/workers.ts";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup.ts";
 
 describe("parent-owned call outcomes", () => {
   test("records dispatch before a callback synchronously cancels execution", async () => {

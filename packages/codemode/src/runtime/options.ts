@@ -4,8 +4,8 @@ import {
   isPositiveInt,
   MAX_LIMIT,
   type ExecutionLimits,
-} from "./limits.js";
-import { type SandboxOptions } from "../types.js";
+} from "./limits.ts";
+import { type SandboxOptions } from "../types.ts";
 
 /** Fixed, validated configuration. Cancellation belongs to each execution. */
 export type ResolvedOptions = {

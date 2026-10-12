@@ -1,9 +1,9 @@
 import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
-import { listen } from "./listener.js";
-import { installGuestToolBridge } from "./guest-bridge.js";
-import { type WorkerToMainMessage } from "./protocol.js";
-import { type ToolCallLimits } from "./budget.js";
+import { listen } from "./listener.ts";
+import { installGuestToolBridge } from "./guest-bridge.ts";
+import { type WorkerToMainMessage } from "./protocol.ts";
+import { type ToolCallLimits } from "./budget.ts";
 
 /** The worker owns transport listeners; promises and resolvers remain in the guest. */
 export function installWorkerToolBridge(

@@ -1,5 +1,5 @@
 import { getQuickJS, type QuickJSContext } from "quickjs-emscripten";
-import { DEFAULT_LIMITS, type ExecutionLimits } from "./limits.js";
+import { DEFAULT_LIMITS, type ExecutionLimits } from "./limits.ts";
 
 type VmLimits = Pick<ExecutionLimits, "memoryLimitBytes" | "maxStackSizeBytes">;
 

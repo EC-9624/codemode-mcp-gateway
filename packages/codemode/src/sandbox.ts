@@ -1,11 +1,11 @@
 import { Worker } from "node:worker_threads";
 import { Buffer } from "node:buffer";
-import { type ExecuteOptions, type ExecutionReport, type SandboxOptions } from "./types.js";
-import { type SandboxTool } from "./tools.js";
-import { SandboxExecutionError } from "./errors.js";
-import { resolveOptions, type ResolvedOptions } from "./runtime/options.js";
-import { cancelled, WorkerExecution, type WorkerControl } from "./runtime/execution.js";
-import { type WorkerStartupData } from "./runtime/protocol.js";
+import { type ExecuteOptions, type ExecutionReport, type SandboxOptions } from "./types.ts";
+import { type SandboxTool } from "./tools.ts";
+import { SandboxExecutionError } from "./errors.ts";
+import { resolveOptions, type ResolvedOptions } from "./runtime/options.ts";
+import { cancelled, WorkerExecution, type WorkerControl } from "./runtime/execution.ts";
+import { type WorkerStartupData } from "./runtime/protocol.ts";
 
 /** Owns fixed configuration and tool bindings. Each execution gets a fresh worker and VM. */
 export class CodemodeSandbox {

@@ -1,13 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import { MessageChannel } from "node:worker_threads";
-import { DEFAULT_LIMITS } from "../../src/runtime/limits";
-import { installWorkerToolBridge } from "../../src/runtime/worker-bridge";
-import { executeEngine } from "../../src/runtime/engine";
-import { ToolReply } from "../../src/runtime/protocol";
-import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
-import { executeLocally } from "../support/local-tools";
-import { rejectionOf } from "../support/rejection";
-import { interruptFlag } from "../support/workers";
+import { DEFAULT_LIMITS } from "../../src/runtime/limits.ts";
+import { installWorkerToolBridge } from "../../src/runtime/worker-bridge.ts";
+import { executeEngine } from "../../src/runtime/engine.ts";
+import { ToolReply } from "../../src/runtime/protocol.ts";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal.ts";
+import { executeLocally } from "../support/local-tools.ts";
+import { rejectionOf } from "../support/rejection.ts";
+import { interruptFlag } from "../support/workers.ts";
 
 test("worker-side posting failures bypass guest catch and release transport listeners", async () => {
   using channel = openChannel();

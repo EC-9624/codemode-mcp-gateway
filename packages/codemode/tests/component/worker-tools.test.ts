@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { CodemodeSandbox, ToolResult, type SandboxTool } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
-import { superviseWorker, faultWorker, toolWorker } from "../support/workers";
+import { executionErrorOf } from "../support/execution-error.ts";
+import { superviseWorker, faultWorker, toolWorker } from "../support/workers.ts";
 
 describe("worker host tools", () => {
   test("rejects reply transport failures without turning them into guest tool errors", async () => {

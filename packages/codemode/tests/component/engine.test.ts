@@ -1,13 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import { type QuickJSHandle } from "quickjs-emscripten";
 import { Parser } from "acorn";
-import { DEFAULT_LIMITS } from "../../src/runtime/limits";
+import { DEFAULT_LIMITS } from "../../src/runtime/limits.ts";
 import { ToolResult, type SandboxResult } from "@cmg/codemode";
-import { executeEngine } from "../../src/runtime/engine";
-import { expectDisposedExecution, type ExecutionResources } from "../support/disposal";
-import { executeLocally, installLocalToolBridge } from "../support/local-tools";
-import { rejectionOf } from "../support/rejection";
-import { interruptFlag } from "../support/workers";
+import { executeEngine } from "../../src/runtime/engine.ts";
+import { expectDisposedExecution, type ExecutionResources } from "../support/disposal.ts";
+import { executeLocally, installLocalToolBridge } from "../support/local-tools.ts";
+import { rejectionOf } from "../support/rejection.ts";
+import { interruptFlag } from "../support/workers.ts";
 
 test("propagates unexpected parser failures instead of reporting a script error", async () => {
   const failure = new Error("Parser infrastructure failed");

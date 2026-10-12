@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { serve } from "./server.js";
+import { serve } from "./server.ts";
 
 /** Run the CLI command and return its exit status. */
 export async function main(args: readonly string[]): Promise<number> {

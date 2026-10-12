@@ -5,7 +5,7 @@ import {
   superviseWorker,
   toolWorker,
   type WorkerControl,
-} from "../support/workers";
+} from "../support/workers.ts";
 
 // Run potentially stuck workers in a child process so a broken interrupt cannot hang bun:test.
 const startupDeadline = {

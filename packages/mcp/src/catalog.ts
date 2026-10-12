@@ -1,7 +1,7 @@
 import { type Client, type Tool } from "@modelcontextprotocol/client";
 import { ToolResult, validateTool, ToolCatalog, type ToolDefinition } from "@cmg/codemode";
-import { compileToolSchema } from "./schema.js";
-import { type McpCatalogOptions } from "./types.js";
+import { compileToolSchema } from "./schema.ts";
+import { type McpCatalogOptions } from "./types.ts";
 
 // Codemode keeps its equivalent constant internal; MCP depends only on its public API.
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;

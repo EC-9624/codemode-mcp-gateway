@@ -1,7 +1,7 @@
 import { parentPort, workerData, type MessagePort } from "node:worker_threads";
-import { installWorkerToolBridge } from "./worker-bridge.js";
-import { executeEngine } from "./engine.js";
-import { WorkerStartupData, type WorkerToMainMessage } from "./protocol.js";
+import { installWorkerToolBridge } from "./worker-bridge.ts";
+import { executeEngine } from "./engine.ts";
+import { WorkerStartupData, type WorkerToMainMessage } from "./protocol.ts";
 
 if (!parentPort) throw new Error("Sandbox worker entry requires a parent port.");
 

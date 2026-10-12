@@ -18,8 +18,8 @@ import { type McpServer } from "@modelcontextprotocol/server";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { type ToolCatalog } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
-import { Configuration, resolveHeaders } from "./config.js";
-import { createServer } from "./composition.js";
+import { Configuration, resolveHeaders } from "./config.ts";
+import { createServer } from "./composition.ts";
 
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.

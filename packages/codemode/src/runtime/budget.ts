@@ -1,5 +1,5 @@
-import { type ExecutionLimits } from "./limits.js";
-import { type ToolCallLimit } from "../types.js";
+import { type ExecutionLimits } from "./limits.ts";
+import { type ToolCallLimit } from "../types.ts";
 
 export type ToolCallLimits = Pick<ExecutionLimits, "maxToolCalls" | "maxConcurrentToolCalls">;
 

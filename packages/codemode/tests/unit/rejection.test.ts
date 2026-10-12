@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { rejects } from "node:assert/strict";
-import { rejectionOf } from "../support/rejection";
+import { rejectionOf } from "../support/rejection.ts";
 
 test("rejectionOf preserves the original rejection reason by identity", async () => {
   const reason = { message: "failure" };

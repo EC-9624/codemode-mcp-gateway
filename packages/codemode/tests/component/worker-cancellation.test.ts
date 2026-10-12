@@ -1,15 +1,15 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { CodemodeSandbox, ToolResult, type SandboxResult, type ToolContext } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
+import { executionErrorOf } from "../support/execution-error.ts";
 import {
   faultWorker,
   interruptFlag,
   superviseWorker,
   toolWorker,
   type WorkerControl,
-} from "../support/workers";
-import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup";
+} from "../support/workers.ts";
+import { expectNoExecutionListeners, gateTermination } from "../support/worker-cleanup.ts";
 
 const cancelled = {
   ok: false,

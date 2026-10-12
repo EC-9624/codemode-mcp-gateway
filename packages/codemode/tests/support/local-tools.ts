@@ -1,11 +1,11 @@
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
-import { DEFAULT_LIMITS } from "../../src/runtime/limits";
-import { executeEngine } from "../../src/runtime/engine";
-import { callTool, serializeToolResult, type SandboxTool } from "../../src/tools";
-import { installGuestToolBridge, type ToolBridge } from "../../src/runtime/guest-bridge";
-import { type ToolCallLimits } from "../../src/runtime/budget";
-import { interruptFlag } from "./workers";
-import { prepareRunner } from "../../src/runtime/script";
+import { DEFAULT_LIMITS } from "../../src/runtime/limits.ts";
+import { executeEngine } from "../../src/runtime/engine.ts";
+import { callTool, serializeToolResult, type SandboxTool } from "../../src/tools.ts";
+import { installGuestToolBridge, type ToolBridge } from "../../src/runtime/guest-bridge.ts";
+import { type ToolCallLimits } from "../../src/runtime/budget.ts";
+import { interruptFlag } from "./workers.ts";
+import { prepareRunner } from "../../src/runtime/script.ts";
 
 /** Direct bridge tests need the real prelude; engine tests initialize it themselves. */
 export function prepareTools(vm: QuickJSContext, bridge: ToolBridge): void {

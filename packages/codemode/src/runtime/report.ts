@@ -1,5 +1,5 @@
-import { type CallOutcome, type InterruptionReason } from "../types.js";
-import { type SerializedToolResult } from "../tools.js";
+import { type CallOutcome, type InterruptionReason } from "../types.ts";
+import { type SerializedToolResult } from "../tools.ts";
 
 type PendingCall = { readonly callId: number; readonly name: string; readonly status: "pending" };
 

@@ -5,7 +5,7 @@ import {
   type SandboxTool,
   type ToolContext,
   type ToolSchema,
-} from "./tools.js";
+} from "./tools.ts";
 
 export type ToolDefinition = {
   description: string;

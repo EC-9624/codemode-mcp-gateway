@@ -5,7 +5,7 @@ import {
   type ExecuteOptions,
   type SandboxOptions,
 } from "@cmg/codemode";
-import { executionErrorOf } from "../support/execution-error";
+import { executionErrorOf } from "../support/execution-error.ts";
 
 describe("CodemodeSandbox", () => {
   test("snapshots tool bindings at construction", async () => {

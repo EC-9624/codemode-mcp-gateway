@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createMcpServer } from "../fixtures/mcp-tools";
-import { httpMcp } from "../support/http-mcp";
-import { gatewayProcess } from "../support/gateway-process";
-import { toolServer } from "../support/mcp";
-import { rejectionOf } from "../support/rejection";
+import { createMcpServer } from "../fixtures/mcp-tools.ts";
+import { httpMcp } from "../support/http-mcp.ts";
+import { gatewayProcess } from "../support/gateway-process.ts";
+import { toolServer } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("CMG HTTP upstream", () => {
   test("discovers and executes with environment-supplied authentication, then terminates its session", async () => {

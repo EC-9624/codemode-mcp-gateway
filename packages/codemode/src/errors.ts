@@ -1,4 +1,4 @@
-import { type CallOutcome } from "./types.js";
+import { type CallOutcome } from "./types.ts";
 
 /**
  * Host-only infrastructure failure with the final call observations, including interrupted calls.

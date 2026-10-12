@@ -1,4 +1,4 @@
 /** Programmatic gateway composition; importing this entry does not start the CLI. */
-export { Configuration, resolveHeaders } from "./config.js";
-export { createServer } from "./composition.js";
-export { serve } from "./server.js";
+export { Configuration, resolveHeaders } from "./config.ts";
+export { createServer } from "./composition.ts";
+export { serve } from "./server.ts";

@@ -1,6 +1,6 @@
 import { parse } from "acorn";
 import { type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
-import { PRELUDE_SOURCE } from "./prelude.js";
+import { PRELUDE_SOURCE } from "./prelude.ts";
 
 export function prepareScript(
   code: string,

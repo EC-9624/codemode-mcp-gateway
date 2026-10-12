@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { gatewayProcess } from "../support/gateway-process";
-import { rejectionOf } from "../support/rejection";
+import { gatewayProcess } from "../support/gateway-process.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("CMG stdio application", () => {
   test.each(["legacy", "modern"] as const)(

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { SandboxExecutionError, type ExecutionReport } from "@cmg/codemode";
 import { createCodemodeServer } from "@cmg/mcp";
-import { connectMcp } from "../support/mcp.js";
-import { rejectionOf } from "../support/rejection.js";
+import { connectMcp } from "../support/mcp.ts";
+import { rejectionOf } from "../support/rejection.ts";
 
 describe("agent-facing MCP server", () => {
   test("uses an injected executor without assuming QuickJS or discovery helpers", async () => {

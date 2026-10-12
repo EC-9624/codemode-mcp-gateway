@@ -6,4 +6,4 @@ Parser.parse = () => {
 };
 
 // A static import would start execution before the parser fault is installed.
-await import("../../src/runtime/worker");
+await import("../../src/runtime/worker.ts");
