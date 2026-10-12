@@ -1,3 +1,16 @@
+/**
+ * Process lifetime of the stdio gateway. This module owns the upstream connection,
+ * agent-facing transports, created MCP servers, and shutdown listeners; composition
+ * supplies each server's fixed-policy executor.
+ *
+ * Startup loads configuration, connects upstream, and builds a catalog before serving
+ * requests. The agent-facing transport opens while upstream setup is pending, so EOF
+ * can cancel a stalled handshake or discovery rather than leave startup waiting.
+ *
+ * EOF, SIGINT, and SIGTERM abort setup and active executions. Cleanup closes the MCP
+ * servers before releasing upstream resources, including on partial startup. Stdio
+ * waits for the child's actual close; HTTP requests session deletion before closing.
+ */
 import { dirname, resolve } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -8,7 +21,11 @@ import { createMcpCatalog } from "@cmg/mcp";
 import { Configuration, resolveHeaders } from "./config.js";
 import { createServer } from "./composition.js";
 
-/** Serve the configured stdio gateway until EOF or a process shutdown signal. */
+/**
+ * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
+ * Installs SIGINT/SIGTERM listeners for this call and removes them during cleanup.
+ * Resolves after shutdown cleanup; uncancelled startup and cleanup failures reject.
+ */
 export async function serve(path: string): Promise<void> {
   let input: unknown;
   try {

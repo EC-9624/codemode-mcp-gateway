@@ -12,7 +12,10 @@ export class CodemodeSandbox {
   private readonly tools: ReadonlyMap<string, SandboxTool>;
   private readonly options: ResolvedOptions;
 
-  /** Validate policy and snapshot capabilities once; requests cannot override either. */
+  /**
+   * Validate fixed limits before reading and snapshotting tool bindings. No worker starts here.
+   * Invalid limits throw RangeError; registry access failures throw SandboxExecutionError.
+   */
   constructor(options: SandboxOptions = {}) {
     this.options = resolveOptions(options);
     try {
@@ -22,7 +25,12 @@ export class CodemodeSandbox {
     }
   }
 
-  /** Run an async function body; expected guest failures resolve, infrastructure failures reject. */
+  /**
+   * Run an async function body: top-level await and return work. Admitted runs get a fresh
+   * worker and VM; pre-aborted or oversized submissions return without creating either.
+   * Expected guest failures resolve in report.result; infrastructure failures reject with
+   * SandboxExecutionError. Settlement waits for worker cleanup, not cancelled host tools.
+   */
   async execute(code: string, options: ExecuteOptions = {}): Promise<ExecutionReport> {
     const limits = this.options.limits;
     const signal = options.signal;

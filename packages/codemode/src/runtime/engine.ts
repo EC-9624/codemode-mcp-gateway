@@ -1,3 +1,16 @@
+/**
+ * Worker-local execution inside a fresh QuickJS context. The engine owns the VM,
+ * guest handles, bridge scope, and guest deadline; it borrows the bridge installer.
+ *
+ * QuickJS queues promise continuations but does not run them automatically. After
+ * starting the submitted function, the engine pumps bounded batches of guest jobs,
+ * yields when more jobs remain, or waits for a tool reply when the VM is idle.
+ * A fulfilled return is not completion until started calls and queued jobs drain.
+ *
+ * Checkpoints surround VM work and error conversion because guest getters can call
+ * tools or exhaust a deadline. Guest failures return results; broken infrastructure
+ * throws. The worker entry converts those exceptions to private failure categories.
+ */
 import { Buffer } from "node:buffer";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { createVm } from "./vm.js";

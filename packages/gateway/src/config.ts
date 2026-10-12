@@ -15,6 +15,7 @@ const http = z.strictObject({
   headers: z.record(z.string(), z.string()).optional(),
 });
 
+/** Transport configuration and fixed sandbox policy; gateway deadlines default to 5 s / 10 s. */
 export const Configuration = z.strictObject({
   upstream: z.union([stdio, http]),
   sandbox: z
@@ -33,7 +34,10 @@ export const Configuration = z.strictObject({
 
 export type Configuration = z.infer<typeof Configuration>;
 
-/** Resolve host-owned header templates without including credential values in diagnostics. */
+/**
+ * Expand {env:NAME} from the host environment and validate the resulting HTTP headers.
+ * Missing variables or invalid headers return a failure without including credential values.
+ */
 export function resolveHeaders(
   templates: Readonly<Record<string, string>> = {},
   environment: Readonly<Record<string, string | undefined>> = process.env,

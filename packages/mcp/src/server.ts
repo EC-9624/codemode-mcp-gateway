@@ -1,3 +1,15 @@
+/**
+ * Agent-facing MCP adapter over a borrowed executor. Requests accept only code; the
+ * application chooses the engine, tools, and resource policy outside this module.
+ *
+ * Each request tracks its execution promise before invoking the callback. Responses
+ * keep the final result and call summaries, not retained tool bodies. Executor
+ * rejections become controlled public failures with host-only diagnostics.
+ *
+ * Closing aborts the server's request signals and awaits the tracked executions.
+ * It does not dispose a shared executor or its upstream client, so the callback
+ * must settle only after its own execution cleanup.
+ */
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { SandboxExecutionError, type CallOutcome, type ExecutionReport } from "@cmg/codemode";

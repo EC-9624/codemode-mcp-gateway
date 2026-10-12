@@ -8,8 +8,12 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
  * Discover a catalog snapshot from a connected, application-owned MCP client.
- * Setup failures reject on the host. The client remains owned by the caller on every exit.
- * MCP isError responses resolve as data; thrown invocation failures use callTool's private boundary.
+ * Refresh the listing and compile each input schema once. Missing tools capability returns
+ * an empty catalog; invalid options, duplicate names, and invalid schemas reject setup.
+ * The caller owns the client on every exit, and must keep it connected for later tool calls.
+ *
+ * Discovery options do not carry into invocation: calls use the execution's signal.
+ * MCP isError responses remain data; thrown invocation failures use the sandbox's private boundary.
  */
 export async function createMcpCatalog(
   client: Client,

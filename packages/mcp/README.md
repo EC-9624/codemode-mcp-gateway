@@ -6,82 +6,104 @@ Two adapters between MCP and code-mode execution:
 2. `createCodemodeServer({ execute })` exposes an application-supplied executor as
    one MCP tool, `execute({ code })`.
 
-This package does not choose or instantiate QuickJS, create upstream transports,
-read configuration, perform authentication, or own application shutdown signals.
-It uses `@cmg/codemode`'s public tool/report contracts, not its runtime internals.
-The name is provisional; the package remains private while its API matures.
-
-## Composition example
+## Usage
 
 ```ts
-import { CodemodeSandbox, createDiscoveryTools } from "@cmg/codemode";
+import { CodemodeSandbox } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
 import { type Client } from "@modelcontextprotocol/client";
 
 // The caller connects/authenticates client and retains ownership of it.
 export async function compose(client: Client) {
   const catalog = await createMcpCatalog(client);
-  const discovery = createDiscoveryTools(catalog);
-  for (const name of Object.keys(discovery)) {
-    if (Object.hasOwn(catalog.tools, name)) throw new Error(`Tool collision: ${name}`);
-  }
-  const sandbox = new CodemodeSandbox({
-    tools: { ...catalog.tools, ...discovery },
-  });
+  const sandbox = new CodemodeSandbox({ tools: catalog.tools });
   return createCodemodeServer({
     execute: (code, options) => sandbox.execute(code, options),
-    description: "Run JavaScript; discover tools with tools.searchTools({ query }).",
+    description: "Run JavaScript as an async function body using the supplied upstream tools.",
   });
 }
 // The caller connects the returned server to an SDK transport and awaits server.close().
 ```
 
-An alternative executor can be supplied without changing the MCP server. It must
-honor the cancellation signal, produce `ExecutionReport`, and settle only after
-its owned execution cleanup. Matching TypeScript types does not make differing
-backend behavior equivalent: drain-on-success, limits, privacy, and report
-semantics must be implemented or explicitly documented by the application.
+With the included upstream's `add` tool, an agent calls
+`execute({ code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" })`.
+The server returns this value as both structured content and JSON text:
 
-Previously, `createCodemodeServer` accepted `catalog` and `sandbox`. Construct the
-executor in application code instead, and supply `execute` as shown above.
-Discovery injection and collision handling have also moved to the application.
+```json
+{
+  "result": { "ok": true, "value": 5 },
+  "calls": [{ "callId": 1, "name": "add", "status": "completed" }]
+}
+```
 
-## Upstream catalog
+The MCP server does not instantiate QuickJS or inject discovery. Use
+`createDiscoveryTools` explicitly, or use the [gateway](../gateway/README.md),
+which supplies discovery and rejects helper-name collisions. The complete
+[upstream example](../../examples/mcp.ts) runs with `bun run example:mcp`.
+
+## Results and failures
+
+There are two different error signals:
+
+- **Upstream `isError`:** remains inside the tool's response. A script can inspect
+  or handle it; returning that flag normally is still successful execution.
+- **Outer MCP `isError`:** set when the final `report.result.ok` is false.
+
+Completed call summaries omit retained tool bodies. They mean a response was
+recorded, not that the upstream operation succeeded. Executor rejections become
+the public error `{ kind: "sandbox", message: "Sandbox execution failed." }`.
+Original causes go only to the host SDK error hook; a throwing hook cannot replace
+the controlled response. `SandboxExecutionError(calls, cause)` preserves call
+observations; other rejection reasons produce an empty summary.
+
+Catalog setup failures reject before an executor is used. Omitted tool arguments
+normalize to `{}`; non-object or schema-invalid arguments fail before upstream
+dispatch. Invocation exceptions use codemode's private host-tool failure boundary.
+
+## Discovery and limits
 
 `createMcpCatalog(client, { timeoutMs, signal }?)` lists tools and compiles input
 schemas once. Discovery defaults to a 15-second overall deadline, including
 listing and schema compilation. The returned catalog is a startup snapshot;
 there is no automatic refresh or subscription to upstream changes.
 
-- The client must already be connected. Ownership never transfers to this package.
-- Setup failures reject on the host; duplicate names or invalid schemas reject discovery.
-- Omitted tool arguments normalize to `{}`. Non-object or schema-invalid arguments
-  fail before upstream dispatch.
+- The client must already be connected. A server without tools yields an empty catalog.
+- Duplicate names and invalid input schemas reject discovery.
 - JSON Schema 2020-12 and draft-07 are supported without coercion or default insertion.
-- Tool responses retain `content`, optional `structuredContent`, and optional `isError`.
-- Upstream `isError` is data the script can inspect, not an inferred sandbox failure.
-- Invocation uses the execution signal, not the discovery signal. Cancellation is cooperative.
+- Tool responses retain `content`, optional `structuredContent`, and optional `isError`,
+  but not top-level `_meta` or unrelated extension fields.
+- Synchronous schema compilation cannot be interrupted; the deadline is checked afterward.
 
-## Agent-facing server
+The server's `execute` tool accepts only `{ code: string }`. Limits stay in the supplied
+executor; request arguments cannot override them. This adapter adds no tool-payload
+or retained-response byte limit. See [schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
 
-`createCodemodeServer({ execute, description? })` returns an MCP SDK `McpServer`.
-It accepts only a string `code`; resource configuration remains application-owned.
-Discovery helpers are not automatically injected: the application supplies the
-executor's tools and a truthful description of its environment.
+## How it works
 
-Responses contain the final result and compact call summaries, as both text JSON
-and structured content. Completed summaries omit retained tool bodies and do not
-guarantee external success. Unsuccessful executions set outer MCP `isError: true`.
-Infrastructure rejections become a controlled `sandbox` error; original causes
-are delivered only to the host SDK error hook. A throwing hook cannot replace the
-controlled response with private details.
-Adapters can throw `SandboxExecutionError(calls, cause)` to preserve infrastructure
-call observations; other rejection reasons produce an empty call summary.
+The adapters connect opposite sides of execution:
+
+```text
+upstream client -> list and compile schemas -> ToolCatalog callbacks
+agent execute request -> supplied executor -> report -> compact MCP response
+```
+
+The catalog borrows a connected SDK client. Each tool callback validates arguments,
+forwards the execution's cancellation signal, and wraps the MCP response in
+`ToolResult.success`. The discovery signal does not carry into later calls.
 
 Closing aborts server-owned requests and awaits their executor promises. It does
-not close an upstream client or globally dispose a shared executor. Consequently,
-the injected executor must respond to cancellation and await its cleanup before
-settling. Node compatibility is not tested; Bun 1.4.2 is the supported runtime.
+not close the borrowed upstream client or globally dispose a shared executor.
+The application closes its connections after server cleanup. A replacement executor
+must honor cancellation and settle after its own cleanup; matching TypeScript
+types alone does not establish equivalent completion, limit, privacy, or report behavior.
+
+This package depends only on codemode's public contracts. It does not create
+upstream transports, perform authentication, read configuration, or install process
+listeners. See the [catalog](src/catalog.ts), [server](src/server.ts), and
+[public options](src/types.ts) for the boundary contracts.
+
+Migration: `createCodemodeServer` now takes `execute`, not `catalog` and `sandbox`.
+Discovery injection and collision handling belong to application composition.
 
 ## Development
 
@@ -91,6 +113,9 @@ From the workspace root:
 bun run --cwd packages/mcp test
 bun run --cwd packages/mcp check
 ```
+
+The package is private and its name provisional. Bun 1.4.2 is the supported runtime;
+Node compatibility is not an acceptance requirement.
 
 This package owns catalog, schema, executor-adapter, and upstream lifecycle tests
 under `tests/`. Helpers and synthetic upstream fixtures stay package-local;

@@ -1,3 +1,16 @@
+/**
+ * Worker side of the private guest protocol. One native dispatcher receives JSON
+ * call envelopes; ordinary guest promises and their resolvers stay in the prelude.
+ * The supplied scope owns the dispatcher and the settlement handle, not this object.
+ *
+ * Calls are validated and admitted before dispatch. A reply settles its guest promise,
+ * releases the outstanding slot, and wakes the engine. Decoding the returned value
+ * runs later on the guest job queue, so a then getter can safely start another call.
+ *
+ * The first admission limit or infrastructure failure stops the bridge. Exceptions
+ * must be recorded here: letting them escape a native callback would make the SDK
+ * expose them as catchable guest errors instead of terminal infrastructure failures.
+ */
 import { type QuickJSContext, type QuickJSHandle, type Scope } from "quickjs-emscripten";
 import { type ToolCallLimit } from "../types.js";
 import { createToolCallBudget, type ToolCallLimits } from "./budget.js";
@@ -9,13 +22,16 @@ export type BridgeFailure =
   | { kind: "limit"; limit: ToolCallLimit };
 
 export type ToolBridge = {
+  /** Borrowed from the execution's scope; callers must not dispose it separately. */
   readonly dispatcher: QuickJSHandle;
   readonly toolNames: readonly string[];
   readonly pendingCalls: ReadonlySet<number>;
+  /** Renewed after each settled reply; read the current promise before waiting. */
   readonly changeSignal: Promise<void>;
   /** The first failure wins; it stays undefined while the bridge is healthy. */
   readonly failure: BridgeFailure | undefined;
   readonly failureSignal: Promise<void>;
+  /** Borrows the prelude API and adds an owned settlement handle to the supplied scope. */
   attach(api: QuickJSHandle): void;
   receive(reply: unknown): void;
   fail(error: unknown): void;

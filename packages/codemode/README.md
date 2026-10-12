@@ -1,11 +1,8 @@
 # @cmg/codemode
 
-A standalone, Bun-only JavaScript execution library. Supply application tools,
-then run JavaScript that composes those tools inside QuickJS in a fresh worker.
-MCP is optional: tools can call your own services, local operations, or APIs.
-
-The package name is provisional. Nothing has been published. This is a working
-MVP, not a production-hardened or OS-isolated sandbox.
+A Bun-only library for running JavaScript inside QuickJS, a JavaScript engine
+compiled to WebAssembly. Supply host tools; scripts can call them but cannot
+access the host's filesystem, network, or process directly. MCP is not required.
 
 ## Usage
 
@@ -20,76 +17,133 @@ const sandbox = new CodemodeSandbox({
 const report = await sandbox.execute("return await tools.answer();");
 console.log(report.result); // { ok: true, value: 42 }
 console.log(report.calls);
+// [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
 ```
 
-Submit an async function body: top-level `await` and `return` work. Import the
-package root; `runtime/` is private implementation, not a supported deep import.
-Requires Bun 1.4.2; npm installation does not imply Node compatibility.
+Submit the body of an async function: top-level `await` and `return` work, but
+modules and TypeScript do not. Each execution has a fresh environment; reuse the
+sandbox without calling `close()`. Tools and limits are fixed at construction,
+and executions may overlap.
 
-## Responsibilities and ownership
+Requires Bun **1.4.2**. Import the package root; runtime deep imports are unsupported.
+Run [the complete example](../../examples/basic.ts) with `bun run example` from
+the workspace root.
 
-- `CodemodeSandbox` snapshots tool bindings and validates fixed limits at construction.
-- Each execution owns a fresh worker, QuickJS VM, budget, and report. Executions can overlap.
-- The application owns tool capabilities, their external connections, and any side effects.
-- Host callbacks run on the main thread, receiving unknown arguments and an `AbortSignal`.
-- The private guest prelude owns JavaScript promises. One native dispatcher relays JSON
-  calls to the host; replies settle those promises without per-call native deferred handles.
-- Execution settles only after worker cleanup. No reusable VM or sandbox `close()` is needed.
+## Results and failures
 
-This package does not connect to MCP, read configuration files, install process
-signal handlers, perform authentication, or run an agent/model loop.
+`execute()` returns `{ result, calls }`. Expected failures resolve rather than throw:
 
-## Public API
+```ts
+const failed = await sandbox.execute('throw new Error("Script failed");');
+console.log(failed.result);
+// { ok: false, error: { kind: "script", message: "Script failed" } }
+```
 
-| API                                               | Contract                                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `CodemodeSandbox`                                 | Fixed tools and resource policy; `execute(code, { signal }?)` runs one execution     |
-| `ToolResult.success(value)` / `.failure(message)` | Explicit tool success or deliberately public failure                                 |
-| `defineTool` / `validateTool`                     | Bind Standard Schema input validation to typed handlers                              |
-| `ToolCatalog.create`                              | Select tool callbacks and discovery metadata                                         |
-| `createDiscoveryTools`                            | Local `searchTools` and `describeTool` callbacks; applications choose their exposure |
-| `SandboxLimits`                                   | Defaults and maximum supported resource settings                                     |
-| `SandboxExecutionError`                           | Infrastructure rejection with an observed call snapshot and host-only cause          |
+| `result.error.kind` | Meaning                                                                      |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `script`            | Invalid JavaScript, an uncaught exception, or a value that cannot cross JSON |
+| `timeout`           | Guest or total deadline expired                                              |
+| `cancelled`         | The caller's signal was aborted                                              |
+| `limit`             | Source, final output, total calls, or outstanding calls exceeded policy      |
 
-Core contracts include `SandboxTool`, `ToolContext`, `SandboxOptions`,
-`ExecuteOptions`, `SandboxResult`, `ExecutionReport`, and `CallOutcome`.
+Infrastructure failures reject with `SandboxExecutionError`, carrying host-only
+diagnostics and the final call observations. Invalid constructor limits throw
+`RangeError`; failures reading tool bindings throw `SandboxExecutionError`.
 
-## Failures, cancellation, and completion
+Tool callbacks receive unknown arguments and `{ signal }` on the host thread.
+Return `ToolResult.failure(message)` for a deliberately public, catchable guest
+rejection. Unexpected callback exceptions become `Host tool failed.` without
+exposing their messages or stacks. Failure-shaped values inside `success()` remain data.
 
-- Script errors, deadlines, cancellation, and source/output/call limits resolve in `report.result`.
-- Infrastructure failures reject with `SandboxExecutionError`; invalid policy throws `RangeError`.
-- `ToolResult.failure(message)` becomes a catchable guest rejection. Unexpected callback
-  exceptions become `Host tool failed.`; private exception messages are not exposed.
-- Successful execution drains calls already started, including `Promise.race` losers.
-- Cancellation/failure ends observation and requests cooperative cancellation. It does not
-  roll back side effects or establish that retrying is safe. Late completions cannot access a closed VM.
-- Completed calls retain serialized responses; interrupted calls explain why observation stopped.
+Call records stay in invocation order. A completed record retains the serialized
+response; an interrupted record explains why observation stopped. Neither proves
+external success or establishes that retrying is safe.
+
+### Cancellation and completion
+
+Pass cancellation per execution, not to the constructor:
+
+```ts
+const cancelled = await sandbox.execute("return await tools.answer();", {
+  signal: AbortSignal.abort(),
+});
+console.log(cancelled.calls); // [] — no worker or tool call started
+```
+
+Successful execution drains all started calls and queued guest jobs, including
+unawaited calls and `Promise.race` losers. Failure or cancellation stops observing
+unfinished calls and aborts their shared tool signal. Tools must stop cooperatively;
+the sandbox awaits worker cleanup, not cancelled callbacks. It cannot roll back side effects.
 
 ## Limits and boundaries
 
-| Setting                          | Default                                                                     |
-| -------------------------------- | --------------------------------------------------------------------------- |
-| Guest deadline `timeoutMs`       | 1,000 ms, after VM creation and including host waits                        |
-| Parent deadline `totalTimeoutMs` | Unset; when supplied, includes worker startup through completion acceptance |
-| Guest heap / stack               | 64 MiB / 1 MiB                                                              |
-| Source / final output            | 256 KiB / 256 KiB, measured in UTF-8 bytes                                  |
-| Total / outstanding calls        | 100 / 10                                                                    |
+| Option                   | Default  | Bounds                                                                        |
+| ------------------------ | -------- | ----------------------------------------------------------------------------- |
+| `timeoutMs`              | 1,000 ms | Source parsing through completion, after VM/bridge setup; includes host waits |
+| `totalTimeoutMs`         | Unset    | Worker construction through acceptance of completion                          |
+| `memoryLimitBytes`       | 64 MiB   | QuickJS guest heap                                                            |
+| `maxStackSizeBytes`      | 1 MiB    | QuickJS stack guard; maximum 4 MiB                                            |
+| `maxSourceBytes`         | 256 KiB  | Submitted body's UTF-8 bytes                                                  |
+| `maxOutputBytes`         | 256 KiB  | Final JSON value or script-error message, not tool payloads                   |
+| `maxToolCalls`           | 100      | Total admitted tool calls                                                     |
+| `maxConcurrentToolCalls` | 10       | Outstanding tool calls; excess calls are rejected, not queued                 |
 
-Limits belong to the constructor, not individual execution requests. The guest has
-no host `process`, `Bun`, filesystem, `fetch`, or imports. Arguments and results
-cross JSON; an undefined final return becomes null, while undefined tool results
-remain undefined. Guest built-ins remain mutable; private protocol functions are
-captured before submitted code runs.
+Limits must be positive integers; zero and infinity do not disable them. A total
+deadline can cover startup, but is not a hard response-latency cap: synchronous
+host work can delay enforcement, and cleanup may finish after the deadline.
+See [exact boundaries](../../docs/reference.md#resource-limits).
 
 Workers provide thread separation, not OS/process isolation. Tool payloads,
-retained report bytes, aggregate concurrent memory, and synchronous host work are
-not bounded by guest limits. Each execution pays worker/VM startup cost.
+retained report bytes, and aggregate host/WASM memory are not bounded by guest limits.
+This is a working MVP, not a production-hardened sandbox.
+
+## Tools and discovery
+
+- [`defineTool`](src/catalog.ts) binds Standard Schema validation and exports an
+  input JSON Schema for discovery. The handler receives the validated arguments,
+  including transformations. `validateTool` adapts a validator without requiring JSON export.
+- `ToolCatalog.create` snapshots callback bindings and public metadata. Manually
+  supplied `inputSchema` is descriptive; it does not validate calls by itself.
+- `createDiscoveryTools` supplies ordinary `searchTools` and `describeTool`
+  callbacks. The application chooses whether and under which names to expose them.
+- `SandboxLimits` exposes shared defaults and upper bounds.
+
+See [validated tools](../../docs/reference.md#validated-tool-contracts) and
+[discovery](../../docs/reference.md#catalog-and-discovery) for examples. Exact
+signatures and field contracts live in the [public exports](src/index.ts) and
+[types](src/types.ts).
+
+## How it works
+
+QuickJS executes synchronously. A script such as `while (true) {}` on the host
+thread would block the application's event loop, so each admitted execution runs
+in a fresh worker with its own VM. The host keeps the tool callbacks and call records.
+
+```text
+guest: tools.answer() -> private JSON call envelope
+worker: validate and admit -> post request to host
+host: invoke callback -> serialize and record ToolResult -> post reply
+worker: settle guest promise -> release call slot -> pump guest jobs
+guest: continue after await -> serialize final return value
+```
+
+The engine explicitly pumps QuickJS's promise job queue. It yields between batches
+and waits for replies when idle. The private prelude holds the resolver map and
+captures protocol functions before submitted code runs; guest built-ins remain mutable.
+Arguments and results cross JSON, not shared object references. An undefined final
+return becomes `null`; an undefined tool result remains `undefined`.
+
+The host selects the outcome, fixes the call snapshot, and awaits worker termination.
+The [supervisor](src/runtime/execution.ts), [engine](src/runtime/engine.ts), and
+[guest bridge](src/runtime/guest-bridge.ts) explain their lifetimes beside the code.
+This package does not own tool connections, MCP setup, process signals, or an agent loop.
 
 ## Distribution
 
-The build emits ESM JavaScript, declarations, and the worker into `dist/` without
-bundling dependencies. Normal consumers use the compiled package export. The
-`development` condition selects source only inside the repository checkout.
+The provisional package name has not been published. Builds emit ESM JavaScript,
+declarations, and the worker into `dist/` without bundling dependencies. Installed
+consumers use compiled exports; repository scripts select source with the
+`development` condition. Node compatibility is not supported.
 
 ## Development
 

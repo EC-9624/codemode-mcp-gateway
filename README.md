@@ -4,42 +4,21 @@ A code-mode gateway for MCP tools, built from reusable execution and MCP adapter
 packages. An agent writes JavaScript; the gateway executes it with explicitly
 supplied tools. The libraries do not run an agent/model loop.
 
-## Packages
-
-| Workspace                                            | Purpose                                                                      | Status                                                |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------- |
-| [`@cmg/codemode`](packages/codemode/README.md)       | Standalone JavaScript execution, host-tool contracts, discovery, and reports | Independently packable; unpublished, provisional name |
-| [`@cmg/mcp`](packages/mcp/README.md)                 | Connected MCP client → tools; supplied executor → MCP server                 | Private while API matures                             |
-| [`codemode-mcp-gateway`](packages/gateway/README.md) | Programmatic composition and the `cmg` executable                            | Private while API matures                             |
-
-```text
-packages/gateway ──→ @cmg/mcp ──→ codemode's public tool/report contracts
-           └──────→ @cmg/codemode (the selected QuickJS execution implementation)
-```
-
-Codemode can be used without MCP. MCP does not instantiate a sandbox: the
-application injects execution. A replacement backend needs an adapter that honors
-the report/cancellation contract and documents any differences in completion or limits.
-
-Bun **1.4.2** is the supported host runtime, pinned in `.bun-version`. An npm
-package does not imply Node compatibility. This is a working MVP, not a
-production-hardened or OS-isolated sandbox.
+Requires Bun **1.4.2**, pinned in `.bun-version`. The package names are provisional
+and nothing has been published. This is a working MVP, not an OS-isolated or
+production-hardened sandbox.
 
 ## Run
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-bun run build
-bun run example
-bun run example:mcp
 bun run example:server
-bun run check
 ```
 
-Builds emit ESM JavaScript and declarations into each workspace's `dist/`,
-including the codemode worker. Dependencies are not bundled. Package export maps
-expose only public roots, not runtime deep imports. Repository scripts use the
-`development` condition to select source; installed consumers use compiled exports.
+The example starts a client, the gateway, and a synthetic upstream MCP server.
+It discovers `add`, describes its schema, and returns the sum of 2 and 3. See
+the [gateway guide](packages/gateway/README.md) to configure your own upstream.
+Repository commands run source directly; a build is not required for these examples.
 
 ## Standalone execution
 
@@ -50,6 +29,7 @@ const sandbox = new CodemodeSandbox({
   tools: { answer: () => ToolResult.success(42) },
 });
 const report = await sandbox.execute("return await tools.answer();");
+console.log(report.result); // { ok: true, value: 42 }
 ```
 
 Each execution gets a fresh worker and VM. Policy stays constructor-owned; request
@@ -83,6 +63,21 @@ tool bodies. The [gateway README](packages/gateway/README.md) covers configurati
 authentication headers, process ownership, and shutdown. HTTP support is upstream
 only; remote agent hosting is not implemented.
 
+## Packages
+
+Choose the smallest layer your application needs:
+
+| Package                                              | Use it for                                                            |
+| ---------------------------------------------------- | --------------------------------------------------------------------- |
+| [`@cmg/codemode`](packages/codemode/README.md)       | Execute JavaScript with your own host tools, without MCP              |
+| [`@cmg/mcp`](packages/mcp/README.md)                 | Adapt a connected MCP client or expose your executor as an MCP server |
+| [`codemode-mcp-gateway`](packages/gateway/README.md) | Use the composed service through its API or the `cmg` executable      |
+
+Codemode owns execution. MCP depends on its public tool/report contracts, not
+its runtime, and borrows an executor. Gateway selects QuickJS, supplies discovery,
+and owns configuration and process lifecycle. MCP and gateway remain private;
+codemode is independently packable. All three support Bun only.
+
 ## Distribution checks
 
 ```sh
@@ -96,11 +91,19 @@ workers, exercise the MCP adapter and gateway API, and launch the packaged `cmg`
 Temporary local overrides stand in for unpublished workspace registry versions.
 No package is published by these commands.
 
+Builds emit ESM JavaScript and declarations into each package's `dist/`, including
+the codemode worker. Dependencies are not bundled. Export maps expose only package
+roots; repository scripts use the `development` condition, while installed consumers
+use compiled exports.
+
 ## Development
 
 Each package owns its `tests/`, support helpers, fixtures, and test/check commands:
 
 ```sh
+bun run check
+bun run example
+bun run example:mcp
 bun run --cwd packages/codemode test
 bun run --cwd packages/mcp test
 bun run --cwd packages/gateway test

@@ -6,7 +6,12 @@ import {
 } from "@cmg/codemode";
 import { createCodemodeServer } from "@cmg/mcp";
 
-/** Application policy: select QuickJS, inject local discovery, and reject helper collisions. */
+/**
+ * Create a fixed-policy QuickJS executor with local discovery and expose it over MCP.
+ * Helper-name collisions and invalid sandbox policy throw before a server is returned.
+ * The caller owns the MCP transport and the catalog's external resources; server.close()
+ * aborts this server's requests and awaits their execution cleanup.
+ */
 export function createServer(catalog: ToolCatalog, options: Omit<SandboxOptions, "tools"> = {}) {
   const discovery = createDiscoveryTools(catalog);
   for (const name of Object.keys(discovery)) {

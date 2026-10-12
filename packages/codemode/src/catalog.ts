@@ -18,7 +18,11 @@ export type ToolDefinition = {
 export type ToolInputSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output> &
   StandardJSONSchemaV1<Input, Output>;
 
-/** Build a catalog definition whose handler receives the schema's inferred output. */
+/**
+ * Build a tool whose handler receives the schema's validated output, including transforms.
+ * Export and copy input JSON Schema once for discovery; the native schema validates calls.
+ * JSON Schema export/copy failures throw during definition, before any execution.
+ */
 export function defineTool<Input, Output>(definition: {
   description: string;
   inputSchema: ToolInputSchema<Input, Output>;
@@ -45,12 +49,17 @@ export type ToolDescription = {
 
 export type ToolCatalog = {
   readonly tools: Readonly<Record<string, SandboxTool>>;
+  /** Rank case-insensitive name/description matches by distinct query terms; ties keep catalog order. */
   search(query: string): ToolDescription[];
+  /** Exact-name lookup; unknown names return undefined without invoking a tool. */
   describe(name: string): ToolDescription | undefined;
 };
 
 export const ToolCatalog = {
-  /** Select public metadata and snapshot callback bindings; schemas are descriptive, not validators. */
+  /**
+   * Snapshot callback bindings, names, and descriptions; schemas are metadata, not validators.
+   * Schema objects remain shared references and must be treated as read-only.
+   */
   create(definitions: Readonly<Record<string, ToolDefinition>>): ToolCatalog {
     const entries = Object.entries(definitions);
 

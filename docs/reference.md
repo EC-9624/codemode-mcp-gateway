@@ -1,7 +1,8 @@
-# Sandbox reference
+# Execution and MCP reference
 
-Detailed API behavior, execution contracts, and resource ownership. Start with the
-[README](../README.md) for setup and a minimal example. Run commands from the workspace root.
+Detailed edge cases and execution contracts. For usage, start with the
+[codemode](../packages/codemode/README.md), [MCP](../packages/mcp/README.md), or
+[gateway](../packages/gateway/README.md) guide. Run commands from the workspace root.
 
 - [Usage](#usage)
 - [Resource limits](#resource-limits), [output limits](#final-output-limit), and [tool-call limits](#tool-call-limits)
@@ -14,10 +15,9 @@ Detailed API behavior, execution contracts, and resource ownership. Start with t
 
 ## Usage
 
-`@cmg/codemode` exports the standalone sandbox API and its public types.
-`@cmg/mcp` exports MCP discovery, adaptation, and the executor-backed server.
-`codemode-mcp-gateway` exports programmatic composition and provides the `cmg` executable.
-Package READMEs document responsibilities and usage; examples below use public package imports.
+Import package roots; runtime deep imports are unsupported. Exact signatures and
+field contracts live in the public exports of [codemode](../packages/codemode/src/index.ts),
+[MCP](../packages/mcp/src/index.ts), and [gateway](../packages/gateway/src/index.ts).
 
 `new CodemodeSandbox({ tools, ...configuration })` validates limits and snapshots tool
 bindings synchronously, before any worker starts. Constructor registry failures
@@ -29,37 +29,9 @@ individual runs, not the constructor.
 The sandbox holds configuration rather than live workers between runs, so it needs
 no `close()` call. Every execution awaits its own worker cleanup.
 
-The application constructs the sandbox at startup. An agent-facing MCP handler can
-accept `{ code }` and supply the MCP request's cancellation signal separately.
-The standalone `execute(code, tools, options)` export has been removed; move tools
-and limits into the constructor and call the instance method.
-
-```ts
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
-
-const sandbox = new CodemodeSandbox({
-  tools: { answer: () => ToolResult.success(42) },
-});
-
-await sandbox.execute("return 1 + 2;");
-// { result: { ok: true, value: 3 }, calls: [] }
-
-await sandbox.execute('throw new Error("Something failed");');
-// { result: { ok: false, error: { kind: "script", message: "Something failed" } }, calls: [] }
-
-await sandbox.execute("return await tools.answer();");
-// {
-//   result: { ok: true, value: 42 },
-//   calls: [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
-// }
-
-(await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {}")).result;
-// { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." } }
-
-(await new CodemodeSandbox({ timeoutMs: 1000, totalTimeoutMs: 100 }).execute("while (true) {}"))
-  .result;
-// { ok: false, error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." } }
-```
+An agent-facing MCP handler accepts `{ code }` and supplies request cancellation
+separately. Migration from `execute(code, tools, options)`: move tools and limits
+into the constructor and call the instance method. See [the runnable example](../examples/basic.ts).
 
 Input is the body of an async function, not an expression or a module. Each call
 runs in a fresh worker with a fresh QuickJS runtime and context. Only explicitly
@@ -75,15 +47,10 @@ rather than throwing validation errors. Guests receive ordinary values or
 catchable promise rejections. Failure-shaped data wrapped in `success` remains
 ordinary data.
 
-`timeoutMs` defaults to 1000. Optional `totalTimeoutMs` adds a parent deadline
-covering startup through acceptance of completion. Both budgets must be integers
-from 1 to 2147483647; invalid budgets throw `RangeError` during construction.
-Each execution starts fresh deadlines using the stored durations.
-Either deadline can win; neither must be larger than the other. Omitting
-`totalTimeoutMs` retains the guest-only deadline.
-
-The total budget is not a hard response-latency cap: synchronous main-thread work
-can delay enforcement, and worker termination is awaited after an outcome is chosen.
+Each execution starts fresh deadlines using the stored durations. Either guest
+or parent deadline can win; neither must be larger than the other. See
+[completion and deadline](#completion-and-deadline) and
+[parent supervision](#parent-supervised-deadline) for their exact coverage.
 
 ### Resource limits
 
@@ -324,12 +291,10 @@ const report = {
 
 `bun run example` demonstrates this sequence using an explicit start gate.
 
-Registry setup failures throw host-only `SandboxExecutionError` during construction.
-Worker construction, supervision, and cleanup failures reject execution with
-`SandboxExecutionError`. Its `calls` carries the same snapshot and its
-`cause` preserves the original host-side failure. If execution and cleanup both
-throw, the cause retains the disposal `SuppressedError` chain. Invalid budgets
-throw `RangeError` during sandbox construction.
+`SandboxExecutionError` carries the same snapshot in `calls`; its `cause`
+preserves the original host-side failure. If execution and cleanup both
+throw, the cause retains the disposal `SuppressedError` chain. See
+[results and failures](#results-and-failures) for error classification.
 
 Once selected, interruption reasons do not change during cleanup. For example,
 cancellation followed by a termination failure rejects with `SandboxExecutionError`,
@@ -602,7 +567,7 @@ JSON-specific rules do not restrict native Standard Schema validators.
 The SDK can validate output schemas learned during discovery using its own
 metadata cache; the adapter does not add another validator.
 
-Guest response handling follows Pi's model:
+Guest response handling preserves MCP data:
 
 - `content` blocks are preserved without parsing text or fetching resource links.
 - `structuredContent` is retained when present, including arrays, null, false,
@@ -682,7 +647,7 @@ its upstream client. Cancellation is cooperative for host tools.
 ### Requests and discovery
 
 The input schema is a strict `{ code: string }` object. Unknown keys, including
-resource-limit overrides, fail MCP input validation before execution. Input is an
+resource-limit overrides, fail MCP input validation before execution. Input is
 JavaScript source interpreted by the injected executor. The CMG gateway
 selects our async-function-body contract; a final `return` selects its result.
 
@@ -723,10 +688,8 @@ delivery of its final response even though worker cleanup still completes.
 
 ### Stdio application
 
-Run `bun run cmg <configuration.json>` from the repository, or `cmg <configuration.json>`
-after installation. See the [gateway README](../packages/gateway/README.md#configuration)
-and `examples/cmg.json` for configuration. `bun run example:server` runs the full
-client → CMG → upstream demonstration.
+See the [gateway guide](../packages/gateway/README.md) for commands, configuration,
+authentication headers, and the complete client → gateway → upstream example.
 
 The application validates its configuration, connects one stdio or Streamable HTTP upstream using the SDK's
 default legacy handshake, and discovers its catalog. Its agent-facing stdio entry
@@ -739,85 +702,33 @@ requests session deletion when a session ID exists, then closes the transport.
 The DELETE request is bounded at 5 seconds, and an upstream that declines session
 termination with HTTP 405 is handled by the SDK.
 
-The CLI supplies a 5-second guest budget and a 10-second total budget by default;
-other defaults and upper bounds come from the shared `SandboxLimits` policy, also
-used by the runtime's option and worker-boundary validation. Its upstream handshake is bounded at
-5 seconds; catalog discovery uses the adapter's 15-second default. These startup
-budgets are separate from execution budgets.
-
-Only JSON protocol messages go to stdout. Application diagnostics and inherited
-upstream stderr go to stderr. Upstream configuration selects one transport:
-
-- `transport: "stdio"` accepts `command`, optional `args`, `cwd`, and `env`.
-  `cwd` is relative to the configuration file and defaults to its directory;
-  arguments are passed unchanged. `env` adds to the SDK's default inherited
-  environment. Omitting `transport` preserves command-only configurations.
-- `transport: "http"` accepts an HTTP(S) `url` and optional `headers`.
-  Header templates expand `{env:NAME}` from the host environment before connection;
-  missing variables and invalid headers reject startup without printing their values.
-  Authentication is application-owned: the CLI supports supplied headers, while
-  callers of `createMcpCatalog` can supply their own authenticated SDK client.
-  The CLI does not start OAuth flows or maintain a credential store.
-
-Configuration and catalogs do not reload during a run.
+Startup budgets are separate from execution budgets. The gateway uses the same
+`SandboxLimits` upper bounds as constructor and worker-boundary validation, with
+different default execution deadlines. Configuration and catalogs do not reload.
 
 ## Architecture
 
-**Guest** means JavaScript inside QuickJS. **Worker** means the Bun thread
-embedding QuickJS. **Main app** means the main thread holding tool implementations
-and the catalog. `packages/codemode/` owns execution, tool contracts, and discovery.
-`packages/mcp/` owns MCP adapters and JSON Schema compilation, depending only on
-codemode's public exports, not its runtime. `packages/gateway/` selects and composes the
-executor and owns process lifecycle. Codemode has no MCP or Ajv dependency. Each
-library exports through `src/index.ts`; worker/VM details stay internal to
-`packages/codemode/src/runtime/`. In the diagram below, codemode and mcp paths are
-relative to their package's `src/`; gateway files live in `packages/gateway/src/`.
-The gateway's public entry does not start the executable or install shutdown listeners.
+**Host** is the Bun main thread holding callbacks and call records. **Worker** is
+the separate Bun thread running QuickJS. **Guest** is submitted JavaScript inside
+that VM, not the privileged worker code.
 
 ```text
-Main app
-  cli.ts: thin cmg executable entry
-  main.ts: argument handling and exit status
-  config.ts: typed transport configuration and host HTTP header templates
-  server.ts: stdio entry, startup configuration, upstream process, and shutdown
-  composition.ts: application-owned discovery, helper collision checks, and QuickJS selection
-  codemode/index.ts: public exports
-  codemode/types.ts: execution options, results, and call contracts
-  codemode/limits.ts: shared resource defaults and upper bounds
-  codemode/sandbox.ts: fixed CodemodeSandbox configuration and execution admission
-  codemode/errors.ts: host infrastructure errors carrying a call snapshot
-  codemode/runtime/options.ts: apply defaults and validate constructor configuration
-  codemode/runtime/execution.ts: WorkerExecution owns each run and its cleanup
-  codemode/runtime/report.ts: call records and snapshots
-  codemode/tools.ts: callback invocation, validation, and result serialization
-  codemode/catalog.ts: metadata and discovery
-  mcp/catalog.ts: discover and adapt tools from an application-owned SDK client
-  mcp/schema.ts: compile discovered JSON Schemas
-  mcp/server.ts: execute-only MCP handler, active execution lifetime, and compact responses
-       |
-       | worker messages: call IDs, names, JSON payloads
-       v
-Worker thread (Bun)
-  codemode/runtime/worker.ts: decode startup data, assemble the engine and tool connection
-  codemode/runtime/worker-bridge.ts: relay calls and replies over the parent port
-       |
-  codemode/runtime/engine.ts: own the VM, pump jobs, and enforce the deadline
-  codemode/runtime/script.ts: validate the source wrapper, prepare the private API, and start submitted code
-  codemode/runtime/guest-bridge.ts: one native dispatcher, admission, reply validation, and wakeups
-       |
-        | VM boundary: serialized call/reply envelopes through private functions
-       v
-QuickJS guest
-  codemode/runtime/prelude.ts: JSON conversion, tool wrappers, and guest promise resolvers
-  submitted code: await tools.someTool(args)
+Host: fixed tools/policy -> worker supervision -> callback dispatch and reports
+  ↕ worker messages: call IDs, names, JSON payloads; shared interrupt flag
+Worker: startup validation -> VM/bridge setup -> guest job pump and deadline
+  ↕ private functions: serialized call and reply envelopes
+Guest: prelude-owned promises -> submitted async function -> tools[name](args)
 ```
 
-Supporting files in `codemode/runtime/`: `limits.ts` selects worker limits from the
-shared resource policy and validates them for options and startup decoding;
-`budget.ts` provides the counters owned independently by each boundary;
-`vm.ts` creates a VM with memory and stack limits; `protocol.ts` defines and validates
-guest and worker messages; `listener.ts` registers listeners whose removal belongs
-to a cleanup stack.
+Read the lifecycle explanations beside the implementation:
+
+- [Supervisor](../packages/codemode/src/runtime/execution.ts): first outcome, call snapshot, worker cleanup.
+- [Engine](../packages/codemode/src/runtime/engine.ts): VM ownership, job pumping, completion, guest deadline.
+- [Guest bridge](../packages/codemode/src/runtime/guest-bridge.ts): admission, settlement, wakeups, private failures.
+- [MCP server](../packages/mcp/src/server.ts): borrowed executor, response projection, active request cleanup.
+- [Gateway](../packages/gateway/src/server.ts): upstream setup, process signals, stdio/HTTP shutdown.
+
+Package responsibilities and composition are covered in the [package guides](../README.md#packages).
 
 A tool call travels up and its reply travels back down:
 
@@ -834,10 +745,6 @@ worker: release the call slot and wake the engine
 worker: pump QuickJS jobs -> prelude decodes the result -> guest resumes
 ```
 
-Resolving a guest promise queues continuations; `runtime.executePendingJobs()`
-runs them. The job pump processes at most 100 jobs per turn and yields to host
-timers and I/O between batches.
-
 Execution report flow:
 
 ```text
@@ -847,16 +754,9 @@ parent accepts completion / cancellation / timeout / infrastructure failure
        unresolved dispatched calls -> interrupted with the selected reason
   -> request interruption; abort tool signal on unsuccessful execution
   -> await worker cleanup
-       success -> return { result, calls }
+        expected outcome -> return { result, calls }
        infrastructure or cleanup failure -> reject SandboxExecutionError(calls, cause)
 ```
-
-`WorkerExecution.finish` selects the outcome and closes the call log
-before notifying tools. `checkRunning` can select timeout or cancellation, so it is
-called before dispatch and after decoding or host-result conversion. Setup failures
-use the same finish path before unwinding. The cleanup stack removes listeners and
-awaits worker termination; `WorkerExecution.run` attaches the fixed call snapshot
-to any execution or cleanup exception.
 
 ### Ownership
 
@@ -898,19 +798,11 @@ to any execution or cleanup exception.
 
 ### Results and failures
 
-- Script errors, timeouts, and caller cancellation resolve in `report.result` with
-  kind `script`, `timeout`, or `cancelled`. Thrown strings become the message;
-  other values without a string `message` produce a generic message. Thrown
+- Expected outcomes resolve in `report.result`; see the [result kinds](../packages/codemode/README.md#results-and-failures).
+  Thrown strings become the message; other values without a string `message`
+  produce a generic message. Thrown
   promises are opaque values, not awaited or unwrapped.
-- Oversized source resolves with `kind: "limit"`, `resource: "source"`, the byte
-  maximum, and no calls. Source admission belongs to the parent; workers cannot
-  report a source-limit result or caller cancellation.
-- Tool admission exhaustion resolves with `kind: "limit"` and resource
-  `tool-calls` or `concurrent-tool-calls`. The worker and parent each enforce these
-  limits; they are distinct from catchable tool failures and sandbox errors.
-- Oversized guest output resolves with `kind: "limit"`, `resource: "output"` and
-  its byte maximum. The worker enforces this before transferring its result.
-- `ToolResult.failure(message)` is the only way a host message reaches the guest.
+- Only deliberately public tool-failure messages cross into the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
 - Infrastructure failures reject the host promise and never become catchable tool
@@ -994,24 +886,20 @@ admit source -> record parent deadline -> construct worker -> supervise
   flag here belongs to this application. In the pinned Bun version, termination
   requests a native VM stop and its promise is tied to the worker's `close` event.
   Neither a hard shutdown latency nor execution of worker-side cleanup is promised.
-- Tests independently exercise shared-flag interruption, busy worker startup,
-  guest computation, stalled startup, host waits, late events, and termination
-  failures. Potentially stuck workers run in a subprocess with an outer test timeout;
-  that subprocess must also exit after recovery and a successful execution.
 
 ### Cancellation and cleanup ordering
 
 ```text
-if already aborted: return cancelled report with no calls
-  -> admit source -> create worker using fixed registry and limits -> supervise
-  -> caller abort: check total deadline, choose timeout or cancelled outcome
+already aborted -> return cancelled report with no calls
+otherwise -> admit source -> create worker -> supervise
+caller abort -> check total deadline, choose timeout or cancelled outcome
   -> close dispatch and call snapshot -> set shared interrupt flag -> abort host-tool signal
   -> remove caller/worker listeners and timer -> terminate worker
   -> await termination -> remove worker error listener -> return report
 ```
 
-- Invalid budgets or byte limits throw during construction. A pre-aborted execution
-  skips source admission and worker creation; tool bindings were already snapshotted.
+- A pre-aborted execution skips source admission and worker creation; tool bindings
+  were already snapshotted during construction.
 - The first accepted outcome wins. If the total deadline has already elapsed when
   cancellation is observed, the result is `timeout`; otherwise it is `cancelled`.
   Later cancellation cannot replace a completed result or infrastructure failure.
@@ -1080,6 +968,8 @@ ordinary argument and result conversion still observes native guest semantics.
   `unknown` and return explicit success/failure unions. Structured cloning carries
   envelopes, JSON text/derived result data, resolved limits, and the shared interrupt buffer;
   no VM handles or functions cross threads. The buffer must contain one 32-bit word.
+- Only the parent classifies caller cancellation and source admission; workers
+  cannot report either outcome.
 - JSON text is validated before dispatch or guest settlement. The main thread
   parses tool arguments once while decoding.
 - Per-execution call IDs increase in dispatch order. The main thread rejects
@@ -1093,9 +983,8 @@ ordinary argument and result conversion still observes native guest semantics.
 
 - This is thread separation, not an OS or process sandbox. The trusted worker has
   Bun privileges; guest code runs only inside QuickJS.
-- Configurable limits cover guest heap (default 64 MiB), stack (default 1 MiB),
-  submitted source and final guest output (each default 256 KiB), and deadlines,
-  not total host/WASM memory or the full execution report's size.
+- Guest limits do not bound total host/WASM memory, aggregate concurrent executions,
+  or the full report's size. See [resource limits](#resource-limits) for exact coverage.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
 - Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
   a stuck worker that neither reports nor exits can leave execution pending.
@@ -1104,51 +993,15 @@ ordinary argument and result conversion still observes native guest semantics.
 - Synchronous host callbacks and result conversion run on the main thread and cannot
   be interrupted. The guest deadline checks source parsing after it returns;
   the parent can request worker termination meanwhile.
-- Timeout, failure, or cancellation ends sandbox execution and requests cooperative
-  tool cancellation. Started operations may still finish or have side effects;
-  the sandbox provides no rollback, automatic retry, or exactly-once guarantee. Retained call
-  outcomes describe only parent observations at execution completion; unresolved
-  dispatched calls are marked interrupted with the reason observation ended.
-  Call counts and outstanding calls are bounded per execution; payload size and
-  retained bytes are not yet bounded.
+- Cancellation provides no rollback, automatic retry, or exactly-once guarantee.
+  Tool payloads and retained response bytes remain unbounded by sandbox policy.
 - No guest imports, TypeScript, or persistent state. MCP integration currently
   adapts tools from one application-owned client per catalog.
 - This is a learning project, not a production-hardened sandbox.
 
 ## Code style and checks
 
-Code explains **How**, tests specify **What**, commit logs explain **Why**, and
-code comments explain **Why not**. `AGENTS.md` defines the project-specific style
-and ownership rules.
-
-Oxfmt uses `.oxfmtrc.json`. Oxlint uses `.oxlintrc.json` with native rules and
-`oxlint-tsgolint` for type-aware promise and unsafe-operation checks; bare `void`
-does not exempt an unhandled promise. Lint also enforces named imports, type-only
-import markers, `const`, and guard clauses. Import aliases, helper extraction,
-narrow catches, and VM resource ownership remain review rules.
-
-```sh
-bun run format
-bun run lint
-bun run typecheck
-```
-
-Each package owns its tests and groups them by the boundary they verify. Paths
-below are relative to that package:
-
-- `tests/unit/`: protocol decoding, catalog logic, and rejection helpers.
-- `tests/component/`: real QuickJS/bridge ownership, worker supervision, and fault injection.
-- `tests/integration/`: public `execute` behavior, discovery, deadlines, cancellation,
-  and subprocess lifecycle.
-- `tests/support/`: shared mechanics; `tests/fixtures/`: executable worker/process scenarios.
-
-`executeEngine` accepts `installToolBridge`. Production supplies
-`installWorkerToolBridge`; engine tests use `installLocalToolBridge` from
-`packages/codemode/tests/support/local-tools.ts`. Both use the real `installGuestToolBridge`.
-The local adapter keeps VM handles and original exceptions observable.
-
-See [Testing conventions](testing.md) for placement, readability, and async
-ordering rules. `bun run --cwd packages/codemode test` runs that package's layers;
-each other package has its own equivalent command. Root `bun run test` coordinates
-the package suites. Typechecking includes all test helpers and fixtures, and root
-`bun run check` also verifies compiled tarballs in isolated consumers.
+See [project conventions](../AGENTS.md) for code, comment, and ownership rules,
+and [testing conventions](testing.md) for package ownership, fault injection,
+async ordering, and focused commands. Root `bun run check` builds, typechecks,
+lints, checks formatting, runs package tests, and verifies packed consumers.

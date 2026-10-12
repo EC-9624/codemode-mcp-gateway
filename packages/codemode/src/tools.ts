@@ -7,20 +7,34 @@ export type ToolResult = { ok: true; value: unknown } | { ok: false; error: { me
 
 /** Only explicit failure messages cross into the guest; thrown errors stay private. */
 export const ToolResult = {
+  /** The guest receives the JSON-round-tripped value; an omitted value remains undefined. */
   success(value?: unknown) {
     return { ok: true, value } satisfies ToolResult;
   },
+  /** Reject the guest's tool promise with this deliberately public message. */
   failure(message: string) {
     return { ok: false, error: { message } } satisfies ToolResult;
   },
 } as const;
 
-/** Host-only execution context. Cancellation is cooperative; it does not undo side effects. */
-export type ToolContext = { readonly signal: AbortSignal };
+/** Host-only execution context shared by all tool calls in one execution. */
+export type ToolContext = {
+  /**
+   * Aborted when execution fails, times out, or is cancelled; not on successful completion.
+   * Uses a generic AbortError, never the caller's reason. Tools must stop cooperatively.
+   */
+  readonly signal: AbortSignal;
+};
 
+/** Validate unknown arguments and return an explicit outcome; thrown errors stay private. */
 export type SandboxTool = (args: unknown, context: ToolContext) => ToolResult | Promise<ToolResult>;
 
-/** Bind typed validation to an unknown-input callback without erasing the handler's output type. */
+/**
+ * Adapt an unknown-input tool so its handler receives the schema's validated output type.
+ * Reported issues become public ToolResult failures; validator exceptions propagate to
+ * the sandbox's private tool boundary. Cancellation is checked again after validation
+ * so an aborted execution cannot start the handler when a late validator settles.
+ */
 export function validateTool<Input, Output>(
   schema: StandardSchemaV1<Input, Output>,
   execute: (args: Output, context: ToolContext) => ToolResult | Promise<ToolResult>,

@@ -7,6 +7,7 @@ export type ToolCallLimit = {
   message: string;
 };
 
+/** Expected execution outcomes. Infrastructure failures reject instead of appearing in this union. */
 export type SandboxResult =
   | { ok: true; value: unknown }
   | { ok: false; error: { kind: "script" | "timeout"; message: string } }
@@ -27,6 +28,7 @@ export type InterruptionReason =
 
 /** Parent observations, not proof of external side effects or guest receipt. */
 export type CallOutcome = {
+  /** Execution-local sequence, starting at 1. Records remain in invocation order. */
   readonly callId: number;
   readonly name: string;
 } & (
@@ -37,6 +39,7 @@ export type CallOutcome = {
 /** Final execution outcome and parent-observed calls; not a transaction or retry guarantee. */
 export type ExecutionReport = {
   readonly result: SandboxResult;
+  /** Fixed when the outcome is selected; late tool completions cannot update these observations. */
   readonly calls: readonly CallOutcome[];
 };
 export type ExecuteOptions = {
@@ -46,10 +49,14 @@ export type ExecuteOptions = {
 
 /** Fixed configuration and tool bindings, snapshotted at construction. */
 export type SandboxOptions = {
+  /** Snapshotted callback bindings. The application retains ownership of their external resources. */
   tools?: Readonly<Record<string, SandboxTool>>;
-  /** Guest deadline after VM creation, including host waits. Defaults to 1000 ms. */
+  /** Guest deadline after VM and bridge setup, including source parsing and host waits. Default: 1000 ms. */
   timeoutMs?: number;
-  /** Optional parent deadline through completion acceptance; worker cleanup follows. */
+  /**
+   * Optional deadline from worker construction through acceptance of completion. Cleanup follows
+   * and may outlast it; this is not a hard response-latency cap. Default: no parent deadline.
+   */
   totalTimeoutMs?: number;
   /** QuickJS guest heap limit. Defaults to 64 MiB. */
   memoryLimitBytes?: number;

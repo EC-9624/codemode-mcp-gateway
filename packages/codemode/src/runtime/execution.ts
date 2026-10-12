@@ -1,3 +1,17 @@
+/**
+ * Host-side supervisor for one worker. Tool callbacks, call records, caller cancellation,
+ * and the optional total deadline stay here; only names, JSON data, limits, and the
+ * interrupt buffer cross into the worker.
+ *
+ * A run moves from ready to running to finished:
+ * 1. Observe worker events and caller cancellation, then dispatch admitted tool calls.
+ * 2. Accept the first completion, cancellation, timeout, or infrastructure failure.
+ * 3. Close dispatch and snapshot calls before aborting tools; abort listeners can re-enter.
+ * 4. Remove listeners and await worker termination before settling the host promise.
+ *
+ * Late replies cannot change the snapshot. Cleanup can still fail after an outcome was
+ * selected, so run() wraps execution and cleanup failures with the same call observations.
+ */
 import { type Worker } from "node:worker_threads";
 import { createCallLog } from "./report.js";
 import { listen } from "./listener.js";
