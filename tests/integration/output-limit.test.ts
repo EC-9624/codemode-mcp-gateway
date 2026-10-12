@@ -2,6 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { CodemodeSandbox, ToolResult } from "../../src/codemode";
 
 describe("guest output limit", () => {
+  test("measures the entire thrown string across embedded NULs", async () => {
+    const code = 'JSON.stringify = () => "replaced"; throw "a\\0b";';
+
+    const accepted = await new CodemodeSandbox({ maxOutputBytes: 3 }).execute(code);
+    const rejected = await new CodemodeSandbox({ maxOutputBytes: 2 }).execute(code);
+
+    expect(accepted.result).toEqual({ ok: false, error: { kind: "script", message: "a\u0000b" } });
+    expect(rejected.result).toMatchObject({
+      ok: false,
+      error: { kind: "limit", resource: "output", maximum: 2 },
+    });
+  });
+
   test("accepts exactly 256 KiB of JSON by default and rejects one byte more", async () => {
     const sandbox = new CodemodeSandbox();
     const accepted = await sandbox.execute('return "x".repeat(262142);');

@@ -1,5 +1,6 @@
 import { parse } from "acorn";
 import { type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
+import { PRELUDE_SOURCE } from "./prelude";
 
 export function prepareScript(
   code: string,
@@ -32,16 +33,20 @@ export function prepareScript(
   return { ok: true, source };
 }
 
-/** The caller owns the returned runner or error handle. */
-export function prepareRunner(vm: QuickJSContext) {
+/** Borrows the dispatcher; the caller owns the private prelude API or error handle. */
+export function prepareRunner(
+  vm: QuickJSContext,
+  dispatcher: QuickJSHandle,
+  toolNames: readonly string[],
+) {
   // Disposing an error result here would invalidate the handle the caller must inspect.
   const factory = vm.evalCode(PRELUDE_SOURCE, "sandbox-prelude.js");
   if (factory.error) return factory;
 
   using factoryHandle = factory.value;
-  using hostTools = vm.getProp(vm.global, "tools");
+  using names = vm.newString(JSON.stringify(toolNames));
 
-  return vm.callFunction(factoryHandle, vm.undefined, hostTools);
+  return vm.callFunction(factoryHandle, vm.undefined, dispatcher, names);
 }
 
 /** Borrows the runner; the caller owns the returned promise or error handle. */
@@ -53,37 +58,3 @@ export function startScript(vm: QuickJSContext, source: string, runner: QuickJSH
 
   return vm.callFunction(runner, vm.undefined, script);
 }
-
-// Compiling user code inside this closure would expose raw callbacks and captured codecs.
-const PRELUDE_SOURCE = `((hostTools) => {
-    "use strict";
-    const stringify = JSON.stringify;
-    const parse = JSON.parse;
-    const ConversionError = TypeError;
-    const decodeResult = async (call) => {
-      const json = await call;
-      return json === undefined ? undefined : parse(json);
-    };
-
-    const tools = Object.create(null);
-    for (const name of Object.keys(hostTools)) {
-      const invoke = hostTools[name];
-      tools[name] = (args) => {
-        const json = stringify(args);
-        if (json === undefined && args !== undefined) {
-          throw new ConversionError("Tool arguments are not JSON-serializable.");
-        }
-        return decodeResult(invoke(json));
-      };
-    }
-    globalThis.tools = Object.freeze(tools);
-
-    return async (script) => {
-      const value = await script(tools);
-      const json = stringify(value);
-      if (json === undefined && value !== undefined) {
-        throw new ConversionError("Return value is not JSON-serializable.");
-      }
-      return json ?? "null";
-    };
-  })`;

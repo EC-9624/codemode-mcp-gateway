@@ -1,7 +1,7 @@
-import { type QuickJSContext, type QuickJSDeferredPromise, type Scope } from "quickjs-emscripten";
-import { type SerializedToolResult } from "../tools";
+import { type QuickJSContext, type QuickJSHandle, type Scope } from "quickjs-emscripten";
 import { type ToolCallLimit } from "../types";
 import { createToolCallBudget, type ToolCallLimits } from "./budget";
+import { GuestCall, GuestReply, ToolReply } from "./protocol";
 
 /** Private infrastructure failures throw; admission limits are guest results. */
 export type BridgeFailure =
@@ -9,30 +9,42 @@ export type BridgeFailure =
   | { kind: "limit"; limit: ToolCallLimit };
 
 export type ToolBridge = {
-  pendingCalls: ReadonlySet<Promise<void>>;
+  readonly dispatcher: QuickJSHandle;
+  readonly toolNames: readonly string[];
+  readonly pendingCalls: ReadonlySet<number>;
+  readonly changeSignal: Promise<void>;
   /** The first failure wins; it stays undefined while the bridge is healthy. */
   readonly failure: BridgeFailure | undefined;
-  failureSignal: Promise<void>;
+  readonly failureSignal: Promise<void>;
+  attach(api: QuickJSHandle): void;
+  receive(reply: unknown): void;
   fail(error: unknown): void;
 };
 
 /**
- * Tool failures arrive as result values so guests can catch them.
- * Admission limits stop execution before allocating an excess deferred promise.
- * Invocation rejections signal infrastructure failure and must end execution,
- * rather than become catchable guest errors.
+ * Owns one native dispatcher and a private settlement handle in the supplied scope.
+ * Guest promises live in the prelude. Dispatch must not synchronously re-enter the VM.
  */
 export function installGuestToolBridge(
   context: QuickJSContext,
   toolNames: readonly string[],
-  invoke: (name: string, json: string | undefined) => Promise<SerializedToolResult>,
+  dispatch: (call: GuestCall) => void,
   scope: Scope,
   limits: ToolCallLimits,
 ): ToolBridge {
+  const names = new Set(toolNames);
   const budget = createToolCallBudget(limits);
-  const pendingCalls = new Set<Promise<void>>();
+  const pendingCalls = new Set<number>();
   const failureSignal = Promise.withResolvers<void>();
+  let change = Promise.withResolvers<void>();
   let failure: BridgeFailure | undefined;
+  let settle: QuickJSHandle | undefined;
+  let lastCallId = 0;
+
+  const notify = () => {
+    change.resolve();
+    change = Promise.withResolvers<void>();
+  };
 
   const stop = (next: BridgeFailure) => {
     if (failure !== undefined) return;
@@ -43,105 +55,96 @@ export function installGuestToolBridge(
 
   const fail = (error: unknown) => stop({ kind: "error", error });
 
-  using toolObject = context.newObject(context.null);
-
-  for (const name of toolNames) {
-    using callback = context.newFunction(name, (args = context.undefined) => {
-      if (failure !== undefined) return context.undefined;
-
-      let json: string | undefined;
-      let deferred: QuickJSDeferredPromise;
+  const dispatcher = scope.manage(
+    context.newFunction("dispatch", (json = context.undefined) => {
+      if (failure !== undefined) return context.false;
 
       try {
-        const noArgs = context.typeof(args) === "undefined";
+        const decoded = GuestCall.decode(
+          context.typeof(json) === "string" ? context.getString(json) : undefined,
+        );
 
-        if (!noArgs && context.typeof(args) !== "string") {
-          return { error: context.newError("Tool arguments must be JSON text or undefined.") };
+        if (!decoded.ok) {
+          fail(new Error(decoded.message));
+
+          return context.false;
         }
 
-        json = noArgs ? undefined : context.getString(args);
-        // Relying on the public wrapper alone would leave raw bridge calls unchecked.
-        if (json !== undefined) {
-          try {
-            JSON.parse(json);
-          } catch (error) {
-            if (!(error instanceof SyntaxError)) throw error;
+        const call = decoded.value;
+        if (!names.has(call.name) || call.callId !== lastCallId + 1) {
+          fail(new Error("Sandbox guest requested an unknown tool or invalid call ID."));
 
-            return { error: context.newError("Tool arguments are not valid JSON.") };
-          }
+          return context.false;
         }
 
-        // Reserve before deferred allocation or dispatch, including synchronous guest bursts.
         const limit = budget.admit();
         if (limit !== undefined) {
           stop({ kind: "limit", limit });
 
-          return context.undefined;
+          return context.false;
         }
 
-        // Callback-local `using` would dispose the resolver before the host reply arrives.
-        deferred = scope.manage(context.newPromise());
-      } catch (error) {
-        // Escaping this callback lets the SDK turn private exceptions into guest errors.
-        fail(error);
+        lastCallId = call.callId;
+        pendingCalls.add(call.callId);
+        dispatch(call);
 
-        return context.undefined;
+        return context.true;
+      } catch (error) {
+        // The SDK turns escaping native callback exceptions into guest-visible errors.
+        fail(error);
       }
 
-      const settlement = settlePromise(context, () => invoke(name, json), deferred, scope);
-      pendingCalls.add(settlement);
-      void settlement.then(
-        () => {
-          budget.release();
-          pendingCalls.delete(settlement);
-        },
-        (error) => {
-          budget.release();
-          fail(error);
-        },
-      );
-
-      return deferred.handle;
-    });
-
-    context.setProp(toolObject, name, callback);
-  }
-
-  context.setProp(context.global, "tools", toolObject);
+      return context.false;
+    }),
+  );
 
   return {
+    dispatcher,
+    toolNames,
     pendingCalls,
+    get changeSignal() {
+      return change.promise;
+    },
     get failure() {
       return failure;
     },
     failureSignal: failureSignal.promise,
+    attach(api) {
+      if (settle !== undefined) throw new Error("Sandbox guest bridge is already initialized.");
+
+      settle = scope.manage(context.getProp(api, "settle"));
+    },
+    receive(reply) {
+      if (!scope.alive || failure !== undefined) return;
+
+      try {
+        const decoded = ToolReply.decode(reply);
+        if (!decoded.ok) {
+          fail(new Error(decoded.message));
+
+          return;
+        }
+
+        if (!pendingCalls.has(decoded.value.callId)) {
+          fail(new Error("Sandbox worker received an unknown or duplicate tool reply."));
+
+          return;
+        }
+
+        if (settle === undefined) throw new Error("Sandbox guest bridge is not initialized.");
+
+        using json = context.newString(GuestReply.encode(decoded.value));
+        using result = context.callFunction(settle, context.undefined, json);
+        if (result.error) throw new Error("Sandbox guest settlement failed.");
+
+        pendingCalls.delete(decoded.value.callId);
+        budget.release();
+        notify();
+      } catch (error) {
+        // A broken settlement is terminal, never retried as a guest tool rejection.
+        fail(error);
+      }
+    },
     fail,
   };
-}
-
-async function settlePromise(
-  context: QuickJSContext,
-  invoke: () => Promise<SerializedToolResult>,
-  deferred: QuickJSDeferredPromise,
-  scope: Scope,
-): Promise<void> {
-  const result = await invoke();
-  if (!scope.alive) return;
-
-  if (!result.ok) {
-    using guestError = context.newError(result.error.message);
-    deferred.reject(guestError);
-
-    return;
-  }
-
-  if (result.json === undefined) {
-    deferred.resolve();
-
-    return;
-  }
-
-  // Allocation/settlement exceptions stay infrastructure failures; never retry the VM.
-  using json = context.newString(result.json);
-  deferred.resolve(json);
 }

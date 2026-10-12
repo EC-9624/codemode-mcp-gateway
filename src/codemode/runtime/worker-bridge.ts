@@ -1,12 +1,11 @@
 import { type MessagePort } from "node:worker_threads";
 import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { listen } from "./listener";
-import { type SerializedToolResult } from "../tools";
 import { installGuestToolBridge } from "./guest-bridge";
-import { ToolReply, type WorkerToMainMessage } from "./protocol";
+import { type WorkerToMainMessage } from "./protocol";
 import { type ToolCallLimits } from "./budget";
 
-/** The worker owns correlation and listeners; the engine scope owns guest resolvers. */
+/** The worker owns transport listeners; promises and resolvers remain in the guest. */
 export function installWorkerToolBridge(
   context: QuickJSContext,
   toolNames: readonly string[],
@@ -15,64 +14,23 @@ export function installWorkerToolBridge(
   cleanup: DisposableStack,
   limits: ToolCallLimits,
 ) {
-  const pendingReplies = new Map<number, PromiseWithResolvers<SerializedToolResult>>();
-  let nextCallId = 1;
-
   // The guest bridge owns admission and stops invoking after a limit or failure.
   const bridge = installGuestToolBridge(
     context,
     toolNames,
-    (name, argsJson) => {
-      if (!Number.isSafeInteger(nextCallId)) throw new Error("Sandbox tool call IDs exhausted.");
-
-      const callId = nextCallId++;
-      const pendingReply = Promise.withResolvers<SerializedToolResult>();
-
-      // Storing the resolver first would leave a pending call if posting throws.
-      port.postMessage({ type: "tool-call", callId, name, argsJson } satisfies WorkerToMainMessage);
-      pendingReplies.set(callId, pendingReply);
-
-      return pendingReply.promise;
+    (call) => {
+      port.postMessage({
+        type: "tool-call",
+        callId: call.callId,
+        name: call.name,
+        argsJson: call.argsJson ?? undefined,
+      } satisfies WorkerToMainMessage);
     },
     scope,
     limits,
   );
 
-  cleanup.defer(() => {
-    for (const pendingReply of pendingReplies.values())
-      pendingReply.reject(new Error("Sandbox tool transport closed."));
-
-    pendingReplies.clear();
-  });
-
-  listen(cleanup, port, "message", (data: unknown) => {
-    if (bridge.failure !== undefined) return;
-
-    let decodedReply: ReturnType<typeof ToolReply.decode>;
-    try {
-      decodedReply = ToolReply.decode(data);
-    } catch (error) {
-      bridge.fail(error);
-
-      return;
-    }
-
-    if (!decodedReply.ok) {
-      bridge.fail(new Error(decodedReply.message));
-
-      return;
-    }
-
-    const pendingReply = pendingReplies.get(decodedReply.value.callId);
-    if (!pendingReply) {
-      bridge.fail(new Error("Sandbox worker received an unknown or duplicate tool reply."));
-
-      return;
-    }
-
-    pendingReplies.delete(decodedReply.value.callId);
-    pendingReply.resolve(decodedReply.value.result);
-  });
+  listen(cleanup, port, "message", (data) => bridge.receive(data));
   listen(cleanup, port, "messageerror", () =>
     bridge.fail(new Error("Sandbox tool reply could not be deserialized.")),
   );

@@ -4,6 +4,59 @@ import { findInvalidLimit, isPositiveInt, type ExecutionLimits } from "./limits"
 
 type DecodeResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
+/** JSON envelopes use null for absent JSON text, distinct from the text "null". */
+export type GuestCall = {
+  type: "call";
+  callId: number;
+  name: string;
+  argsJson: string | null;
+};
+
+export const GuestCall = {
+  decode(json: unknown): DecodeResult<GuestCall> {
+    const decoded = parseJsonText(json);
+    if (!decoded.ok || !isRecord(decoded.value)) return invalidGuestCall();
+
+    const call = decoded.value;
+    if (
+      call.type !== "call" ||
+      !isCallId(call.callId) ||
+      typeof call.name !== "string" ||
+      (call.argsJson !== null &&
+        (typeof call.argsJson !== "string" || !parseJsonText(call.argsJson).ok))
+    ) {
+      return invalidGuestCall();
+    }
+
+    return {
+      ok: true,
+      value: { type: "call", callId: call.callId, name: call.name, argsJson: call.argsJson },
+    };
+  },
+};
+
+export type GuestReply = {
+  type: "result";
+  callId: number;
+  result: { ok: true; json: string | null } | { ok: false; error: { message: string } };
+};
+
+export const GuestReply = {
+  encode(reply: ToolReply): string {
+    return JSON.stringify({
+      type: "result",
+      callId: reply.callId,
+      result: reply.result.ok
+        ? { ok: true, json: reply.result.json ?? null }
+        : { ok: false, error: { message: reply.result.error.message } },
+    } satisfies GuestReply);
+  },
+};
+
+function invalidGuestCall(): DecodeResult<never> {
+  return { ok: false, message: "Sandbox guest sent an invalid tool call." };
+}
+
 /** Cancellation and source admission limits are classified by the parent, never the worker. */
 export type GuestResult = Exclude<
   SandboxResult,

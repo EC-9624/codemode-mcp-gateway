@@ -23,7 +23,7 @@ describe("worker-side admission", () => {
       "Execution exceeded the 2 concurrent tool-call limit.",
     ],
   ] as const)(
-    "bounds deferred allocations at the %s limit and disposes owned resources",
+    "bounds dispatched calls at the %s limit without native deferred allocations and disposes resources",
     async (_name, limits, resource, message) => {
       const resources: ExecutionResources[] = [];
       const late = Promise.withResolvers<ToolResult>();
@@ -67,7 +67,7 @@ describe("worker-side admission", () => {
         ok: false,
         error: { kind: "limit", resource, maximum: 2, message },
       });
-      expect(allocations).toBe(2);
+      expect(allocations).toBe(0);
       expect(calls).toBe(2);
       expectDisposedExecution(resources);
     },

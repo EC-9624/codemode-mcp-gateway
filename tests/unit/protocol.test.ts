@@ -2,12 +2,94 @@ import { describe, expect, test } from "bun:test";
 import { ToolResult } from "../../src/codemode";
 import {
   ToolReply,
+  GuestCall,
+  GuestReply,
   WorkerStartupData,
   WorkerToMainMessage,
 } from "../../src/codemode/runtime/protocol";
 import { interruptFlag, startupData } from "../support/workers";
 
 const request = startupData("return 42;");
+
+describe("guest call envelopes", () => {
+  test.each([
+    ["absent arguments", null],
+    ["JSON null", "null"],
+    ["a string", '"before\\u0000after"'],
+    ["an object", '{"value":42}'],
+  ] as const)("preserves %s and exact tool names", (_name, argsJson) => {
+    const call = { type: "call", callId: 1, name: "read\u0000\ud800", argsJson } as const;
+
+    expect(GuestCall.decode(JSON.stringify(call))).toEqual({ ok: true, value: call });
+  });
+
+  test.each([
+    ["missing text", undefined],
+    ["a native object", {}],
+    ["invalid JSON", "not JSON"],
+    ["JSON null", "null"],
+    ["an empty object", "{}"],
+    ["an unknown tag", JSON.stringify({ type: "other", callId: 1, name: "read", argsJson: null })],
+    ["a missing argument field", JSON.stringify({ type: "call", callId: 1, name: "read" })],
+    [
+      "non-JSON arguments",
+      JSON.stringify({ type: "call", callId: 1, name: "read", argsJson: "bad" }),
+    ],
+    ["native arguments", JSON.stringify({ type: "call", callId: 1, name: "read", argsJson: {} })],
+    ["a non-string name", JSON.stringify({ type: "call", callId: 1, name: 42, argsJson: null })],
+    ["a zero ID", JSON.stringify({ type: "call", callId: 0, name: "read", argsJson: null })],
+    [
+      "an unsafe ID",
+      JSON.stringify({ type: "call", callId: 2 ** 53, name: "read", argsJson: null }),
+    ],
+  ])("rejects %s", (_name, value) => {
+    expect(GuestCall.decode(value)).toEqual({
+      ok: false,
+      message: "Sandbox guest sent an invalid tool call.",
+    });
+  });
+
+  test("selects protocol fields instead of forwarding guest extensions", () => {
+    const call = { type: "call", callId: 1, name: "read", argsJson: null } as const;
+
+    expect(GuestCall.decode(JSON.stringify({ ...call, extension: "ignored" }))).toEqual({
+      ok: true,
+      value: call,
+    });
+  });
+});
+
+describe("guest reply envelopes", () => {
+  test.each([
+    ["undefined", undefined, null],
+    ["JSON null", "null", "null"],
+    ["a string", '"hello"', '"hello"'],
+  ] as const)("encodes %s without losing its JSON distinction", (_name, json, encoded) => {
+    const reply = GuestReply.encode({ type: "tool-result", callId: 1, result: { ok: true, json } });
+
+    expect(JSON.parse(reply)).toEqual({
+      type: "result",
+      callId: 1,
+      result: { ok: true, json: encoded },
+    });
+  });
+
+  test("preserves complete public messages and omits private failure fields", () => {
+    const result = {
+      ok: false,
+      error: { message: "before\u0000after\ud800", private: "not public" },
+    } as const;
+
+    const reply = GuestReply.encode({ type: "tool-result", callId: 1, result });
+
+    expect(JSON.parse(reply)).toEqual({
+      type: "result",
+      callId: 1,
+      result: { ok: false, error: { message: result.error.message } },
+    });
+    expect(reply).not.toContain("not public");
+  });
+});
 
 describe("worker startup data", () => {
   test("validates execution requests", () => {

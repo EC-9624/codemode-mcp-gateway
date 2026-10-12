@@ -171,8 +171,8 @@ describe("worker supervisor", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
-  test("keeps synchronous VM allocation failures private across the worker boundary", async () => {
-    const worker = new Worker(new URL("../fixtures/worker-allocation-fault.ts", import.meta.url), {
+  test("keeps synchronous VM dispatcher failures private across the worker boundary", async () => {
+    const worker = new Worker(new URL("../fixtures/worker-dispatch-fault.ts", import.meta.url), {
       workerData: startupData(
         "try { await tools.read(); } catch (error) { return error.message; }",
         ["read"],
@@ -183,7 +183,7 @@ describe("worker supervisor", () => {
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) {
       expect(failure.message).toContain("Sandbox worker execution failed.");
-      expect(failure.message).not.toContain("Private worker allocation details");
+      expect(failure.message).not.toContain("Private worker dispatch details");
     }
 
     expectNoExecutionListeners(worker);

@@ -1,4 +1,5 @@
 export { CodemodeSandbox } from "./sandbox";
+export { SandboxLimits } from "./limits";
 export { SandboxExecutionError } from "./errors";
 export {
   type CallOutcome,

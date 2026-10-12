@@ -1,0 +1,11 @@
+{
+  "upstream": {
+    "transport": "stdio",
+    "command": "bun",
+    "args": ["mcp-server.ts"]
+  },
+  "sandbox": {
+    "timeoutMs": 5000,
+    "totalTimeoutMs": 10000
+  }
+}

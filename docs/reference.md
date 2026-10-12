@@ -8,13 +8,14 @@ Detailed API behavior, execution contracts, and resource ownership. Start with t
 - [Execution reports](#execution-reports-and-retained-calls) and [cancellation](#cancellation)
 - [Catalog and discovery](#catalog-and-discovery)
 - [Validated tools](#validated-tool-contracts) and [MCP adapter](#mcp-upstream-adapter)
+- [Agent-facing MCP server](#agent-facing-mcp-server)
 - [Architecture](#architecture), [ownership](#ownership), and [contracts](#contracts)
 - [Limitations](#limitations) and [checks](#code-style-and-checks)
 
 ## Usage
 
 `src/codemode/index.ts` exports the sandbox API and its public types.
-`src/mcp/index.ts` exports MCP discovery and adaptation. Examples below use paths
+`src/mcp/index.ts` exports MCP discovery, adaptation, and the execute-only server. Examples below use paths
 relative to the project root.
 
 `new CodemodeSandbox({ tools, ...configuration })` validates limits and snapshots tool
@@ -243,17 +244,17 @@ tool cancellation and awaits worker cleanup. A later cleanup failure retains the
 selected interruption reason in `SandboxExecutionError.calls`.
 
 ```text
-guest serializes arguments
+guest serializes arguments and records a guest promise resolver
   -> worker validates payload and reserves total/concurrent capacity
        denied -> record structured limit, interrupt guest execution
-       admitted -> allocate deferred promise and post tool request
+       admitted -> record outstanding ID and post tool request
   -> parent validates request and independently reserves capacity
        denied -> select limit result and close dispatch/call snapshot
        admitted -> record dispatch, invoke tool, retain and post response
   -> parent releases slot; worker settles guest promise and releases its slot
 ```
 
-Checking on the worker bounds deferred allocations and posted requests during a
+Checking on the worker bounds admitted calls and posted requests during a
 synchronous guest burst. Checking on the parent independently bounds host dispatch.
 The two budgets are local to their execution boundaries; reply transit can keep a
 worker slot occupied after the parent has released its slot. Limits are per
@@ -642,6 +643,110 @@ attempts. Catalog refresh is explicit, and client reuse, authentication, and
 interactive request handlers remain application-owned. Tool payloads and retained
 response bytes still have no MCM-specific cap; SDK transport limits also apply.
 
+## Agent-facing MCP server
+
+`createCodemodeServer({ catalog, sandbox? })` returns an SDK `McpServer` exposing
+exactly one tool, `execute`. It constructs a fixed-policy `CodemodeSandbox` from
+the catalog's tools plus `searchTools` and `describeTool`. `sandbox` accepts the
+constructor limits, with the same library defaults, and excludes tool bindings.
+An upstream name matching either helper rejects construction instead of being overwritten.
+
+```ts
+import { createCodemodeServer, createMcpCatalog } from "./src/mcp";
+
+const catalog = await createMcpCatalog(client);
+const server = createCodemodeServer({
+  catalog,
+  sandbox: { timeoutMs: 5_000, totalTimeoutMs: 10_000 },
+});
+// Connect server to an application-owned MCP transport.
+// await server.connect(transport);
+// await server.close();
+```
+
+The application retains ownership of the upstream client. `server.close()` is
+idempotent: it cancels active sandbox executions, closes the agent-facing
+connection, and waits for worker cleanup. The application then closes its upstream
+client. Cancellation is cooperative for host tools, as described above.
+
+### Requests and discovery
+
+The input schema is a strict `{ code: string }` object. Unknown keys, including
+resource-limit overrides, fail MCP input validation before execution. Input is an
+async JavaScript function body; a final `return` selects the result.
+
+Discovery runs inside the sandbox using the same host-call budget:
+
+```js
+return await tools.searchTools({ query: "customer invoices" });
+```
+
+This returns an array of catalog descriptions with exact names and input schemas.
+An unmatched query returns an empty array; invalid discovery arguments are catchable
+tool failures. `tools.describeTool({ name })` looks up one upstream tool. The catalog
+is a startup snapshot; the helper tools themselves are described in `execute`'s
+description rather than added to the upstream search index.
+
+### Responses
+
+Both `structuredContent` and a JSON text content block contain a `CodemodeResponse`:
+
+- `result`: the sandbox result, or a controlled failure with `kind: "sandbox"` for
+  infrastructure errors.
+- `calls`: invocation-ordered `{ callId, name, status: "completed" }` or
+  `{ callId, name, status: "interrupted", reason }` summaries.
+
+The adapter omits retained response bodies, arguments, private causes, and stacks.
+Completed means a response was recorded; an upstream `isError` can still occur in a
+completed call. Inspect the upstream response within JavaScript when its outcome matters.
+Final unsuccessful results set the outer MCP `isError: true`. A script that handles
+an upstream failure and returns normally is still successful.
+
+Infrastructure diagnostics are delivered to the SDK server's host-side `onerror`
+callback with their original cause. If that synchronous callback throws, the
+controlled public failure and call summaries are preserved; the callback's private
+message is not sent to the MCP client. Cancellation of an MCP request can prevent
+delivery of its final response even though worker cleanup still completes.
+
+### Stdio application
+
+Run `bun run server <configuration.json>`. See the [README](../README.md#agent-facing-mcp-server)
+and `examples/mcm.json` for configuration. `bun run example:server` runs the full
+client → MCM → upstream demonstration.
+
+The application validates its configuration, connects one stdio or Streamable HTTP upstream using the SDK's
+default legacy handshake, and discovers its catalog. Its agent-facing stdio entry
+supports both legacy and modern MCP negotiation through `serveStdio`. The input
+transport starts while upstream setup is pending, so EOF also cancels initialization
+and discovery. EOF, SIGINT, and SIGTERM request shutdown. Cleanup awaits every
+created server instance. Stdio cleanup also awaits the actual upstream child close
+event, including after failed setup or an SDK-initiated teardown. HTTP cleanup
+requests session deletion when a session ID exists, then closes the transport.
+The DELETE request is bounded at 5 seconds, and an upstream that declines session
+termination with HTTP 405 is handled by the SDK.
+
+The CLI supplies a 5-second guest budget and a 10-second total budget by default;
+other defaults and upper bounds come from the shared `SandboxLimits` policy, also
+used by the runtime's option and worker-boundary validation. Its upstream handshake is bounded at
+5 seconds; catalog discovery uses the adapter's 15-second default. These startup
+budgets are separate from execution budgets.
+
+Only JSON protocol messages go to stdout. Application diagnostics and inherited
+upstream stderr go to stderr. Upstream configuration selects one transport:
+
+- `transport: "stdio"` accepts `command`, optional `args`, `cwd`, and `env`.
+  `cwd` is relative to the configuration file and defaults to its directory;
+  arguments are passed unchanged. `env` adds to the SDK's default inherited
+  environment. Omitting `transport` preserves command-only configurations.
+- `transport: "http"` accepts an HTTP(S) `url` and optional `headers`.
+  Header templates expand `{env:NAME}` from the host environment before connection;
+  missing variables and invalid headers reject startup without printing their values.
+  Authentication is application-owned: the CLI supports supplied headers, while
+  callers of `createMcpCatalog` can supply their own authenticated SDK client.
+  The CLI does not start OAuth flows or maintain a credential store.
+
+Configuration and catalogs do not reload during a run.
+
 ## Architecture
 
 **Guest** means JavaScript inside QuickJS. **Worker** means the Bun thread
@@ -654,8 +759,11 @@ exports its public API through `index.ts`; worker/VM details live in
 
 ```text
 Main app
+  config.ts: typed transport configuration and host HTTP header templates
+  server.ts: stdio entry, startup configuration, upstream process, and shutdown
   codemode/index.ts: public exports
   codemode/types.ts: execution options, results, and call contracts
+  codemode/limits.ts: shared resource defaults and upper bounds
   codemode/sandbox.ts: fixed CodemodeSandbox configuration and execution admission
   codemode/errors.ts: host infrastructure errors carrying a call snapshot
   codemode/runtime/options.ts: apply defaults and validate constructor configuration
@@ -665,38 +773,44 @@ Main app
   codemode/catalog.ts: metadata and discovery
   mcp/catalog.ts: discover and adapt tools from an application-owned SDK client
   mcp/schema.ts: compile discovered JSON Schemas
+  mcp/server.ts: execute-only MCP handler, active execution lifetime, and compact responses
        |
        | worker messages: call IDs, names, JSON payloads
        v
 Worker thread (Bun)
   codemode/runtime/worker.ts: decode startup data, assemble the engine and tool connection
-  codemode/runtime/worker-bridge.ts: correlate calls with main-thread replies
+  codemode/runtime/worker-bridge.ts: relay calls and replies over the parent port
        |
   codemode/runtime/engine.ts: own the VM, pump jobs, and enforce the deadline
-  codemode/runtime/script.ts: validate the source wrapper, prepare the private runner, and start submitted code
-  codemode/runtime/guest-bridge.ts: install guest callbacks and settle guest promises
+  codemode/runtime/script.ts: validate the source wrapper, prepare the private API, and start submitted code
+  codemode/runtime/guest-bridge.ts: one native dispatcher, admission, reply validation, and wakeups
        |
-       | VM boundary: QuickJS handles and deferred promises
+        | VM boundary: serialized call/reply envelopes through private functions
        v
 QuickJS guest
-  private prelude: JSON conversion and public tools.<name> wrappers
+  codemode/runtime/prelude.ts: JSON conversion, tool wrappers, and guest promise resolvers
   submitted code: await tools.someTool(args)
 ```
 
-Supporting files in `codemode/runtime/`: `limits.ts` defines limit defaults, ranges,
-and validation shared by options and startup decoding; `budget.ts` provides the counters owned independently by each boundary;
-`vm.ts` creates a VM with memory and stack limits; `protocol.ts` decodes worker
-messages; `listener.ts` registers listeners whose removal belongs to a cleanup stack.
+Supporting files in `codemode/runtime/`: `limits.ts` selects worker limits from the
+shared resource policy and validates them for options and startup decoding;
+`budget.ts` provides the counters owned independently by each boundary;
+`vm.ts` creates a VM with memory and stack limits; `protocol.ts` defines and validates
+guest and worker messages; `listener.ts` registers listeners whose removal belongs
+to a cleanup stack.
 
 A tool call travels up and its reply travels back down:
 
 ```text
-guest: tools.add(args) -> prelude serializes arguments to JSON text
-worker: allocate call ID, post tool-call { callId, name, argsJson }
+guest: tools.add(args) -> serialize arguments, assign call ID, create guest promise
+       -> private dispatch(JSON call envelope)
+worker: validate envelope/name/ID, admit call, post tool-call { callId, name, argsJson }
 main: decode and parse arguments once, validate the call, record dispatch,
       invoke callback(args, { signal }), serialize the ToolResult,
       record completed response, post tool-result { callId, result }
-worker: decode reply, match call ID, resolve or reject the guest promise
+worker: decode reply, validate outstanding ID, call private settle(JSON reply envelope)
+guest: resolve/reject the stored promise
+worker: release the call slot and wake the engine
 worker: pump QuickJS jobs -> prelude decodes the result -> guest resumes
 ```
 
@@ -730,9 +844,10 @@ to any execution or cleanup exception.
 | ---------------------------- | ----------------------------------------------------------------------------------- |
 | `CodemodeSandbox`            | Fixed resource limits and snapshotted callback bindings                             |
 | `WorkerExecution`            | Worker, listeners, parent timer/interrupt flag, tool abort controller, call records |
-| Worker entry's cleanup stack | Transport listeners and pending remote replies                                      |
+| Worker entry's cleanup stack | Transport listeners                                                                 |
 | Engine                       | QuickJS context and runtime, deadline, and bridge scope                             |
-| Guest bridge                 | Borrows the context and scope; deferred handles belong to that scope                |
+| Guest bridge                 | Borrows the context; scope owns dispatcher/settlement handles; tracks admitted IDs  |
+| Guest prelude                | Ordinary guest promises and their resolver map, released with the VM                |
 | Main app's catalog           | Callback bindings and metadata; no VM or worker resources                           |
 
 - On normal scope exit or unwinding, `using` disposes resources in reverse declaration order.
@@ -741,19 +856,23 @@ to any execution or cleanup exception.
 - `createVm` transfers the context, which owns its runtime, only after setup
   succeeds by moving its cleanup stack. Failed setup disposes the context; if disposal
   also fails, a `SuppressedError` retains both failures.
-- Promise resolvers outlive the callback that creates them, so the bridge `Scope`
-  owns them for the execution. Settlement checks that the scope is alive before
-  touching the VM, so late host completions never access a closed VM.
+- Only the native dispatcher and private settlement handle have execution-long
+  ownership in the bridge `Scope`. Per-call promises and resolvers remain inside
+  QuickJS, not native deferred handles or worker-side reply promises. Settlement
+  checks that the scope is alive before touching the VM, so late host completions
+  never access a closed VM.
 - Error reporting borrows the thrown handle and disposes only owned promise-state
   handles; the SDK's `dump` consumes promise handles.
 - The supervisor removes message, message-error, and exit listeners before
   terminating the worker. The error listener stays until termination settles, so
   late errors cannot become unhandled EventEmitter errors. Partial setup unwinds.
-- The guest bridge's `pendingCalls` tracks work until guest promises settle;
+- The guest bridge's `pendingCalls` tracks admitted IDs until replies are settled;
   `failure` records the first private infrastructure failure or admission limit (`kind`
   `error` or `limit`; undefined while healthy) and `failureSignal`
-  wakes the engine. The worker bridge's `pendingReplies` correlates call IDs with
-  main-thread replies.
+  wakes the engine. A renewable `changeSignal` wakes an idle engine after successful
+  settlement, without a worker-side promise for each call. Decoding successful
+  values runs on the guest job queue after releasing the call slot: then getters
+  on decoded objects can start other calls without retaining the completed slot.
 
 ## Contracts
 
@@ -800,6 +919,10 @@ executable methods are never shared between host and guest.
 - Guest return values and arguments convert inside the VM, including getters and
   `toJSON`. The prelude captures native JSON functions before user code runs, so
   guest mutation of `JSON` or `Promise.prototype.then` does not affect conversion.
+- Tool names and public failure messages enter the VM through JSON envelopes:
+  the pinned SDK's raw string constructor truncates at NUL. Thrown primitive strings
+  use a captured JSON encoder before crossing back, preserving their full content
+  for output-size measurement.
 - Tool results convert on the main thread. Throwing getters or `toJSON` hooks and
   unsupported values produce the public `Tool result is not JSON-serializable.`
 - BigInt, circular values, and unsupported top-level values fail as script errors.
@@ -889,13 +1012,14 @@ Trusted setup and submitted code are compiled separately inside QuickJS:
 ```text
 validate the complete async function wrapper with Acorn
   -> evaluate the trusted prelude factory
-  -> factory captures raw callbacks and publishes only wrapped tools
+  -> factory captures one native dispatcher and publishes only wrapped tools
   -> compile the validated user function in the VM's global scope
   -> private runner calls that function with tools and serializes its result
 ```
 
-The user function cannot reach raw callbacks, captured JSON functions, or the
-private runner through lexical scope, `eval`, or dynamic function constructors.
+The user function cannot reach the raw dispatcher, resolver map, captured JSON
+functions, or private `run`/`settle` API through lexical scope, `eval`, or dynamic
+function constructors.
 
 Acorn checks that the source is exactly the intended async arrow function with its
 body boundaries intact. It does not rewrite the program or impose a JavaScript
@@ -905,6 +1029,30 @@ function. Malformed bodies fail before any user code or host call executes.
 
 Guest built-ins remain mutable. VM-local `eval`/`Function`, closures, classes,
 generators, and the guest-global `this` binding remain supported.
+
+The prelude captures the promise/error constructors, JSON functions, map methods,
+`Reflect.apply`, and `Object.create` before submitted code runs. It does not freeze
+built-ins. Private call envelopes and resolver records use null prototypes so
+guest-inherited `toJSON` hooks cannot rewrite the protocol or expose its records;
+ordinary argument and result conversion still observes native guest semantics.
+
+### Guest protocol
+
+- One native dispatcher receives JSON text describing `{ type: "call", callId,
+  name, argsJson }`. The worker validates the envelope, known name, increasing ID,
+  and argument JSON before dispatch. Invalid messages end execution rather than
+  becoming catchable tool failures.
+- The worker calls a private settlement function with JSON text describing
+  `{ type: "result", callId, result }`. Success contains `json`; failure contains
+  only an explicit public `error.message`.
+- `argsJson` and successful `json` use JSON null for absent text. The string
+  `"null"` represents the actual JSON null value. The worker/host protocol retains
+  its existing `undefined` representation.
+- The native dispatcher returns whether dispatch succeeded. Rejected calls do not
+  remain in the prelude's resolver map; terminal admission/infrastructure failures
+  are still selected by the worker's checkpoint and interrupt handler.
+- Transport dispatch must not synchronously re-enter the VM. Production replies
+  arrive through parent-port events; the local test adapter defers delivery.
 
 ### Worker protocol
 

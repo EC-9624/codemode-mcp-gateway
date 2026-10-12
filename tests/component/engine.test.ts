@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { type QuickJSDeferredPromise } from "quickjs-emscripten";
+import { type QuickJSHandle } from "quickjs-emscripten";
 import { Parser } from "acorn";
 import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
 import { ToolResult, type SandboxResult } from "../../src/codemode";
@@ -131,7 +131,7 @@ test("rejects prelude factory invocation failure and disposes execution resource
 
         // Fail a prelude dependency after compilation, before submitted code runs.
         using prepared = vm.evalCode(
-          'Object.keys = () => { throw new Error("Private prelude failure"); };',
+          'Object.freeze = () => { throw new Error("Private prelude failure"); };',
         );
 
         expect(prepared.error).toBeUndefined();
@@ -188,7 +188,32 @@ test("preserves timeout classification during prelude initialization", async () 
     (vm, scope) => {
       resources.push({ vm, scope });
       // Keep the prelude busy until the real guest deadline interrupts it.
-      using prepared = vm.evalCode("Object.keys = () => { while (true) {} };");
+      using prepared = vm.evalCode("Object.freeze = () => { while (true) {} };");
+
+      expect(prepared.error).toBeUndefined();
+
+      return installLocalToolBridge(vm, {}, scope);
+    },
+    interruptFlag(),
+  );
+
+  expect(result).toEqual({
+    ok: false,
+    error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+  });
+  expectDisposedExecution(resources);
+});
+
+test("preserves timeout classification while encoding a thrown string", async () => {
+  const resources: ExecutionResources[] = [];
+
+  const result = await executeEngine(
+    'throw "Guest error";',
+    { ...DEFAULT_LIMITS, timeoutMs: 100 },
+    (vm, scope) => {
+      resources.push({ vm, scope });
+      // Hold the captured encoder in guest computation until the real deadline.
+      using prepared = vm.evalCode("JSON.stringify = () => { while (true) {} };");
 
       expect(prepared.error).toBeUndefined();
 
@@ -226,7 +251,7 @@ for (const scenario of [
 ] satisfies { name: string; code: string; expected: SandboxResult }[]) {
   test(`disposes the VM, runtime, bridge scope, and tool promises after ${scenario.name}`, async () => {
     const resources: ExecutionResources[] = [];
-    const promises: QuickJSDeferredPromise[] = [];
+    const handles: QuickJSHandle[] = [];
     using cleanup = new DisposableStack();
 
     const result = await executeEngine(
@@ -234,29 +259,33 @@ for (const scenario of [
       { ...DEFAULT_LIMITS, timeoutMs: 100 },
       (vm, scope) => {
         resources.push({ vm, scope });
-        const newPromise = vm.newPromise.bind(vm);
+        const getProp = vm.getProp.bind(vm);
 
-        // Observe real deferred handles; results alone cannot prove their disposal.
-        const created = spyOn(vm, "newPromise").mockImplementation(() => {
-          const promise = newPromise();
-          promises.push(promise);
+        // Only the dispatcher and settlement function need execution-long native handles.
+        const settlement = spyOn(vm, "getProp").mockImplementation(
+          (...args: Parameters<typeof vm.getProp>) => {
+            const handle = getProp(...args);
+            if (args[1] === "settle") handles.push(handle);
 
-          return promise;
-        });
+            return handle;
+          },
+        );
 
-        cleanup.defer(() => created.mockRestore());
+        cleanup.defer(() => settlement.mockRestore());
 
-        return installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
+        const bridge = installLocalToolBridge(vm, { read: () => ToolResult.success(42) }, scope);
+        handles.push(bridge.dispatcher);
+
+        return bridge;
       },
       interruptFlag(),
     );
 
     expect(result).toEqual(scenario.expected);
     expectDisposedExecution(resources);
-    expect(promises).toHaveLength(1);
-    for (const promise of promises) {
-      expect(promise.alive).toBe(false);
-      expect(promise.handle.alive).toBe(false);
+    expect(handles).toHaveLength(2);
+    for (const handle of handles) {
+      expect(handle.alive).toBe(false);
     }
   });
 }

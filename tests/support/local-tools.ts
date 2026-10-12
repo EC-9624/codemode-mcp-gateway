@@ -2,9 +2,16 @@ import { type QuickJSContext, type Scope } from "quickjs-emscripten";
 import { DEFAULT_LIMITS } from "../../src/codemode/runtime/limits";
 import { executeEngine } from "../../src/codemode/runtime/engine";
 import { callTool, serializeToolResult, type SandboxTool } from "../../src/codemode/tools";
-import { installGuestToolBridge } from "../../src/codemode/runtime/guest-bridge";
+import { installGuestToolBridge, type ToolBridge } from "../../src/codemode/runtime/guest-bridge";
 import { type ToolCallLimits } from "../../src/codemode/runtime/budget";
 import { interruptFlag } from "./workers";
+import { prepareRunner } from "../../src/codemode/runtime/script";
+
+/** Direct bridge tests need the real prelude; engine tests initialize it themselves. */
+export function prepareTools(vm: QuickJSContext, bridge: ToolBridge): void {
+  using api = prepareRunner(vm, bridge.dispatcher, bridge.toolNames).unwrap();
+  bridge.attach(api);
+}
 
 export function executeLocally(
   code: string,
@@ -30,18 +37,29 @@ export function installLocalToolBridge(
   const registry = new Map(Object.entries(tools));
   const context = { signal: new AbortController().signal };
 
-  return installGuestToolBridge(
+  const bridge = installGuestToolBridge(
     vm,
     [...registry.keys()],
-    async (name, json) => {
-      const tool = registry.get(name);
+    (call) => {
+      const tool = registry.get(call.name);
       if (!tool) throw new Error("Test bridge referenced an unknown tool.");
 
-      const args: unknown = json === undefined ? undefined : JSON.parse(json);
+      const args: unknown = call.argsJson === null ? undefined : JSON.parse(call.argsJson);
+      void callTool(tool, args, context)
+        .then((result) => {
+          if (!scope.alive) return;
 
-      return serializeToolResult(await callTool(tool, args, context));
+          bridge.receive({
+            type: "tool-result",
+            callId: call.callId,
+            result: serializeToolResult(result),
+          });
+        })
+        .catch((error: unknown) => bridge.fail(error));
     },
     scope,
     limits,
   );
+
+  return bridge;
 }

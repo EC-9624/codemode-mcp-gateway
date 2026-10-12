@@ -77,13 +77,6 @@ async function executeScript(
     };
   };
 
-  const failScript = (error: QuickJSHandle): GuestResult => {
-    const result = scriptFailure(vm, error);
-
-    // Error conversion can run guest getters/toJSON and exhaust the deadline.
-    return checkpoint() ?? result;
-  };
-
   runtime.setInterruptHandler(
     () => bridge.failure !== undefined || interrupted() || deadline.passed(),
   );
@@ -96,13 +89,26 @@ async function executeScript(
     return { ok: false, error: { kind: "script", message: submission.message } };
   }
 
-  using runner = prepareRunner(vm);
+  using prelude = prepareRunner(vm, bridge.dispatcher, bridge.toolNames);
   const prepared = checkpoint();
   if (prepared) return prepared;
 
-  if (runner.error) throw new Error("Sandbox prelude initialization failed.");
+  if (prelude.error) throw new Error("Sandbox prelude initialization failed.");
 
-  using evaluated = startScript(vm, submission.source, runner.value);
+  bridge.attach(prelude.value);
+  using runner = vm.getProp(prelude.value, "run");
+
+  using json = vm.getProp(vm.global, "JSON");
+  using stringify = vm.getProp(json, "stringify");
+
+  const failScript = (error: QuickJSHandle): GuestResult => {
+    const result = scriptFailure(vm, error, stringify);
+
+    // Error conversion can run guest getters/toJSON and exhaust the deadline.
+    return checkpoint() ?? result;
+  };
+
+  using evaluated = startScript(vm, submission.source, runner);
   // An interrupted start surfaces as an error; the checkpoint classifies it first.
   const started = checkpoint();
   if (started) return started;
@@ -157,7 +163,7 @@ async function executeScript(
     }
 
     // An interrupt handler cannot expire a script while QuickJS is idle.
-    await Promise.race([deadline.expired, bridge.failureSignal, ...bridge.pendingCalls]);
+    await Promise.race([deadline.expired, bridge.failureSignal, bridge.changeSignal]);
   }
 }
 
@@ -197,7 +203,27 @@ function createDeadline(timeoutMs: number) {
   };
 }
 
-function scriptFailure(context: QuickJSContext, handle: QuickJSHandle): GuestResult {
+function scriptFailure(
+  context: QuickJSContext,
+  handle: QuickJSHandle,
+  stringify: QuickJSHandle,
+): GuestResult {
+  if (context.typeof(handle) === "string") {
+    // dump/getString truncate raw NULs. Captured JSON encoding preserves the
+    // entire primitive message even after the guest replaces JSON.stringify.
+    using encoded = context.callFunction(stringify, context.undefined, handle);
+    if (encoded.error) {
+      return {
+        ok: false,
+        error: { kind: "script", message: scriptErrorMessage(context.dump(encoded.error)) },
+      };
+    }
+
+    const message: unknown = JSON.parse(context.getString(encoded.value));
+
+    return { ok: false, error: { kind: "script", message: scriptErrorMessage(message) } };
+  }
+
   // dump consumes promise handles (including nested promise reasons). A thrown
   // promise is an opaque thrown value, not a result to unwrap. Keep the caller's
   // handle borrowed and release only owned promise-state handles here.
