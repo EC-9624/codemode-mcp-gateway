@@ -2,25 +2,38 @@ import { describe, expect, test } from "bun:test";
 import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor output limit", () => {
-  test("measures the entire thrown string across embedded NULs", async () => {
-    const code = 'JSON.stringify = () => "replaced"; throw "a\\0b";';
+  test("preserves the complete thrown string when embedded NULs fit the output limit", async () => {
+    const sandbox = new CodeExecutor({ maxOutputBytes: 3 });
 
-    const accepted = await new CodeExecutor({ maxOutputBytes: 3 }).execute(code);
-    const rejected = await new CodeExecutor({ maxOutputBytes: 2 }).execute(code);
+    const report = await sandbox.execute('JSON.stringify = () => "replaced"; throw "a\\0b";');
 
-    expect(accepted.result).toEqual({ ok: false, error: { kind: "script", message: "a\u0000b" } });
-    expect(rejected.result).toMatchObject({
+    expect(report.result).toEqual({ ok: false, error: { kind: "script", message: "a\u0000b" } });
+  });
+
+  test("counts bytes after an embedded NUL when rejecting oversized error text", async () => {
+    const sandbox = new CodeExecutor({ maxOutputBytes: 2 });
+
+    const report = await sandbox.execute('JSON.stringify = () => "replaced"; throw "a\\0b";');
+
+    expect(report.result).toMatchObject({
       ok: false,
       error: { kind: "limit", resource: "output", maximum: 2 },
     });
   });
 
-  test("accepts exactly 256 KiB of JSON by default and rejects one byte more", async () => {
+  test("accepts exactly 256 KiB of serialized JSON by default", async () => {
     const sandbox = new CodeExecutor();
+
     const accepted = await sandbox.execute('return "x".repeat(262142);');
-    const rejected = await sandbox.execute('return "x".repeat(262143);');
 
     expect(accepted.result).toEqual({ ok: true, value: "x".repeat(262142) });
+  });
+
+  test("rejects serialized JSON one byte above the default output limit", async () => {
+    const sandbox = new CodeExecutor();
+
+    const rejected = await sandbox.execute('return "x".repeat(262143);');
+
     expect(rejected).toEqual({
       result: {
         ok: false,
@@ -48,27 +61,37 @@ describe("CodeExecutor output limit", () => {
     });
   });
 
-  test.each([
+  for (const [name, code, bytes, value] of [
     ["ASCII string", 'return "abc";', 5, "abc"],
     ["multibyte string", 'return "é😀";', 8, "é😀"],
     ["escaped newline", 'return "\\n";', 4, "\n"],
     ["object", "return { a: 1 };", 7, { a: 1 }],
     ["undefined normalized to null", "return undefined;", 4, null],
-  ] as const)("measures %s as serialized UTF-8 JSON", async (_name, code, bytes, value) => {
-    const accepted = await new CodeExecutor({ maxOutputBytes: bytes }).execute(code);
-    const rejected = await new CodeExecutor({ maxOutputBytes: bytes - 1 }).execute(code);
+  ] as const) {
+    test(`accepts ${name} at its serialized UTF-8 size of ${bytes} bytes`, async () => {
+      const sandbox = new CodeExecutor({ maxOutputBytes: bytes });
 
-    expect(accepted.result).toEqual({ ok: true, value });
-    expect(rejected.result).toEqual({
-      ok: false,
-      error: {
-        kind: "limit",
-        resource: "output",
-        maximum: bytes - 1,
-        message: `Output exceeds the ${bytes - 1} byte limit.`,
-      },
+      const report = await sandbox.execute(code);
+
+      expect(report.result).toEqual({ ok: true, value });
     });
-  });
+
+    test(`rejects ${name} when the limit is below its serialized UTF-8 size of ${bytes} bytes`, async () => {
+      const sandbox = new CodeExecutor({ maxOutputBytes: bytes - 1 });
+
+      const report = await sandbox.execute(code);
+
+      expect(report.result).toEqual({
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "output",
+          maximum: bytes - 1,
+          message: `Output exceeds the ${bytes - 1} byte limit.`,
+        },
+      });
+    });
+  }
 
   test("accepts a one-byte return value with the minimum limit", async () => {
     const report = await new CodeExecutor({ maxOutputBytes: 1 }).execute("return 1;");
@@ -76,31 +99,44 @@ describe("CodeExecutor output limit", () => {
     expect(report).toEqual({ result: { ok: true, value: 1 }, calls: [] });
   });
 
-  test.each([
+  for (const [name, code] of [
     ["Error", 'throw new Error("é😀");'],
     ["string", 'throw "é😀";'],
     ["message getter", 'throw { get message() { return "é😀"; } };'],
-  ] as const)("bounds a thrown %s by raw message bytes", async (_name, code) => {
-    const accepted = await new CodeExecutor({ maxOutputBytes: 6 }).execute(code);
-    const rejected = await new CodeExecutor({ maxOutputBytes: 5 }).execute(code);
+  ] as const) {
+    test(`preserves a thrown ${name} when its raw message exactly fits the byte limit`, async () => {
+      const sandbox = new CodeExecutor({ maxOutputBytes: 6 });
 
-    expect(accepted.result).toEqual({ ok: false, error: { kind: "script", message: "é😀" } });
-    expect(rejected).toEqual({
-      result: {
-        ok: false,
-        error: {
-          kind: "limit",
-          resource: "output",
-          maximum: 5,
-          message: "Output exceeds the 5 byte limit.",
-        },
-      },
-      calls: [],
+      const report = await sandbox.execute(code);
+
+      expect(report.result).toEqual({ ok: false, error: { kind: "script", message: "é😀" } });
     });
-  });
+
+    test(`rejects a thrown ${name} when its raw message exceeds the byte limit`, async () => {
+      const sandbox = new CodeExecutor({ maxOutputBytes: 5 });
+
+      const report = await sandbox.execute(code);
+
+      expect(report).toEqual({
+        result: {
+          ok: false,
+          error: {
+            kind: "limit",
+            resource: "output",
+            maximum: 5,
+            message: "Output exceeds the 5 byte limit.",
+          },
+        },
+        calls: [],
+      });
+    });
+  }
 
   test("bounds generated large error messages by default and recovers", async () => {
-    const rejected = await new CodeExecutor().execute('throw new Error("x".repeat(262145));');
+    const sandbox = new CodeExecutor();
+
+    const rejected = await sandbox.execute('throw new Error("x".repeat(262145));');
+    const recovered = await sandbox.execute("return 42;");
 
     expect(rejected).toEqual({
       result: {
@@ -114,7 +150,7 @@ describe("CodeExecutor output limit", () => {
       },
       calls: [],
     });
-    expect(await new CodeExecutor().execute("return 42;")).toEqual({
+    expect(recovered).toEqual({
       result: { ok: true, value: 42 },
       calls: [],
     });

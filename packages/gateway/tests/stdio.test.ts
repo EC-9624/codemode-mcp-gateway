@@ -35,28 +35,75 @@ describe("CMG stdio application", () => {
     10_000,
   );
 
-  test.each([
-    ["EOF during an upstream call", "return await tools.pending();", "eof"],
-    ["SIGTERM during an upstream call", "return await tools.pending();", "signal"],
-    ["EOF during guest computation", "tools.started(); while (true) {}", "eof"],
-  ] as const)(
-    "cleans up after %s",
-    async (_name, code, stop) => {
+  test.each(["SIGINT", "SIGTERM"] as const)(
+    "cancels an active upstream call and awaits child exit after %s",
+    async (signal) => {
       await using app = await gatewayProcess();
       await app.client.connect(app.transport, { timeout: 4_000 });
-      const request = rejectionOf(app.client.callTool({ name: "execute", arguments: { code } }));
+
+      const request = rejectionOf(
+        app.client.callTool({
+          name: "execute",
+          arguments: { code: "return await tools.pending();" },
+        }),
+      );
+
       await app.waitFor("request-started");
       const upstream = app.upstreamPid();
-      if (stop === "signal") app.child.kill("SIGTERM");
-      else app.child.stdin.end();
 
+      app.child.kill(signal);
       await request;
+
       expect(await app.closed).toEqual({ code: 0, signal: null });
       expect(() => process.kill(upstream, 0)).toThrow();
       expect(app.stderr).toContain("upstream-exit");
     },
     10_000,
   );
+
+  test("cancels an active upstream call and awaits child exit after EOF", async () => {
+    await using app = await gatewayProcess();
+    await app.client.connect(app.transport, { timeout: 4_000 });
+
+    const request = rejectionOf(
+      app.client.callTool({
+        name: "execute",
+        arguments: { code: "return await tools.pending();" },
+      }),
+    );
+
+    await app.waitFor("request-started");
+    const upstream = app.upstreamPid();
+
+    app.child.stdin.end();
+    await request;
+
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+    expect(() => process.kill(upstream, 0)).toThrow();
+    expect(app.stderr).toContain("upstream-exit");
+  }, 10_000);
+
+  test("interrupts busy guest computation and awaits child exit after EOF", async () => {
+    await using app = await gatewayProcess();
+    await app.client.connect(app.transport, { timeout: 4_000 });
+
+    const request = rejectionOf(
+      app.client.callTool({
+        name: "execute",
+        arguments: { code: "tools.started(); while (true) {}" },
+      }),
+    );
+
+    await app.waitFor("request-started");
+    const upstream = app.upstreamPid();
+
+    app.child.stdin.end();
+    await request;
+
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+    expect(() => process.kill(upstream, 0)).toThrow();
+    expect(app.stderr).toContain("upstream-exit");
+  }, 10_000);
 
   test.each(["initialize", "discovery"])(
     "cancels startup on EOF during %s",

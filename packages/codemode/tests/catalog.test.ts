@@ -29,7 +29,7 @@ describe("ToolCatalog", () => {
     expect(calls).toBe(0);
   });
 
-  test("ranks case-insensitive name and description matches by distinct query terms", () => {
+  test("ranks distinct case-insensitive query terms with stable ties", () => {
     const catalog = ToolCatalog.create({
       listInvoices: { description: "List invoices", execute: () => ToolResult.success() },
       customerInvoices: {
@@ -43,14 +43,48 @@ describe("ToolCatalog", () => {
       sendEmail: { description: "Send a message", execute: () => ToolResult.success() },
     });
 
-    expect(catalog.search("  CUSTOMER invoices customer ").map((tool) => tool.name)).toEqual([
+    const matches = catalog.search("  CUSTOMER invoices customer ");
+
+    expect(matches.map((tool) => tool.name)).toEqual([
       "customerInvoices",
       "listInvoices",
       "customerProfiles",
     ]);
-    expect(catalog.search("sendEmail").map((tool) => tool.name)).toEqual(["sendEmail"]);
-    expect(catalog.search(" ")).toEqual([]);
-    expect(catalog.search("unmatched")).toEqual([]);
+  });
+
+  test("matches a tool name when its description does not contain the query", () => {
+    const catalog = ToolCatalog.create({
+      sendEmail: { description: "Send a message", execute: () => ToolResult.success() },
+    });
+
+    const matches = catalog.search("sendEmail");
+
+    expect(matches.map((tool) => tool.name)).toEqual(["sendEmail"]);
+  });
+
+  test.each([
+    ["blank", " "],
+    ["unmatched", "unmatched"],
+  ])("returns no matches for a %s query", (_name, query) => {
+    const catalog = ToolCatalog.create({
+      read: { description: "Read a record", execute: () => ToolResult.success() },
+    });
+
+    const matches = catalog.search(query);
+
+    expect(matches).toEqual([]);
+  });
+
+  test("keeps schema metadata as the caller's read-only reference", () => {
+    const inputSchema = Object.freeze({ type: "number" });
+
+    const catalog = ToolCatalog.create({
+      read: { description: "Read a number", inputSchema, execute: () => ToolResult.success() },
+    });
+
+    const description = catalog.describe("read");
+
+    expect(description?.inputSchema).toBe(inputSchema);
   });
 
   test("preserves absent and boolean schema metadata", () => {
@@ -92,11 +126,23 @@ describe("ToolCatalog", () => {
     );
   });
 
-  test("keeps separate catalogs and ignores inherited definition entries", () => {
+  test("keeps independent catalog entries separate", () => {
     const first = ToolCatalog.create({
       first: { description: "Read value", execute: () => ToolResult.success(1) },
     });
 
+    const second = ToolCatalog.create({
+      second: { description: "Read value", execute: () => ToolResult.success(2) },
+    });
+
+    const firstMatches = first.search("value");
+    const secondMatches = second.search("value");
+
+    expect(firstMatches.map((tool) => tool.name)).toEqual(["first"]);
+    expect(secondMatches.map((tool) => tool.name)).toEqual(["second"]);
+  });
+
+  test("ignores inherited entries in the supplied definitions", () => {
     const definitions = {
       second: { description: "Read value", execute: () => ToolResult.success(2) },
     };
@@ -106,7 +152,6 @@ describe("ToolCatalog", () => {
     });
     const second = ToolCatalog.create(definitions);
 
-    expect(first.search("value").map((tool) => tool.name)).toEqual(["first"]);
     expect(second.search("value").map((tool) => tool.name)).toEqual(["second"]);
     expect(second.describe("inherited")).toBeUndefined();
     expect(second.describe("toString")).toBeUndefined();
@@ -189,13 +234,20 @@ describe("catalog discovery", () => {
     ]);
   });
 
-  test("reports unknown names and unmatched queries without invoking tools", () => {
+  test("returns a public failure when describing an unknown tool", () => {
     const discovery = createDiscoveryTools(ToolCatalog.create({}));
 
-    expect(discovery.describeTool({ name: "missing" })).toEqual(
-      ToolResult.failure("Tool not found in this catalog."),
-    );
-    expect(discovery.searchTools({ query: "unmatched" })).toEqual(ToolResult.success([]));
+    const result = discovery.describeTool({ name: "missing" });
+
+    expect(result).toEqual(ToolResult.failure("Tool not found in this catalog."));
+  });
+
+  test("returns an empty successful result when discovery has no matches", () => {
+    const discovery = createDiscoveryTools(ToolCatalog.create({}));
+
+    const result = discovery.searchTools({ query: "unmatched" });
+
+    expect(result).toEqual({ ok: true, value: [] });
   });
 
   test("lets the app choose discovery names without replacing a catalog tool", async () => {

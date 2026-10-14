@@ -3,6 +3,22 @@
 Test meaningful behavior through its intended interface, using real code and
 small, explicit, readable scenarios. Tests specify **what** a module guarantees.
 
+## Specify the behavior before coding
+
+1. Establish the public operation's inputs, promised results, failures, and relevant
+   side effects or ordering in the task conversation. Resolve ambiguous behavior first.
+2. List concrete conditions and expected outcomes, including meaningful boundaries.
+3. Turn each scenario into an independently named test with visible inputs and expectations.
+4. Implement the operation, run its tests, and check that a plausible mistake would
+   fail a test. For example, changing `>=` to `>` must fail the threshold case.
+5. Review whether each test makes sense without reading another test or private implementation.
+
+The tests are the durable executable specification; separate specification files are
+not required. Types and concise API documentation describe caller-facing guarantees.
+A source file or an existing private test does not automatically define a public requirement.
+
+## Package ownership
+
 Each package owns its `tests/`, support helpers, fixtures, and `test`/`check` commands:
 
 | Package             | Test through                                                  | Owns                                                                                |
@@ -33,6 +49,9 @@ the behavioral specification.
 - A small private-boundary probe is justified when an important resource-ownership
   or infrastructure guarantee cannot reasonably be observed publicly. Explain that
   limitation near the probe and avoid repeating ordinary public behavior there.
+- First try the public subject with a controlled external dependency. Worker
+  lifecycle tests can observe the real worker through a scoped dependency spy;
+  this does not require exporting its supervisor or adding a public test hook.
 - Real child exit, stdio wiring, and packed installation still require dedicated
   process/distribution checks. Keep them small; they do not need to repeat the
   sandbox's JavaScript semantics.
@@ -84,11 +103,16 @@ inside an omnibus test. Neither a test-count target nor a coverage percentage is
 - Use specific matchers and assertion-based narrowing when supported. An unexpected
   result variant must fail, never silently skip the meaningful assertions.
 
+Before finishing a test, ask: **Can someone understand its scenario, action, and
+expected outcome by reading this test alone?** Use the team's working language
+(English here). Shared setup must not hide policy values, event sequences, or the
+expected outcome. Multiple assertions are welcome when they establish one behavior.
+
 ```ts
 test("returns cancelled when the caller aborts before startup", async () => {
   const signal = AbortSignal.abort();
-
   const sandbox = new CodeExecutor();
+
   const report = await sandbox.execute("return 42;", { signal });
 
   expect(report).toEqual({
@@ -103,6 +127,23 @@ test("returns cancelled when the caller aborts before startup", async () => {
 
 ## Dependencies, ordering, and cleanup
 
+### Explicit setup, support helpers, and hooks
+
+- Default to setup inside the test. Keep policy, meaningful inputs, and event order local.
+- Share reusable plumbing in `tests/support/`: connecting transports, temporary-file
+  lifetime, or subprocess management. Return fresh resources for each test.
+- Keep a helper used by only one test file near those tests unless an executable
+  fixture also needs it. Extract for clarity, not merely to remove duplication.
+- Use `using` / `await using`, or `try/finally`, to keep ownership and cleanup visible
+  and release resources even when an assertion fails.
+- Use `beforeEach` / `afterEach` only for identical, uninteresting housekeeping whose
+  omission from the test does not obscure its meaning. Avoid hook-created mutable
+  fixtures by default. Hooks control when helpers run; they do not replace helpers.
+- Custom assertions may explain a complex invariant. Helpers must not choose the
+  scenario, perform its action, and hide its expected result behind a generic name.
+
+### Dependency boundaries and asynchronous work
+
 - Prefer real QuickJS, MCP SDK clients/transports, HTTP servers, and workers. Substitute
   external services at their boundary, not application modules. Plain injected
   executors are appropriate for the MCP adapter's projection and lifetime contracts.
@@ -113,6 +154,9 @@ test("returns cancelled when the caller aborts before startup", async () => {
   such as no duplicate dispatch or no retry after VM failure.
 - Use explicit start/release promises to establish async ordering. Keep real timers
   where elapsed time, deadline enforcement, or event-loop responsiveness is the contract.
+- Control the host clock for deadline-precedence tests instead of blocking the test
+  runner for a second. Keep real timers for actual guest interruption and transport
+  cancellation; a controlled clock does not establish those guarantees.
 - A gate still needs a bounded test timeout. Potentially stuck worker scenarios run
   in subprocesses with outer watchdogs.
 - Scope spies and resource cleanup with `using`, `await using`, or `try/finally`.

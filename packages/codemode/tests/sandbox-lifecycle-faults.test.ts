@@ -1,173 +1,276 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { ToolResult } from "@cmg/codemode";
+import { Worker } from "node:worker_threads";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { captureWorker } from "./support/capture-worker.ts";
 import { executionErrorOf } from "./support/execution-error.ts";
-import { faultWorker, interruptFlag, superviseWorker, toolWorker } from "./support/workers.ts";
 import { expectNoExecutionListeners, gateTermination } from "./support/worker-cleanup.ts";
 
-// Public execution hides worker events and termination. These probes inject races that cannot
-// be ordered through guest code: partial setup, reentrant events, held cleanup, and cleanup failure.
+describe("CodeExecutor outcome ownership", () => {
+  test("preserves a setup exception when registration also emits a worker error", async () => {
+    const failure = new Error("Listener setup failed");
+    let observed = false;
+    const workers: Worker[] = [];
+    using registration = spyOn(Worker.prototype, "on");
+    const on = registration.getMockImplementation();
+    if (on === undefined) throw new Error("Expected native listener registration");
 
-describe("parent-owned call outcomes", () => {
-  test("retains worker failure and its call snapshot when cancellation arrives afterward", async () => {
-    const controller = new AbortController();
-    const worker = toolWorker("await tools.read(1); return await tools.read(2);");
-    const late = Promise.withResolvers<ToolResult>();
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => late.resolve(ToolResult.success()));
+    registration.mockImplementation(function (this: Worker, ...args: Parameters<Worker["on"]>) {
+      const result = on.apply(this, args);
+      if (args[0] === "message") {
+        workers.push(this);
+        observed = this.emit("error", new Error("Private registration failure"));
+        throw failure;
+      }
 
-    const error = await executionErrorOf(
-      superviseWorker(worker, {
-        tools: {
-          read: (args) => {
-            if (args === 1) return ToolResult.success(42);
+      return result;
+    });
 
-            worker.emit("error", new Error("Private worker details"));
-            controller.abort();
+    const error = await executionErrorOf(new CodeExecutor().execute("return 42;"));
 
-            return late.promise;
-          },
-        },
-        control: { signal: controller.signal, interrupt: interruptFlag() },
-      }),
-    );
+    expect(error.cause).toBe(failure);
+    expect(observed).toBe(true);
+    expect(workers).toHaveLength(1);
+    for (const worker of workers) expectNoExecutionListeners(worker);
 
-    expect(error.calls).toEqual([
-      { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-      { callId: 2, name: "read", status: "interrupted", reason: "sandbox-error" },
-    ]);
-    expect(error.cause).toBeInstanceOf(Error);
-    if (error.cause instanceof Error) {
-      expect(error.cause.message).toBe(
-        "Sandbox worker failed. Internal error details are not transferred.",
-      );
-      expect(error.cause.cause).toBeUndefined();
-    }
-
-    expectNoExecutionListeners(worker, controller.signal);
+    expect(registration).toHaveBeenCalledWith("message", expect.any(Function));
   });
 
-  test("closes in-flight calls before aborting tools when listener setup fails", async () => {
-    const worker = faultWorker("idle");
+  test("preserves a setup exception when termination emits a late worker error", async () => {
+    const failure = new Error("Listener setup failed");
+    let observed = false;
+    const workers: Worker[] = [];
+    using registration = spyOn(Worker.prototype, "on");
+    const on = registration.getMockImplementation();
+    if (on === undefined) throw new Error("Expected native listener registration");
+
+    registration.mockImplementation(function (this: Worker, ...args: Parameters<Worker["on"]>) {
+      const result = on.apply(this, args);
+      if (args[0] === "message") {
+        workers.push(this);
+        throw failure;
+      }
+
+      return result;
+    });
+    using termination = spyOn(Worker.prototype, "terminate");
+    const terminateWorker = termination.getMockImplementation();
+    if (terminateWorker === undefined) throw new Error("Expected native termination");
+
+    termination.mockImplementation(async function (this: Worker) {
+      observed = this.emit("error", new Error("Private late failure"));
+
+      return await terminateWorker.call(this);
+    });
+
+    const error = await executionErrorOf(new CodeExecutor().execute("return 42;"));
+
+    expect(error.cause).toBe(failure);
+    expect(observed).toBe(true);
+    expect(termination).toHaveBeenCalledTimes(1);
+    expect(workers).toHaveLength(1);
+    for (const worker of workers) expectNoExecutionListeners(worker);
+
+    expect(registration).toHaveBeenCalledWith("message", expect.any(Function));
+  });
+
+  test("closes in-flight calls before aborting tools after listener setup fails", async () => {
     const failure = new Error("Listener setup failed");
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
-    const addListener = worker.on.bind(worker);
+    const workers: Worker[] = [];
     let aborted = false;
-    let invocations = 0;
+    let calls = 0;
     let conversions = 0;
+    using registration = spyOn(Worker.prototype, "on");
+    const on = registration.getMockImplementation();
+    if (on === undefined) throw new Error("Expected native listener registration");
 
-    using add = spyOn(worker, "on").mockImplementation((...args: Parameters<typeof worker.on>) => {
-      const added = addListener(...args);
+    registration.mockImplementation(function (this: Worker, ...args: Parameters<Worker["on"]>) {
+      const result = on.apply(this, args);
       if (args[0] === "exit") {
-        worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
+        workers.push(this);
+        this.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
         throw failure;
       }
 
-      return added;
+      return result;
     });
 
-    const error = await executionErrorOf(
-      superviseWorker(worker, {
-        tools: {
-          read: (_args, { signal }) => {
-            invocations++;
-            signal.addEventListener(
-              "abort",
-              () => {
-                aborted = true;
+    const sandbox = new CodeExecutor({
+      tools: {
+        read: (_args, { signal }) => {
+          calls++;
+          signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              for (const worker of workers) {
                 worker.emit("message", {
                   type: "tool-call",
                   callId: 2,
                   name: "read",
                   argsJson: undefined,
                 });
-                late.resolve(
-                  ToolResult.success({
-                    toJSON() {
-                      conversions++;
+              }
 
-                      return 42;
-                    },
-                  }),
-                );
-              },
-              { once: true },
-            );
+              late.resolve(
+                ToolResult.success({
+                  toJSON() {
+                    conversions++;
 
-            return late.promise;
-          },
+                    return 42;
+                  },
+                }),
+              );
+            },
+            { once: true },
+          );
+
+          return late.promise;
         },
-      }),
-    );
+      },
+    });
+
+    const error = await executionErrorOf(sandbox.execute("return 42;"));
 
     expect(error.cause).toBe(failure);
     expect(error.calls).toEqual([
       { callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" },
     ]);
     expect(aborted).toBe(true);
-    expect(invocations).toBe(1);
+    expect(calls).toBe(1);
     expect(conversions).toBe(0);
-    expect(add).toHaveBeenCalled();
-    expectNoExecutionListeners(worker);
+    expect(workers).toHaveLength(1);
+    for (const worker of workers) expectNoExecutionListeners(worker);
+
+    expect(registration).toHaveBeenCalledWith("exit", expect.any(Function));
   });
 
-  test("keeps the timeout interruption reason when cancellation arrives after deadline selection", async () => {
+  test("retains worker failure when the caller cancels afterward", async () => {
+    using captured = captureWorker();
     const controller = new AbortController();
-
-    const control = {
-      deadline: { timeoutMs: 10000, expiresAt: performance.now() + 10000 },
-      interrupt: interruptFlag(),
-      signal: controller.signal,
-    };
-
-    const worker = toolWorker(
-      "await tools.read(1); return await tools.read(2);",
-      10000,
-      control.interrupt.buffer,
-    );
-
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const completion = superviseWorker(worker, {
+    const sandbox = new CodeExecutor({
       tools: {
-        read: (args) => {
-          if (args === 1) return ToolResult.success(42);
-
+        first: () => ToolResult.success(42),
+        wait: () => {
           started.resolve();
 
           return late.promise;
         },
       },
-      control,
     });
 
+    const completion = executionErrorOf(
+      sandbox.execute("await tools.first(); return await tools.wait();", {
+        signal: controller.signal,
+      }),
+    );
+
+    const worker = await captured.worker;
     await started.promise;
-    control.deadline.expiresAt = performance.now() + 20;
-    // Expire the clock while deliberately preventing the parent timer callback from running.
-    Bun.sleepSync(40);
+
+    worker.emit("error", new Error("Private worker details"));
+    controller.abort();
+    const error = await completion;
+
+    expect(error.cause).toEqual(
+      new Error("Sandbox worker failed. Internal error details are not transferred."),
+    );
+    expect(error.calls).toEqual([
+      { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+      { callId: 2, name: "wait", status: "interrupted", reason: "sandbox-error" },
+    ]);
+    expectNoExecutionListeners(worker, controller.signal);
+  });
+
+  test("keeps success fixed when cancellation and expiry arrive during cleanup", async () => {
+    using captured = captureWorker();
+    const controller = new AbortController();
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
+    const sandbox = new CodeExecutor({ totalTimeoutMs: 10_000 });
+    let settled = false;
+
+    const completion = sandbox
+      .execute("return 42;", { signal: controller.signal })
+      .then((report) => {
+        settled = true;
+
+        return report;
+      });
+
+    const worker = await captured.worker;
+    using termination = gateTermination(worker);
+
+    await termination.terminating;
+    expect(settled).toBe(false);
+    clock.mockReturnValue(now + 10_001);
+    controller.abort();
+    worker.emit("message", { type: "completed", result: { ok: true, value: 7 } });
+    worker.emit("error", new Error("Private late worker failure"));
+    termination.release();
+    const report = await completion;
+
+    expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
+    expect(termination.terminate).toHaveBeenCalledTimes(1);
+    expectNoExecutionListeners(worker, controller.signal);
+  });
+
+  test("keeps timeout fixed when cancellation arrives after deadline selection", async () => {
+    using captured = captureWorker();
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
+
+    const sandbox = new CodeExecutor({
+      totalTimeoutMs: 10_000,
+      tools: {
+        first: () => ToolResult.success(42),
+        wait: () => {
+          started.resolve();
+
+          return late.promise;
+        },
+      },
+    });
+
+    const completion = sandbox.execute("await tools.first(); return await tools.wait();", {
+      signal: controller.signal,
+    });
+
+    const worker = await captured.worker;
+    await started.promise;
+
+    clock.mockReturnValue(now + 10_001);
     worker.emit("message", { type: "completed", result: { ok: true, value: 7 } });
     controller.abort();
+    const report = await completion;
 
-    expect(await completion).toEqual({
+    expect(report).toEqual({
       result: {
         ok: false,
         error: { kind: "timeout", message: "Execution exceeded the 10000 ms total limit." },
       },
       calls: [
-        { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-        { callId: 2, name: "read", status: "interrupted", reason: "timeout" },
+        { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 2, name: "wait", status: "interrupted", reason: "timeout" },
       ],
     });
   });
 
-  test("keeps cancellation and its snapshot fixed through late events and held termination", async () => {
+  test("keeps cancellation fixed through late responses and held termination", async () => {
+    using captured = captureWorker();
     const controller = new AbortController();
-    const worker = toolWorker("return await tools.read();");
-    using termination = gateTermination(worker);
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
@@ -175,15 +278,7 @@ describe("parent-owned call outcomes", () => {
     let conversions = 0;
     let settled = false;
 
-    const control = {
-      signal: controller.signal,
-      interrupt: interruptFlag(),
-      deadline: { timeoutMs: 10000, expiresAt: performance.now() + 10000 },
-    };
-
-    using post = spyOn(worker, "postMessage");
-
-    const completion = superviseWorker(worker, {
+    const sandbox = new CodeExecutor({
       tools: {
         read: () => {
           started.resolve();
@@ -191,19 +286,24 @@ describe("parent-owned call outcomes", () => {
           return late.promise;
         },
       },
-      control,
-    }).then((report) => {
-      settled = true;
-
-      return report;
     });
 
+    const completion = sandbox
+      .execute("return await tools.read();", { signal: controller.signal })
+      .then((report) => {
+        settled = true;
+
+        return report;
+      });
+
+    const worker = await captured.worker;
+    using termination = gateTermination(worker);
+    using post = spyOn(worker, "postMessage");
     await started.promise;
+
     controller.abort();
     await termination.terminating;
     expect(settled).toBe(false);
-    expect(Atomics.load(control.interrupt, 0)).toBe(1);
-    control.deadline.expiresAt = performance.now() - 1;
     worker.emit("message", { type: "completed", result: { ok: true, value: 7 } });
     worker.emit("error", new Error("Private late worker failure"));
     late.resolve(
@@ -217,8 +317,9 @@ describe("parent-owned call outcomes", () => {
     );
     await Bun.sleep(0);
     termination.release();
+    const report = await completion;
 
-    expect(await completion).toEqual({
+    expect(report).toEqual({
       result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
       calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
@@ -228,42 +329,49 @@ describe("parent-owned call outcomes", () => {
     expectNoExecutionListeners(worker, controller.signal);
   });
 
-  test("retains the cancellation snapshot when worker termination rejects", async () => {
+  test("retains cancellation observations when termination rejects", async () => {
+    using captured = captureWorker();
     const controller = new AbortController();
-    const worker = toolWorker("await tools.read(1); return await tools.read(2);");
-    const terminateWorker = worker.terminate.bind(worker);
     const cause = new Error("Termination failed");
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
-      await terminateWorker();
-      throw cause;
-    });
-
-    const completion = superviseWorker(worker, {
+    const sandbox = new CodeExecutor({
       tools: {
-        read: (args) => {
-          if (args === 1) return ToolResult.success(42);
-
+        first: () => ToolResult.success(42),
+        wait: () => {
           started.resolve();
 
           return late.promise;
         },
       },
-      control: { signal: controller.signal, interrupt: interruptFlag() },
+    });
+
+    const completion = executionErrorOf(
+      sandbox.execute("await tools.first(); return await tools.wait();", {
+        signal: controller.signal,
+      }),
+    );
+
+    const worker = await captured.worker;
+    const terminateWorker = worker.terminate.bind(worker);
+
+    using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
+      await terminateWorker();
+      throw cause;
     });
 
     await started.promise;
+
     controller.abort();
-    const error = await executionErrorOf(completion);
+    const error = await completion;
 
     expect(error.cause).toBe(cause);
     expect(error.calls).toEqual([
-      { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-      { callId: 2, name: "read", status: "interrupted", reason: "cancelled" },
+      { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+      { callId: 2, name: "wait", status: "interrupted", reason: "cancelled" },
     ]);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker, controller.signal);
@@ -281,31 +389,24 @@ describe("parent-owned call outcomes", () => {
     ],
     ["timeout", { kind: "timeout", message: "Execution exceeded the 100 ms limit." }],
   ] as const)("preserves the %s snapshot when cleanup rejects", async (reason, error) => {
-    const worker = faultWorker("idle");
-    const terminateWorker = worker.terminate.bind(worker);
+    using captured = captureWorker();
     const cause = new Error("Termination failed");
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
+    const sandbox = new CodeExecutor({ tools: { read: () => late.promise } });
+    const completion = executionErrorOf(sandbox.execute("return 42;"));
+    const worker = await captured.worker;
+    const terminateWorker = worker.terminate.bind(worker);
 
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       await terminateWorker();
       throw cause;
     });
 
-    const completion = superviseWorker(worker, { tools: { read: () => late.promise } });
-
     worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
-    worker.emit("message", {
-      type: "completed",
-      result: {
-        ok: false,
-        error: {
-          ...error,
-        },
-      },
-    });
-    const failure = await executionErrorOf(completion);
+    worker.emit("message", { type: "completed", result: { ok: false, error } });
+    const failure = await completion;
 
     expect(failure.cause).toBe(cause);
     expect(failure.calls).toEqual([{ callId: 1, name: "read", status: "interrupted", reason }]);
@@ -313,62 +414,55 @@ describe("parent-owned call outcomes", () => {
     expectNoExecutionListeners(worker);
   });
 
-  test("preserves both execution and cleanup failures alongside sandbox-interrupted calls", async () => {
-    const worker = faultWorker("idle");
-    const terminateWorker = worker.terminate.bind(worker);
+  test("preserves execution and cleanup failures with interrupted calls", async () => {
+    using captured = captureWorker();
     const cleanupFailure = new Error("Termination failed");
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
+    const sandbox = new CodeExecutor({ tools: { read: () => late.promise } });
+    const completion = executionErrorOf(sandbox.execute("return 42;"));
+    const worker = await captured.worker;
+    const terminateWorker = worker.terminate.bind(worker);
 
     using terminate = spyOn(worker, "terminate").mockImplementation(async () => {
       await terminateWorker();
       throw cleanupFailure;
     });
 
-    const completion = superviseWorker(worker, { tools: { read: () => late.promise } });
-
     worker.emit("message", { type: "tool-call", callId: 1, name: "read", argsJson: undefined });
     worker.emit("error", new Error("Private worker details"));
-    const error = await executionErrorOf(completion);
+    const error = await completion;
 
     expect(error.calls).toEqual([
       { callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" },
     ]);
     expect(error.cause).toBeInstanceOf(SuppressedError);
-    if (error.cause instanceof SuppressedError) {
-      expect(error.cause.error).toBe(cleanupFailure);
-      expect(error.cause.suppressed).toBeInstanceOf(Error);
-      if (error.cause.suppressed instanceof Error) {
-        expect(error.cause.suppressed.message).toBe(
-          "Sandbox worker failed. Internal error details are not transferred.",
-        );
-      }
-    }
+    if (!(error.cause instanceof SuppressedError)) throw new Error("Expected both failures");
 
+    expect(error.cause.error).toBe(cleanupFailure);
+    expect(error.cause.suppressed).toEqual(
+      new Error("Sandbox worker failed. Internal error details are not transferred."),
+    );
     expect(terminate).toHaveBeenCalledTimes(1);
   });
-});
 
-test("fixes the outcome before reentrant tool-abort listeners emit new worker events", async () => {
-  const controller = new AbortController();
-  const worker = faultWorker("idle");
-  const late = Promise.withResolvers<ToolResult>();
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => late.resolve(ToolResult.success()));
-  const request = { type: "tool-call", callId: 1, name: "read", argsJson: undefined };
-  let calls = 0;
-  let conversions = 0;
-  using post = spyOn(worker, "postMessage");
+  test("closes dispatch before notifying reentrant tool-abort listeners", async () => {
+    using captured = captureWorker();
+    const controller = new AbortController();
+    const late = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => late.resolve(ToolResult.success()));
+    const started = Promise.withResolvers<void>();
+    let calls = 0;
+    let conversions = 0;
 
-  const completion = superviseWorker(worker, {
-    control: { signal: controller.signal, interrupt: interruptFlag() },
-    tools: {
-      read: (_args, { signal }) => {
-        calls++;
-        signal.addEventListener(
-          "abort",
-          () => {
+    const sandbox = new CodeExecutor({
+      tools: {
+        read: (_args, { signal }) => {
+          calls++;
+
+          const abort = () => {
             late.resolve(
               ToolResult.success({
                 toJSON() {
@@ -378,99 +472,71 @@ test("fixes the outcome before reentrant tool-abort listeners emit new worker ev
                 },
               }),
             );
-            worker.emit("message", { ...request, callId: 2 });
+            worker.emit("message", {
+              type: "tool-call",
+              callId: 2,
+              name: "read",
+              argsJson: undefined,
+            });
             worker.emit("message", { type: "completed", result: { ok: true, value: 42 } });
-          },
-          { once: true },
-        );
+          };
 
-        return late.promise;
+          signal.addEventListener("abort", abort, { once: true });
+          started.resolve();
+
+          return late.promise;
+        },
       },
-    },
+    });
+
+    const completion = sandbox.execute("return await tools.read();", { signal: controller.signal });
+    const worker = await captured.worker;
+    using post = spyOn(worker, "postMessage");
+    await started.promise;
+
+    controller.abort();
+    const report = await completion;
+
+    expect(report).toEqual({
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
+    });
+    expect(calls).toBe(1);
+    expect(conversions).toBe(0);
+    expect(post).not.toHaveBeenCalled();
+    expectNoExecutionListeners(worker, controller.signal);
   });
 
-  worker.emit("message", request);
-  controller.abort();
+  test("counts listener setup time against the total deadline", async () => {
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
+    const workers: Worker[] = [];
+    using registration = spyOn(Worker.prototype, "on");
+    const on = registration.getMockImplementation();
+    if (on === undefined) throw new Error("Expected native listener registration");
 
-  expect(await completion).toEqual({
-    result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
-    calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
+    registration.mockImplementation(function (this: Worker, ...args: Parameters<Worker["on"]>) {
+      const result = on.apply(this, args);
+      if (args[0] === "message") {
+        workers.push(this);
+        clock.mockReturnValue(now + 101);
+      }
+
+      return result;
+    });
+
+    const report = await new CodeExecutor({ totalTimeoutMs: 100 }).execute("return 42;");
+
+    expect(report).toEqual({
+      result: {
+        ok: false,
+        error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." },
+      },
+      calls: [],
+    });
+    expect(workers).toHaveLength(1);
+    for (const worker of workers) expectNoExecutionListeners(worker);
+
+    expect(registration).toHaveBeenCalled();
   });
-  expect(calls).toBe(1);
-  expect(conversions).toBe(0);
-  expect(post).not.toHaveBeenCalled();
-  expectNoExecutionListeners(worker, controller.signal);
-});
-
-test("cancellation releases a worker stalled during startup", async () => {
-  const controller = new AbortController();
-  const control = { signal: controller.signal, interrupt: interruptFlag() };
-  const worker = faultWorker("startup-stall");
-  using terminate = spyOn(worker, "terminate");
-  const completion = superviseWorker(worker, { control });
-
-  controller.abort();
-
-  expect((await completion).result).toEqual({
-    ok: false,
-    error: { kind: "cancelled", message: "Execution cancelled." },
-  });
-  expect(Atomics.load(control.interrupt, 0)).toBe(1);
-  expect(terminate).toHaveBeenCalledTimes(1);
-  expectNoExecutionListeners(worker, controller.signal);
-});
-
-test("the total deadline releases stalled startup and awaits termination", async () => {
-  const worker = faultWorker("startup-stall");
-
-  const control = {
-    deadline: { timeoutMs: 20, expiresAt: performance.now() + 20 },
-    interrupt: interruptFlag(),
-  };
-
-  using termination = gateTermination(worker);
-  let settled = false;
-
-  const completion = superviseWorker(worker, { control }).then((report) => {
-    settled = true;
-
-    return report;
-  });
-
-  await termination.terminating;
-  expect(settled).toBe(false);
-  expect(Atomics.load(control.interrupt, 0)).toBe(1);
-  expect(worker.listenerCount("message")).toBe(0);
-  expect(worker.listenerCount("error")).toBe(1);
-  worker.emit("message", { type: "completed", result: { ok: true, value: 42 } });
-  worker.emit("error", new Error("Private late failure"));
-  termination.release();
-
-  expect((await completion).result).toEqual({
-    ok: false,
-    error: { kind: "timeout", message: "Execution exceeded the 20 ms total limit." },
-  });
-  expect(termination.terminate).toHaveBeenCalledTimes(1);
-  expectNoExecutionListeners(worker);
-});
-
-test("counts time elapsed before the supervisor takes ownership", async () => {
-  const worker = faultWorker("idle");
-
-  const control = {
-    deadline: { timeoutMs: 100, expiresAt: performance.now() - 1 },
-    interrupt: interruptFlag(),
-  };
-
-  const report = await superviseWorker(worker, { control });
-
-  expect(report).toEqual({
-    result: {
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 100 ms total limit." },
-    },
-    calls: [],
-  });
-  expect(Atomics.load(control.interrupt, 0)).toBe(1);
-  expectNoExecutionListeners(worker);
 });

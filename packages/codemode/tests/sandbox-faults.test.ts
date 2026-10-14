@@ -1,13 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { Scope } from "quickjs-emscripten";
+import { Scope, type QuickJSContext } from "quickjs-emscripten";
 import { DEFAULT_LIMITS } from "../src/runtime/limits.ts";
 import { createVm } from "../src/runtime/vm.ts";
 import { ToolResult } from "@cmg/codemode";
 import { executeEngine } from "../src/runtime/engine.ts";
 import { expectDisposedExecution, type ExecutionResources } from "./support/disposal.ts";
-import { executeLocally, installLocalToolBridge, prepareTools } from "./support/local-tools.ts";
+import { executeLocally, installLocalToolBridge } from "./support/local-tools.ts";
 import { GuestCall } from "../src/runtime/protocol.ts";
-import { installGuestToolBridge } from "../src/runtime/guest-bridge.ts";
+import { installGuestToolBridge, type ToolBridge } from "../src/runtime/guest-bridge.ts";
+import { prepareRunner } from "../src/runtime/script.ts";
 import { rejectionOf } from "./support/rejection.ts";
 import { interruptFlag } from "./support/workers.ts";
 
@@ -291,3 +292,9 @@ describe("guest tool bridge", () => {
     expect(await executeLocally("return 3;")).toEqual({ ok: true, value: 3 });
   });
 });
+
+/** Direct bridge tests need the real prelude; engine tests initialize it themselves. */
+function prepareTools(vm: QuickJSContext, bridge: ToolBridge): void {
+  using api = prepareRunner(vm, bridge.dispatcher, bridge.toolNames).unwrap();
+  bridge.attach(api);
+}

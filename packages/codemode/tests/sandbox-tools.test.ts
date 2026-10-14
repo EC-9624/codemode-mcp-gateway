@@ -1,45 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult, type SandboxTool } from "@cmg/codemode";
-
-const add: SandboxTool = async (args) => {
-  if (
-    typeof args !== "object" ||
-    args === null ||
-    !("a" in args) ||
-    !("b" in args) ||
-    typeof args.a !== "number" ||
-    typeof args.b !== "number"
-  ) {
-    return ToolResult.failure("add expects numeric a and b.");
-  }
-
-  await Bun.sleep(1);
-
-  return ToolResult.success(args.a + args.b);
-};
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor tools", () => {
   test("lets the script catch public host errors and continue", async () => {
-    expect(
-      (
-        await new CodeExecutor({
-          tools: {
-            add,
-            fail: async () => {
-              await Bun.sleep(1);
+    const sandbox = new CodeExecutor({
+      tools: {
+        answer: () => ToolResult.success(3),
+        fail: async () => ToolResult.failure("An expected failure"),
+      },
+    });
 
-              return ToolResult.failure("An expected failure");
-            },
-          },
-        }).execute(
-          `try {
-          await tools.fail();
-        } catch (error) {
-          return { error: error.message, value: await tools.add({ a: 1, b: 2 }) };
-        }`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: { error: "An expected failure", value: 3 } });
+    const report = await sandbox.execute(`
+      try { await tools.fail(); } catch (error) {
+        return { error: error.message, value: await tools.answer() };
+      }
+    `);
+
+    expect(report.result).toEqual({ ok: true, value: { error: "An expected failure", value: 3 } });
   });
 
   test("keeps an asynchronous non-Error host rejection private", async () => {
@@ -60,13 +37,11 @@ describe("CodeExecutor tools", () => {
 
   test("does not interpret failure-shaped tool data as a bridge failure", async () => {
     const value = { ok: false, error: { message: "Ordinary data" } };
-    expect(
-      (
-        await new CodeExecutor({ tools: { read: () => ToolResult.success(value) } }).execute(
-          "return await tools.read();",
-        )
-      ).result,
-    ).toEqual({ ok: true, value });
+    const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(value) } });
+
+    const report = await sandbox.execute("return await tools.read();");
+
+    expect(report.result).toEqual({ ok: true, value });
   });
 
   for (const scenario of [
@@ -170,15 +145,11 @@ describe("CodeExecutor tools", () => {
 
   test("keeps JSON text distinct from the string value it encodes", async () => {
     const value = 'Hello "mcm"\n日本語';
-    expect(
-      (
-        await new CodeExecutor({
-          tools: {
-            echo: (args) => ToolResult.success(args),
-          },
-        }).execute(`return await tools.echo(${JSON.stringify(value)});`)
-      ).result,
-    ).toEqual({ ok: true, value });
+    const sandbox = new CodeExecutor({ tools: { echo: (args) => ToolResult.success(args) } });
+
+    const report = await sandbox.execute(`return await tools.echo(${JSON.stringify(value)});`);
+
+    expect(report.result).toEqual({ ok: true, value });
   });
 
   test.each([
@@ -212,27 +183,29 @@ describe("CodeExecutor tools", () => {
     },
   );
 
-  const cycle: { self?: unknown } = {};
-  cycle.self = cycle;
+  test("rejects a function-valued host result with a public conversion error", async () => {
+    const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(() => 3) } });
 
-  test.each([
-    ["function", () => 3],
-    ["cycle", cycle],
-  ] as const)(
-    "rejects a non-JSON %s host result with a public conversion error",
-    async (_name, value) => {
-      const report = await new CodeExecutor({
-        tools: {
-          read: () => ToolResult.success(value),
-        },
-      }).execute("return await tools.read();");
+    const report = await sandbox.execute("return await tools.read();");
 
-      expect(report.result).toEqual({
-        ok: false,
-        error: { kind: "script", message: "Tool result is not JSON-serializable." },
-      });
-    },
-  );
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Tool result is not JSON-serializable." },
+    });
+  });
+
+  test("rejects a cyclic host result with a public conversion error", async () => {
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(cycle) } });
+
+    const report = await sandbox.execute("return await tools.read();");
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Tool result is not JSON-serializable." },
+    });
+  });
 
   test("reads an undefined tool result value once for guest delivery and retention", async () => {
     let reads = 0;
@@ -309,28 +282,30 @@ describe("CodeExecutor tools", () => {
   });
 
   test("only exposes supplied tools and no inherited host functions", async () => {
-    expect(
-      (
-        await new CodeExecutor({
-          tools: {
-            add,
-          },
-        }).execute("return [Object.keys(tools), typeof tools.toString, typeof tools.hidden];")
-      ).result,
-    ).toEqual({ ok: true, value: [["add"], "undefined", "undefined"] });
+    const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(42) } });
 
-    const result = (
-      await new CodeExecutor({ tools: { add } }).execute("return await tools.hidden();")
-    ).result;
+    const report = await sandbox.execute(
+      "return [Object.keys(tools), typeof tools.toString, typeof tools.hidden];",
+    );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.kind).toBe("script");
+    expect(report.result).toEqual({ ok: true, value: [["read"], "undefined", "undefined"] });
+  });
+
+  test("reports a script failure when calling an unavailable tool", async () => {
+    const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(42) } });
+
+    const report = await sandbox.execute("return await tools.hidden();");
+
+    expect(report.result).toMatchObject({ ok: false, error: { kind: "script" } });
+    expect(report.calls).toEqual([]);
   });
 
   test("reports guest promises that cannot make progress", async () => {
-    expect(
-      (await new CodeExecutor().execute("return await new Promise(() => {});")).result,
-    ).toEqual({
+    const sandbox = new CodeExecutor();
+
+    const report = await sandbox.execute("return await new Promise(() => {});");
+
+    expect(report.result).toEqual({
       ok: false,
       error: {
         kind: "script",
@@ -340,30 +315,47 @@ describe("CodeExecutor tools", () => {
   });
 
   test("receives tool replies while guest jobs keep arriving", async () => {
-    expect(
-      (
-        await new CodeExecutor({
-          tools: {
-            wait: async () => {
-              await Bun.sleep(5);
+    const sandbox = new CodeExecutor({
+      tools: {
+        wait: async () => {
+          await Bun.sleep(5);
 
-              return ToolResult.success();
-            },
-          },
-        }).execute(
-          `let done = false;
+          return ToolResult.success();
+        },
+      },
+    });
+
+    const report = await sandbox.execute(`let done = false;
          const call = tools.wait().then(() => { done = true; });
          while (!done) await Promise.resolve();
          await call;
-         return done;`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: true });
+          return done;`);
+
+    expect(report.result).toEqual({ ok: true, value: true });
   });
 
   test("continues executing tools after a validation failure", async () => {
-    const sandbox = new CodeExecutor({ tools: { add } });
+    const sandbox = new CodeExecutor({
+      tools: {
+        add: async (args) => {
+          if (
+            typeof args !== "object" ||
+            args === null ||
+            !("a" in args) ||
+            !("b" in args) ||
+            typeof args.a !== "number" ||
+            typeof args.b !== "number"
+          ) {
+            return ToolResult.failure("add expects numeric a and b.");
+          }
+
+          return ToolResult.success(args.a + args.b);
+        },
+      },
+    });
+
     const succeeded = await sandbox.execute("return await tools.add({ a: 1, b: 2 });");
+
     const failed = await sandbox.execute("return await tools.add(null);");
     const recovered = await sandbox.execute("return await tools.add({ a: 1, b: 2 });");
 

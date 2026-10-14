@@ -7,6 +7,9 @@ describe("cmg executable", () => {
   test.each([
     { name: "missing configuration", args: [] },
     { name: "extra arguments", args: ["unused.json", "extra"] },
+    { name: "login without configuration", args: ["login"] },
+    { name: "logout without configuration", args: ["logout"] },
+    { name: "unknown command", args: ["unknown", "unused.json"] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);
 

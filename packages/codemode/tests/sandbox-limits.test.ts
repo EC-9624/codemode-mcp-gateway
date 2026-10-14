@@ -28,7 +28,7 @@ describe("CodeExecutor limit configuration", () => {
     expect(reads).toBe(0);
   });
 
-  test.each([
+  for (const [name, maximum] of [
     ["timeoutMs", 2147483647],
     ["totalTimeoutMs", 2147483647],
     ["memoryLimitBytes", 2147483647],
@@ -37,13 +37,27 @@ describe("CodeExecutor limit configuration", () => {
     ["maxOutputBytes", 2147483647],
     ["maxToolCalls", 2147483647],
     ["maxConcurrentToolCalls", 2147483647],
-  ] as const)("accepts the endpoints and rejects overflow for %s", (name, maximum) => {
-    expect(() => new CodeExecutor({ [name]: 1 })).not.toThrow();
-    expect(() => new CodeExecutor({ [name]: maximum })).not.toThrow();
-    expect(() => new CodeExecutor({ [name]: maximum + 1 })).toThrow(
-      new RangeError(`${name} must be an integer from 1 to ${maximum}.`),
-    );
-  });
+  ] as const) {
+    test(`accepts ${name} at the minimum of 1`, () => {
+      const options = { [name]: 1 };
+
+      expect(() => new CodeExecutor(options)).not.toThrow();
+    });
+
+    test(`accepts ${name} at the maximum of ${maximum}`, () => {
+      const options = { [name]: maximum };
+
+      expect(() => new CodeExecutor(options)).not.toThrow();
+    });
+
+    test(`rejects ${name} above its maximum of ${maximum}`, () => {
+      const options = { [name]: maximum + 1 };
+
+      expect(() => new CodeExecutor(options)).toThrow(
+        new RangeError(`${name} must be an integer from 1 to ${maximum}.`),
+      );
+    });
+  }
 
   test("does not treat a null optional total deadline as absent", () => {
     const options: SandboxOptions = {};
@@ -54,7 +68,7 @@ describe("CodeExecutor limit configuration", () => {
 });
 
 describe("source admission", () => {
-  test("accepts exactly the default 256 KiB and rejects one byte more before tool dispatch", async () => {
+  test("accepts source exactly at the default 256 KiB limit", async () => {
     const code = "return await tools.read();".padEnd(256 * 1024, " ");
     let reads = 0;
 
@@ -69,13 +83,31 @@ describe("source admission", () => {
     });
 
     const accepted = await sandbox.execute(code);
-    const rejected = await sandbox.execute(code + " ");
 
     expect(accepted).toEqual({
       result: { ok: true, value: 42 },
       calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }],
     });
-    expect(rejected).toEqual({
+    expect(reads).toBe(1);
+  });
+
+  test("rejects source one byte above the default limit before dispatching a tool", async () => {
+    const code = "return await tools.read();".padEnd(262145, " ");
+    let reads = 0;
+
+    const sandbox = new CodeExecutor({
+      tools: {
+        read: () => {
+          reads++;
+
+          return ToolResult.success(42);
+        },
+      },
+    });
+
+    const report = await sandbox.execute(code);
+
+    expect(report).toEqual({
       result: {
         ok: false,
         error: {
@@ -87,30 +119,35 @@ describe("source admission", () => {
       },
       calls: [],
     });
-    expect(reads).toBe(1);
+    expect(reads).toBe(0);
   });
 
-  test.each([["multibyte", 'return "é😀";', 16, "é😀"]] as const)(
-    "measures %s source in UTF-8 bytes",
-    async (_name, code, bytes, value) => {
-      const accepted = await new CodeExecutor({ maxSourceBytes: bytes }).execute(code);
-      const rejected = await new CodeExecutor({ maxSourceBytes: bytes - 1 }).execute(code);
+  test("accepts multibyte source whose UTF-8 encoding exactly fits the limit", async () => {
+    const sandbox = new CodeExecutor({ maxSourceBytes: 16 });
 
-      expect(accepted).toEqual({ result: { ok: true, value }, calls: [] });
-      expect(rejected).toEqual({
-        result: {
-          ok: false,
-          error: {
-            kind: "limit",
-            resource: "source",
-            maximum: bytes - 1,
-            message: `Source exceeds the ${bytes - 1} byte limit.`,
-          },
+    const report = await sandbox.execute('return "é😀";');
+
+    expect(report).toEqual({ result: { ok: true, value: "é😀" }, calls: [] });
+  });
+
+  test("rejects multibyte source whose characters fit but UTF-8 bytes exceed the limit", async () => {
+    const sandbox = new CodeExecutor({ maxSourceBytes: 15 });
+
+    const report = await sandbox.execute('return "é😀";');
+
+    expect(report).toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "source",
+          maximum: 15,
+          message: "Source exceeds the 15 byte limit.",
         },
-        calls: [],
-      });
-    },
-  );
+      },
+      calls: [],
+    });
+  });
 
   test("allows increasing the source limit without configuring VM limits", async () => {
     const code = "return 42;".padEnd(256 * 1024 + 1, " ");
@@ -132,8 +169,10 @@ describe("source admission", () => {
   });
 
   test("rejects oversized invalid syntax before parsing and permits the next execution", async () => {
-    const rejected = await new CodeExecutor({ maxSourceBytes: 1 }).execute("return (;");
-    const recovered = await new CodeExecutor().execute("return 42;");
+    const sandbox = new CodeExecutor({ maxSourceBytes: 10 });
+
+    const rejected = await sandbox.execute("return (;".padEnd(11, " "));
+    const recovered = await sandbox.execute("return 42;");
 
     expect(rejected.result).toMatchObject({
       ok: false,
@@ -157,7 +196,7 @@ describe("worker VM limits", () => {
     ["memory", { memoryLimitBytes: 1 }],
     ["stack", { maxStackSizeBytes: 1024 }],
   ] as const)(
-    "rejects prelude setup failure under a tiny %s limit and recovers",
+    "rejects setup under a tiny %s limit without affecting a healthy executor",
     async (_name, options) => {
       const failure = await executionErrorOf(new CodeExecutor(options).execute("return 42;"));
 
@@ -221,11 +260,14 @@ describe("worker VM limits", () => {
 
     expect(lower.result.ok).toBe(true);
     expect(higher.result.ok).toBe(true);
-    if (!lower.result.ok || !higher.result.ok) return;
+    if (!lower.result.ok || !higher.result.ok)
+      throw new Error("Expected both recursion errors to be caught");
 
     expect(typeof lower.result.value).toBe("number");
     expect(typeof higher.result.value).toBe("number");
-    if (typeof lower.result.value !== "number" || typeof higher.result.value !== "number") return;
+    if (typeof lower.result.value !== "number" || typeof higher.result.value !== "number") {
+      throw new Error("Expected numeric recursion depths");
+    }
 
     expect(lower.result.value).toBeGreaterThan(0);
     expect(higher.result.value).toBeGreaterThan(lower.result.value);

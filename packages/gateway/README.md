@@ -291,12 +291,13 @@ bun run --cwd packages/gateway check
 
 This package owns configuration, composition, CLI, end-to-end gateway, and
 stdio/HTTP shutdown tests in a flat `tests/` directory, grouped by public subject.
-`login.test.ts` exercises callback validation and storage through public login/logout;
+`login.test.ts`, `login-callback.test.ts`, and `logout.test.ts` specify authorization
+workflows through public login/logout; `credentials.test.ts` specifies the exported schema.
 `authorization.test.ts` exercises running gateways through real SDK clients.
 Only `credential-ownership.test.ts` retains internal session/lease probes, for
 out-of-order store completions, persistence publication, and compromised/crashed
-lock ownership that the public serving API cannot expose precisely. The OS adapter
-is injected into public login tests to avoid accessing the real credential service.
+lock ownership that the public serving API cannot expose precisely. The real OS adapter
+is exercised through public login/logout with scoped spies on Bun's secret service.
 Its helpers and upstream fixtures are package-local. Packed-consumer fixtures additionally verify the installed API
 and `cmg` executable through the root distribution checks.
 See [testing conventions](../../docs/testing.md).

@@ -102,34 +102,37 @@ describe("CodeExecutor", () => {
     }
   });
 
-  test.each(["registry", "binding"] as const)(
-    "preserves constructor %s failures in host-only diagnostics with no calls",
-    async (phase) => {
-      const cause = new Error("Private registry failure");
+  test("preserves a tool-registry getter failure in host-only constructor diagnostics", async () => {
+    const cause = new Error("Private registry failure");
 
-      const options: SandboxOptions =
-        phase === "registry"
-          ? {
-              get tools(): never {
-                throw cause;
-              },
-            }
-          : {
-              tools: {
-                get read(): never {
-                  throw cause;
-                },
-              },
-            };
+    const options: SandboxOptions = {
+      get tools(): never {
+        throw cause;
+      },
+    };
 
-      const failure = await executionErrorOf(
-        Promise.resolve().then(() => new CodeExecutor(options)),
-      );
+    const failure = await executionErrorOf(Promise.resolve().then(() => new CodeExecutor(options)));
 
-      expect(failure.cause).toBe(cause);
-      expect(failure.calls).toEqual([]);
-    },
-  );
+    expect(failure.cause).toBe(cause);
+    expect(failure.calls).toEqual([]);
+  });
+
+  test("preserves a tool-binding getter failure in host-only constructor diagnostics", async () => {
+    const cause = new Error("Private binding failure");
+
+    const options: SandboxOptions = {
+      tools: {
+        get read(): never {
+          throw cause;
+        },
+      },
+    };
+
+    const failure = await executionErrorOf(Promise.resolve().then(() => new CodeExecutor(options)));
+
+    expect(failure.cause).toBe(cause);
+    expect(failure.calls).toEqual([]);
+  });
 
   test("reads configuration and tool bindings only during construction", async () => {
     let limitReads = 0;

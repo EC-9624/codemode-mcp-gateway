@@ -1,12 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { CodeExecutor, ToolResult, type SandboxResult, type ToolContext } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ToolContext } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
-
-const cancelled = {
-  ok: false,
-  error: { kind: "cancelled", message: "Execution cancelled." },
-} satisfies SandboxResult;
 
 describe("CodeExecutor cancellation", () => {
   test("pre-aborted execution skips tool dispatch and keeps the reason private", async () => {
@@ -24,7 +19,10 @@ describe("CodeExecutor cancellation", () => {
       },
     }).execute("return await tools.read();", { signal: controller.signal });
 
-    expect(report).toEqual({ result: cancelled, calls: [] });
+    expect(report).toEqual({
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+      calls: [],
+    });
     expect(reads).toBe(0);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   });
@@ -44,7 +42,10 @@ describe("CodeExecutor cancellation", () => {
 
     const report = await new CodeExecutor().execute("return 42;", { signal });
 
-    expect(report).toEqual({ result: cancelled, calls: [] });
+    expect(report).toEqual({
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+      calls: [],
+    });
     expect(add).toHaveBeenCalledTimes(1);
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
@@ -102,7 +103,10 @@ describe("host tool cancellation", () => {
     const privateReason = new Error("Private caller reason");
     controller.abort(privateReason);
 
-    expect((await completion).result).toEqual(cancelled);
+    expect((await completion).result).toEqual({
+      ok: false,
+      error: { kind: "cancelled", message: "Execution cancelled." },
+    });
     expect(signals).toHaveLength(2);
     expect(signals[0]).toBe(signals[1]);
     expect(stopped).toBe(2);
@@ -138,7 +142,7 @@ describe("host tool cancellation", () => {
     );
 
     expect(report).toEqual({
-      result: cancelled,
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
       calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
   });
@@ -165,7 +169,7 @@ describe("host tool cancellation", () => {
     );
 
     expect(report).toEqual({
-      result: cancelled,
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
       calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
@@ -206,7 +210,10 @@ describe("host tool cancellation", () => {
 
     survivor.abort();
 
-    expect((await first).result).toEqual(cancelled);
+    expect((await first).result).toEqual({
+      ok: false,
+      error: { kind: "cancelled", message: "Execution cancelled." },
+    });
     expect(second.result).toEqual({ ok: true, value: 42 });
     expect(contexts).toHaveLength(2);
     expect(contexts[0]?.signal.aborted).toBe(true);
@@ -242,7 +249,7 @@ describe("host tool cancellation", () => {
     const recovered = await sandbox.execute("return 3;");
 
     expect(report).toEqual({
-      result: cancelled,
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
       calls: [{ callId: 1, name: "wait", status: "interrupted", reason: "cancelled" }],
     });
     expect(recovered.result).toEqual({ ok: true, value: 3 });

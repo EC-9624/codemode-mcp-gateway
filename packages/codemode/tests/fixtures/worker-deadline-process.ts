@@ -1,9 +1,10 @@
 import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { Worker } from "node:worker_threads";
 import {
   faultWorker,
   interruptFlag,
   superviseWorker,
-  toolWorker,
+  startupData,
   type WorkerControl,
 } from "../support/workers.ts";
 
@@ -63,7 +64,14 @@ try {
 
 // No supervisor deadline here: the shared flag alone must interrupt running QuickJS.
 const interrupt = interruptFlag();
-const worker = toolWorker("tools.read(); while (true) {}", 10000, interrupt.buffer);
+
+const worker = new Worker(new URL("../../src/runtime/worker.ts", import.meta.url), {
+  workerData: startupData("tools.read(); while (true) {}", ["read"], {
+    limits: { timeoutMs: 10000 },
+    interruptBuffer: interrupt.buffer,
+  }),
+});
+
 console.log(
   JSON.stringify(
     (

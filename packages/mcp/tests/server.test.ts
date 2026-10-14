@@ -5,26 +5,100 @@ import { connectMcp } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("agent-facing MCP server", () => {
-  test("uses an injected executor without assuming QuickJS or discovery helpers", async () => {
-    let executions = 0;
-
+  test("advertises the application-supplied execute description", async () => {
     const server = createCodemodeServer({
-      execute: async (code, options) => {
-        executions++;
-        expect(options.signal.aborted).toBe(false);
-
-        return { result: { ok: true, value: code }, calls: [] };
-      },
+      description: "Run the application's read-only workflow.",
+      execute: async () => ({ result: { ok: true, value: null }, calls: [] }),
     });
 
     await using agent = await connectMcp(server);
 
     const listing = await agent.client.listTools();
 
-    const response = await agent.client.callTool({
+    expect(listing.tools).toHaveLength(1);
+    expect(listing.tools[0]?.description).toBe("Run the application's read-only workflow.");
+  });
+
+  test("closing one server leaves its borrowed executor usable by another server", async () => {
+    const calls: string[] = [];
+
+    const execute = async (code: string): Promise<ExecutionReport> => {
+      calls.push(code);
+
+      return { result: { ok: true, value: code }, calls: [] };
+    };
+
+    const first = createCodemodeServer({ execute });
+    await using firstAgent = await connectMcp(first);
+    await using secondAgent = await connectMcp(createCodemodeServer({ execute }));
+    expect(await firstAgent.client.ping()).toEqual({});
+
+    await first.close();
+
+    const response = await secondAgent.client.callTool({
       name: "execute",
-      arguments: { code: "application execution" },
+      arguments: { code: "still available" },
     });
+
+    expect(response.structuredContent).toEqual({
+      result: { ok: true, value: "still available" },
+      calls: [],
+    });
+    expect(calls).toEqual(["still available"]);
+  });
+
+  test("request cancellation reaches the injected executor", async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const stopped = Promise.withResolvers<void>();
+    const controller = new AbortController();
+
+    const server = createCodemodeServer({
+      execute: async (_code, { signal }) => {
+        using listeners = new DisposableStack();
+        const stop = () => stopped.resolve();
+        signal.addEventListener("abort", stop, { once: true });
+        listeners.defer(() => signal.removeEventListener("abort", stop));
+        started.resolve(signal);
+        await stopped.promise;
+
+        return {
+          result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+          calls: [],
+        };
+      },
+    });
+
+    await using agent = await connectMcp(server);
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => stopped.resolve());
+
+    const request = rejectionOf(
+      agent.client.callTool(
+        {
+          name: "execute",
+          arguments: { code: "wait" },
+        },
+        { signal: controller.signal },
+      ),
+    );
+
+    const signal = await started.promise;
+    controller.abort();
+    await stopped.promise;
+    await request;
+
+    expect(signal.aborted).toBe(true);
+    expect(await agent.client.ping()).toEqual({});
+  });
+
+  test("advertises a strict code-only tool without assuming an execution engine", async () => {
+    const server = createCodemodeServer({
+      execute: async () => ({ result: { ok: true, value: null }, calls: [] }),
+    });
+
+    await using agent = await connectMcp(server);
+
+    const listing = await agent.client.listTools();
 
     expect(listing.tools).toHaveLength(1);
     expect(listing.tools[0]).toMatchObject({
@@ -38,11 +112,35 @@ describe("agent-facing MCP server", () => {
     });
     expect(listing.tools[0]?.description).not.toContain("QuickJS");
     expect(listing.tools[0]?.description).not.toContain("searchTools");
+  });
+
+  test("passes submitted code and a live signal to the injected executor", async () => {
+    const codes: string[] = [];
+    const signals: AbortSignal[] = [];
+
+    const server = createCodemodeServer({
+      execute: async (code, { signal }) => {
+        codes.push(code);
+        signals.push(signal);
+
+        return { result: { ok: true, value: code }, calls: [] };
+      },
+    });
+
+    await using agent = await connectMcp(server);
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "application execution" },
+    });
+
     expect(response.structuredContent).toEqual({
       result: { ok: true, value: "application execution" },
       calls: [],
     });
-    expect(executions).toBe(1);
+    expect(codes).toEqual(["application execution"]);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
   });
 
   test.each([
@@ -68,15 +166,15 @@ describe("agent-facing MCP server", () => {
     expect(executions).toBe(0);
   });
 
-  test("projects successful reports without tool bodies or inferring failure from returned data", async () => {
+  test("projects completed calls without retaining tool response bodies", async () => {
     const report = {
-      result: { ok: true, value: { isError: true } },
+      result: { ok: true, value: 42 },
       calls: [
         {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: true, json: '{"isError":true,"retained":"private payload"}' },
+          result: { ok: true, json: '{"retained":"private payload"}' },
         },
       ],
     } satisfies ExecutionReport;
@@ -87,13 +185,34 @@ describe("agent-facing MCP server", () => {
 
     expect(response.isError).toBe(false);
     expect(response.structuredContent).toEqual({
-      result: { ok: true, value: { isError: true } },
+      result: { ok: true, value: 42 },
       calls: [{ callId: 1, name: "read", status: "completed" }],
     });
     expect(response.content).toEqual([
       { type: "text", text: JSON.stringify(response.structuredContent) },
     ]);
     expect(JSON.stringify(response)).not.toContain("private payload");
+  });
+
+  test("does not infer execution failure from returned error-shaped data", async () => {
+    const report = {
+      result: { ok: true, value: { isError: true } },
+      calls: [],
+    } satisfies ExecutionReport;
+
+    const server = createCodemodeServer({ execute: async () => report });
+    await using agent = await connectMcp(server);
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return data" },
+    });
+
+    expect(response.isError).toBe(false);
+    expect(response.structuredContent).toEqual({
+      result: { ok: true, value: { isError: true } },
+      calls: [],
+    });
   });
 
   test("marks unsuccessful execution reports as errors", async () => {

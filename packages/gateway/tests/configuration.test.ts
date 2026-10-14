@@ -85,6 +85,16 @@ describe("application configuration", () => {
   test.each([
     ["unsupported transport", { transport: "sse", url: "https://example.com/mcp" }],
     ["non-HTTP URL", { transport: "http", url: "file:///etc/hosts" }],
+    ["unknown upstream field", { command: "bun", unexpected: true }],
+    [
+      "OAuth fragment",
+      {
+        transport: "http",
+        id: "notes",
+        url: "https://example.com/mcp#fragment",
+        auth: { type: "oauth" },
+      },
+    ],
   ])("rejects %s", (_name, upstream) => {
     expect(Configuration.safeParse({ upstream }).success).toBe(false);
   });
@@ -97,9 +107,42 @@ describe("application configuration", () => {
       }).success,
     ).toBe(false);
   });
+
+  test("accepts a loopback HTTP endpoint for local OAuth development", () => {
+    const upstream = {
+      transport: "http",
+      id: "notes",
+      url: "http://127.0.0.1:12345/mcp",
+      auth: { type: "oauth" },
+    } satisfies Configuration["upstream"];
+
+    const result = Configuration.safeParse({ upstream });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+
+    expect(result.data.upstream).toEqual(upstream);
+  });
+
+  test("rejects unknown top-level configuration fields", () => {
+    const input = { upstream: { command: "bun" }, unexpected: true };
+
+    const result = Configuration.safeParse(input);
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("HTTP header templates", () => {
+  test("returns empty headers when no templates are supplied", () => {
+    const result = resolveHeaders();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+
+    expect([...result.headers]).toEqual([]);
+  });
+
   test("expands environment references as literal values", () => {
     const result = resolveHeaders(
       {

@@ -1,19 +1,35 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor guest deadline", () => {
+  test.each([
+    ["message getter", "throw { get message() { while (true) {} } };"],
+    ["toJSON", "throw { toJSON() { while (true) {} } };"],
+  ])("reports timeout when error conversion loops in %s", async (_name, code) => {
+    const sandbox = new CodeExecutor({ timeoutMs: 100 });
+
+    const report = await sandbox.execute(code);
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+    });
+  });
+
   test("applies a custom deadline to infinite computation and permits the next execution", async () => {
+    const sandbox = new CodeExecutor({ timeoutMs: 100 });
     const started = performance.now();
 
-    const { result } = await new CodeExecutor({ timeoutMs: 100 }).execute("while (true) {} ");
+    const { result } = await sandbox.execute("while (true) {} ");
     const elapsed = performance.now() - started;
+    const recovered = await sandbox.execute("return 3;");
 
     expect(result).toEqual({
       ok: false,
       error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
     expect(elapsed).toBeGreaterThanOrEqual(100);
-    expect((await new CodeExecutor().execute("return 3;")).result).toEqual({
+    expect(recovered.result).toEqual({
       ok: true,
       value: 3,
     });
@@ -32,15 +48,15 @@ describe("CodeExecutor guest deadline", () => {
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
-    const timedOut = await new CodeExecutor({ timeoutMs: 100 }).execute(
-      "while (true) await Promise.resolve();",
-    );
-
-    const recovered = await new CodeExecutor({
+    const sandbox = new CodeExecutor({
+      timeoutMs: 100,
       tools: {
         answer: () => ToolResult.success(3),
       },
-    }).execute("return await tools.answer();");
+    });
+
+    const timedOut = await sandbox.execute("while (true) await Promise.resolve();");
+    const recovered = await sandbox.execute("return await tools.answer();");
 
     expect(timedOut.result).toEqual({
       ok: false,
@@ -79,19 +95,17 @@ describe("CodeExecutor guest deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const timedOut = await new CodeExecutor({
-      tools: { wait: () => late.promise },
+    const sandbox = new CodeExecutor({
+      tools: { wait: () => late.promise, answer: () => ToolResult.success(3) },
       timeoutMs: 100,
-    }).execute("return await tools.wait();");
+    });
+
+    const timedOut = await sandbox.execute("return await tools.wait();");
 
     settle(late);
     await Bun.sleep(0);
 
-    const recovered = await new CodeExecutor({
-      tools: {
-        answer: () => ToolResult.success(3),
-      },
-    }).execute("return await tools.answer();");
+    const recovered = await sandbox.execute("return await tools.answer();");
 
     expect(timedOut.result).toEqual({
       ok: false,
@@ -148,6 +162,8 @@ describe("total deadline", () => {
   test("does not convert a response after synchronous callback work exhausts the budget", async () => {
     let calls = 0;
     let conversions = 0;
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
 
     const sandbox = new CodeExecutor({
       timeoutMs: 10000,
@@ -155,7 +171,7 @@ describe("total deadline", () => {
       tools: {
         read: () => {
           calls++;
-          Bun.sleepSync(1000);
+          clock.mockReturnValue(now + 1001);
 
           return ToolResult.success({
             toJSON() {
@@ -183,6 +199,8 @@ describe("total deadline", () => {
 
   test("does not retain a response whose JSON conversion exhausts the budget", async () => {
     let conversions = 0;
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
 
     const sandbox = new CodeExecutor({
       timeoutMs: 10000,
@@ -192,7 +210,7 @@ describe("total deadline", () => {
           ToolResult.success({
             toJSON() {
               conversions++;
-              Bun.sleepSync(1000);
+              clock.mockReturnValue(now + 1001);
 
               return 42;
             },
@@ -214,13 +232,15 @@ describe("total deadline", () => {
 
   test("chooses an expired total deadline when cancellation arrives before the timer can run", async () => {
     const controller = new AbortController();
+    const now = performance.now();
+    using clock = spyOn(performance, "now").mockReturnValue(now);
 
     const sandbox = new CodeExecutor({
       timeoutMs: 10000,
       totalTimeoutMs: 1000,
       tools: {
         read: () => {
-          Bun.sleepSync(1000);
+          clock.mockReturnValue(now + 1001);
           controller.abort();
 
           return ToolResult.success(42);

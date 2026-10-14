@@ -1,13 +1,42 @@
 import { describe, expect, test } from "bun:test";
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
-import { httpMcp } from "./support/http-mcp.ts";
 import { gatewayProcess } from "./support/gateway-process.ts";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("CMG HTTP upstream", () => {
-  test("executes with environment-supplied authentication and awaits HTTP session deletion", async () => {
+  test("executes upstream calls using authentication supplied by the host environment", async () => {
+    await using upstream = await httpMcp(createMcpServer(), (request) =>
+      request.headers.get("Authorization") === "Bearer synthetic-token"
+        ? undefined
+        : new Response("Unauthorized", { status: 401 }),
+    );
+
+    await using app = await gatewayProcess({
+      upstream: {
+        transport: "http",
+        url: upstream.url,
+        headers: { Authorization: "Bearer {env:CMG_TEST_TOKEN}" },
+      },
+      environment: { CMG_TEST_TOKEN: "synthetic-token" },
+    });
+
+    await app.client.connect(app.transport, { timeout: 4_000 });
+
+    const response = await app.client.callTool({
+      name: "execute",
+      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+    });
+
+    expect(response.structuredContent).toEqual({
+      result: { ok: true, value: 5 },
+      calls: [{ callId: 1, name: "add", status: "completed" }],
+    });
+    expect(app.stderr).not.toContain("synthetic-token");
+  }, 10_000);
+
+  test("awaits authenticated HTTP session deletion before exiting on EOF", async () => {
     const deleting = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const terminated = Promise.withResolvers<void>();
@@ -43,17 +72,9 @@ describe("CMG HTTP upstream", () => {
 
     await app.client.connect(app.transport, { timeout: 4_000 });
 
-    const response = await app.client.callTool({
-      name: "execute",
-      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
-    });
-
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: 5 },
-      calls: [{ callId: 1, name: "add", status: "completed" }],
-    });
     const session = upstream.transport.sessionId;
     expect(session).toBeDefined();
+
     app.child.stdin.end();
 
     await deleting.promise;
@@ -221,3 +242,40 @@ describe("CMG HTTP upstream", () => {
     expect(upstream.requests.some((request) => request.method === "DELETE")).toBe(true);
   }, 10_000);
 });
+
+/** Own a sessionful loopback upstream; the test supplies handlers and intercepted responses. */
+async function httpMcp(
+  server: McpServer,
+  intercept?: (request: Request) => Response | undefined | Promise<Response | undefined>,
+) {
+  await using setup = new AsyncDisposableStack();
+
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableJsonResponse: true,
+  });
+
+  setup.defer(() => server.close());
+  await server.connect(transport);
+  const requests: Request[] = [];
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      requests.push(request);
+
+      return (await intercept?.(request)) ?? transport.handleRequest(request);
+    },
+  });
+
+  setup.defer(() => listener.stop(true));
+  const cleanup = setup.move();
+
+  return {
+    url: new URL("/mcp", listener.url).toString(),
+    transport,
+    requests,
+    [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
+  };
+}

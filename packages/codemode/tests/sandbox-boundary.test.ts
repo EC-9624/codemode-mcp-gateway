@@ -2,20 +2,31 @@ import { describe, expect, test } from "bun:test";
 import { CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor guest boundary", () => {
+  test("does not expose host APIs to guest code", async () => {
+    const sandbox = new CodeExecutor();
+
+    const report = await sandbox.execute(
+      "return [typeof process, typeof Bun, typeof require, typeof fetch];",
+    );
+
+    expect(report.result).toEqual({
+      ok: true,
+      value: ["undefined", "undefined", "undefined", "undefined"],
+    });
+  });
+
   test("does not put raw callbacks or codec helpers in the user function's scope", async () => {
-    expect(
-      (
-        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
-          `return [
+    const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
+
+    const report = await sandbox.execute(`return [
           typeof hostTools, typeof stringify, typeof parse, typeof decodeResult,
           typeof ConversionError, typeof AsyncFunction, typeof compile, typeof run,
           typeof dispatch, typeof pending, typeof settle, typeof nextCallId,
           eval("typeof dispatch"), Function("return typeof pending")(),
           typeof globalThis.run, typeof globalThis.settle,
-        ];`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: Array(16).fill("undefined") });
+        ];`);
+
+    expect(report.result).toEqual({ ok: true, value: Array(16).fill("undefined") });
   });
 
   test("rejects access to raw callbacks without dispatching a host call", async () => {
@@ -38,33 +49,33 @@ describe("CodeExecutor guest boundary", () => {
   });
 
   test("keeps private bindings hidden from eval and dynamic function constructors", async () => {
-    expect(
-      (
-        await new CodeExecutor().execute(
-          `const AsyncConstructor = Object.getPrototypeOf(async function() {}).constructor;
+    const sandbox = new CodeExecutor();
+
+    const report =
+      await sandbox.execute(`const AsyncConstructor = Object.getPrototypeOf(async function() {}).constructor;
          return [
            eval("typeof hostTools"),
            (0, eval)("typeof hostTools"),
            Function("return typeof hostTools")(),
            await new AsyncConstructor("return typeof hostTools")()
-         ];`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: Array.from({ length: 4 }, () => "undefined") });
+         ];`);
+
+    expect(report.result).toEqual({
+      ok: true,
+      value: ["undefined", "undefined", "undefined", "undefined"],
+    });
   });
 
   test("lets eval and dynamic functions call the permitted public tools", async () => {
-    expect(
-      (
-        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
-          `return [
+    const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
+
+    const report = await sandbox.execute(`return [
           await eval("tools.answer()"),
           await (0, eval)("tools.answer()"),
           await Function("return tools.answer()")()
-        ];`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: [42, 42, 42] });
+        ];`);
+
+    expect(report.result).toEqual({ ok: true, value: [42, 42, 42] });
   });
 
   test.each([
@@ -76,7 +87,7 @@ describe("CodeExecutor guest boundary", () => {
     async (_name, code) => {
       let calls = 0;
 
-      const rejected = await new CodeExecutor({
+      const sandbox = new CodeExecutor({
         tools: {
           write: () => {
             calls += 1;
@@ -84,9 +95,10 @@ describe("CodeExecutor guest boundary", () => {
             return ToolResult.success();
           },
         },
-      }).execute(code);
+      });
 
-      const recovered = await new CodeExecutor().execute("return 3;");
+      const rejected = await sandbox.execute(code);
+      const recovered = await sandbox.execute("return 3;");
 
       expect(rejected).toEqual({
         result: {
@@ -104,9 +116,9 @@ describe("CodeExecutor guest boundary", () => {
   );
 
   test("accepts classes, generators, and wrapper-like text in strings, regexes, and comments", async () => {
-    expect(
-      (
-        await new CodeExecutor().execute(`
+    const sandbox = new CodeExecutor();
+
+    const report = await sandbox.execute(`
         const text = "}); tools.write(); (async () => {";
         const braces = /[{}]/g;
         /* } }) ; */
@@ -119,50 +131,46 @@ describe("CodeExecutor guest boundary", () => {
           yield [..."{}"].length;
         }
         return { text, matches: "{}".match(braces), total: [...values()].reduce((a, b) => a + b, 0) };
-      `)
-      ).result,
-    ).toEqual({
+      `);
+
+    expect(report.result).toEqual({
       ok: true,
       value: { text: "}); tools.write(); (async () => {", matches: ["{", "}"], total: 3 },
     });
   });
 
   test("keeps normal function-local closures independent of the private prelude", async () => {
-    expect(
-      (
-        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
-          `const hostTools = { answer: () => 1 };
+    const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
+
+    const report = await sandbox.execute(`const hostTools = { answer: () => 1 };
          const stringify = () => "local";
          const local = () => [hostTools.answer(), stringify()];
-         return { local: local(), public: await tools.answer() };`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: { local: [1, "local"], public: 42 } });
+         return { local: local(), public: await tools.answer() };`);
+
+    expect(report.result).toEqual({ ok: true, value: { local: [1, "local"], public: 42 } });
   });
 
   test("does not let user globals replace private prelude helpers", async () => {
-    expect(
-      (
-        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
-          `globalThis.hostTools = { answer: () => 0 };
+    const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
+
+    const report = await sandbox.execute(`globalThis.hostTools = { answer: () => 0 };
          globalThis.stringify = () => "broken";
          globalThis.parse = () => "broken";
          globalThis.decodeResult = () => "broken";
          globalThis.run = () => "broken";
-         return await tools.answer();`,
-        )
-      ).result,
-    ).toEqual({ ok: true, value: 42 });
+         return await tools.answer();`);
+
+    expect(report.result).toEqual({ ok: true, value: 42 });
   });
 
   test("binds guest this and public tools to globalThis", async () => {
-    expect(
-      (
-        await new CodeExecutor().execute(
-          "return [this === globalThis, tools === globalThis.tools];",
-        )
-      ).result,
-    ).toEqual({
+    const sandbox = new CodeExecutor();
+
+    const report = await sandbox.execute(
+      "return [this === globalThis, tools === globalThis.tools];",
+    );
+
+    expect(report.result).toEqual({
       ok: true,
       value: [true, true],
     });
@@ -188,20 +196,18 @@ describe("CodeExecutor guest boundary", () => {
   });
 
   test("keeps codecs working after global JSON, Promise, and TypeError are replaced", async () => {
-    expect(
-      (
-        await new CodeExecutor({ tools: { echo: (args) => ToolResult.success(args) } }).execute(
-          `JSON.stringify = () => "broken";
+    const sandbox = new CodeExecutor({ tools: { echo: (args) => ToolResult.success(args) } });
+
+    const report = await sandbox.execute(`JSON.stringify = () => "broken";
          JSON.parse = () => "broken";
          Promise.prototype.then = () => { throw new Error("Modified then"); };
           globalThis.Promise = function() { throw new Error("Modified Promise"); };
           globalThis.TypeError = function() { throw new Error("Modified TypeError"); };
           let message;
           try { tools.echo(() => 3); } catch (error) { message = error.message; }
-          return { message, value: await tools.echo({ value: 3 }) };`,
-        )
-      ).result,
-    ).toEqual({
+           return { message, value: await tools.echo({ value: 3 }) };`);
+
+    expect(report.result).toEqual({
       ok: true,
       value: {
         message: "Tool arguments are not JSON-serializable.",

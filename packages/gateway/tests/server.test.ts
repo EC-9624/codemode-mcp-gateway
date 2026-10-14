@@ -1,23 +1,70 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 import { McpServer } from "@modelcontextprotocol/server";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { ToolCatalog, ToolResult } from "@cmg/codemode";
 import { z } from "zod";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { createMcpCatalog } from "@cmg/mcp";
 import { createServer } from "codemode-mcp-gateway";
-import { connectMcp } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("MCP client through codemode to upstream MCP", () => {
-  test("rejects a tool that would replace the describeTool discovery helper", () => {
+  test.each(["searchTools", "describeTool"])("rejects a tool that would replace %s", (name) => {
     const catalog = ToolCatalog.create({
-      describeTool: { description: "Conflicting upstream", execute: () => ToolResult.success() },
+      [name]: { description: "Conflicting upstream", execute: () => ToolResult.success() },
     });
 
     expect(() => createServer(catalog)).toThrow(
-      'Upstream tool "describeTool" conflicts with a CMG discovery helper.',
+      `Upstream tool ${JSON.stringify(name)} conflicts with a CMG discovery helper.`,
     );
+  });
+
+  test("rejects invalid fixed policy before returning a server", () => {
+    const catalog = ToolCatalog.create({});
+
+    expect(() => createServer(catalog, { maxToolCalls: 0 })).toThrow(RangeError);
+  });
+
+  test("charges discovery calls to the supplied execution budget", async () => {
+    const catalog = ToolCatalog.create({
+      read: { description: "Read records", execute: () => ToolResult.success(42) },
+    });
+
+    await using agent = await connectMcp(createServer(catalog, { maxToolCalls: 1 }));
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'await tools.searchTools({ query: "records" }); return await tools.read();',
+      },
+    });
+
+    expect(response.structuredContent).toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "tool-calls",
+          maximum: 1,
+          message: "Execution exceeded the 1 tool-call limit.",
+        },
+      },
+      calls: [{ callId: 1, name: "searchTools", status: "completed" }],
+    });
+  });
+
+  test("closing the composed server leaves its caller-owned upstream connection usable", async () => {
+    await using upstream = await connectMcp(createMcpServer());
+    const catalog = await createMcpCatalog(upstream.client);
+    const server = createServer(catalog);
+    await using agent = await connectMcp(server);
+    expect(await agent.client.ping()).toEqual({});
+
+    await server.close();
+    const response = await upstream.client.callTool({ name: "add", arguments: { a: 2, b: 3 } });
+
+    expect(response.structuredContent).toEqual({ sum: 5 });
   });
 
   test("close cancels active tools and waits for actual worker termination", async () => {
@@ -254,3 +301,17 @@ describe("MCP client through codemode to upstream MCP", () => {
     expect(await upstream.client.ping()).toEqual({});
   });
 });
+
+/** Own both ends, including partially completed setup; handlers remain in each test. */
+async function connectMcp(server: McpServer) {
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => server.close());
+  const client = new Client({ name: "cmg-test", version: "0.0.0" });
+  cleanup.defer(() => client.close());
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport, { timeout: 1_000 });
+  const owned = cleanup.move();
+
+  return { client, [Symbol.asyncDispose]: () => owned.disposeAsync() };
+}

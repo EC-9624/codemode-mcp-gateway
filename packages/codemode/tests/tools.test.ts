@@ -11,7 +11,7 @@ import {
 } from "@cmg/codemode";
 import { rejectionOf } from "./support/rejection.ts";
 
-describe("Standard Schema native tools", () => {
+describe("validated tools through CodeExecutor", () => {
   test("rejects invalid input before implementation, retains the failure, and lets the guest recover", async () => {
     const received: unknown[] = [];
 
@@ -81,7 +81,7 @@ describe("Standard Schema native tools", () => {
     ]);
   });
 
-  test("leaves omitted argument semantics to the native schema", async () => {
+  test("passes omitted arguments as undefined to a schema that accepts them", async () => {
     const received: unknown[] = [];
 
     const accept = defineTool({
@@ -94,27 +94,14 @@ describe("Standard Schema native tools", () => {
       },
     });
 
-    const object = defineTool({
-      description: "Object required",
-      inputSchema: z.object({}, { error: "Expected an object." }),
-      execute: (args) => {
-        received.push(args);
+    const sandbox = new CodeExecutor({ tools: { accept: accept.execute } });
 
-        return ToolResult.success();
-      },
-    });
-
-    const report = await new CodeExecutor({
-      tools: { accept: accept.execute, object: object.execute },
-    }).execute(`
-      const absent = await tools.accept();
-      try { await tools.object(); } catch (error) { return { absent, message: error.message }; }
-    `);
+    const report = await sandbox.execute("return await tools.accept();");
 
     expect(received).toEqual([undefined]);
     expect(report.result).toEqual({
       ok: true,
-      value: { absent: true, message: "Invalid arguments: Expected an object." },
+      value: true,
     });
   });
 
@@ -195,8 +182,10 @@ describe("Standard Schema native tools", () => {
       calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
     });
   });
+});
 
-  test("accepts an independent Standard Schema implementation and exports metadata once", async () => {
+describe("defineTool", () => {
+  test("copies input metadata once while validating each invocation independently", async () => {
     let exports = 0;
     let validations = 0;
     const metadata = { type: "number" };
@@ -238,11 +227,85 @@ describe("Standard Schema native tools", () => {
     const catalog = ToolCatalog.create({ double: tool });
     const context = { signal: new AbortController().signal };
 
-    expect(await tool.execute(2, context)).toEqual(ToolResult.success(4));
-    expect(await tool.execute(3, context)).toEqual(ToolResult.success(6));
+    const first = await tool.execute(2, context);
+    const second = await tool.execute(3, context);
+
+    expect(first).toEqual({ ok: true, value: 4 });
+    expect(second).toEqual({ ok: true, value: 6 });
+    expect(tool.description).toBe("Double");
     expect(catalog.describe("double")?.inputSchema).toEqual({ type: "number" });
     expect(exports).toBe(1);
     expect(validations).toBe(2);
+  });
+});
+
+describe("validateTool", () => {
+  test("rejects omitted input when its schema requires an object", async () => {
+    const received: unknown[] = [];
+
+    const tool = validateTool(z.object({}, { error: "Expected an object." }), (args) => {
+      received.push(args);
+
+      return ToolResult.success();
+    });
+
+    const result = await tool(undefined, { signal: new AbortController().signal });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { message: "Invalid arguments: Expected an object." },
+    });
+    expect(received).toEqual([]);
+  });
+
+  test("passes asynchronously transformed output and the same context to the handler", async () => {
+    const context = { signal: new AbortController().signal };
+    const received: unknown[] = [];
+
+    const tool = validateTool(
+      z.string().transform(async (value) => Number(value)),
+      (count, actualContext) => {
+        expectTypeOf(count).toEqualTypeOf<number>();
+        received.push(actualContext);
+
+        return ToolResult.success(count + 1);
+      },
+    );
+
+    const result = await tool("2", context);
+
+    expect(result).toEqual({ ok: true, value: 3 });
+    expect(received).toHaveLength(1);
+    expect(received[0]).toBe(context);
+  });
+
+  test("propagates unexpected validator failure to the direct caller", async () => {
+    const failure = new Error("Private validator failure");
+    let calls = 0;
+
+    const tool = validateTool(
+      {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: async () => {
+            throw failure;
+          },
+        },
+      },
+      () => {
+        calls++;
+
+        return ToolResult.success();
+      },
+    );
+
+    const rejected = await rejectionOf(
+      Promise.resolve(tool("input", { signal: new AbortController().signal })),
+    );
+
+    expect(rejected.reason).toBe(failure);
+    expect(calls).toBe(0);
   });
 
   test("renders asynchronous validation issues with escaped standard path segments", async () => {
@@ -259,23 +322,21 @@ describe("Standard Schema native tools", () => {
       },
     };
 
-    const tool = defineTool({
-      description: "Validate",
-      inputSchema: schema,
-      execute: () => {
-        calls++;
+    const tool = validateTool(schema, () => {
+      calls++;
 
-        return ToolResult.success();
-      },
+      return ToolResult.success();
     });
 
-    expect(await tool.execute({}, { signal: new AbortController().signal })).toEqual(
-      ToolResult.failure("Invalid arguments: /a~1b~0c/0: Invalid field."),
-    );
+    const result = await tool({}, { signal: new AbortController().signal });
+
+    expect(result).toEqual(ToolResult.failure("Invalid arguments: /a~1b~0c/0: Invalid field."));
     expect(calls).toBe(0);
   });
+});
 
-  test("keeps unexpected async validator exceptions private", async () => {
+describe("validated-tool failure boundaries", () => {
+  test("keeps unexpected async validator exceptions private in the sandbox", async () => {
     const schema: ToolInputSchema = {
       "~standard": {
         version: 1,

@@ -44,16 +44,6 @@ export function superviseWorker(
   ).run();
 }
 
-/** Starts the real worker entry with a valid request that exposes `read`. */
-export function toolWorker(code: string, timeoutMs = 1000, interruptBuffer?: SharedArrayBuffer) {
-  return new Worker(new URL("../../src/runtime/worker.ts", import.meta.url), {
-    workerData: startupData(code, ["read"], {
-      limits: { timeoutMs },
-      ...(interruptBuffer === undefined ? {} : { interruptBuffer }),
-    }),
-  });
-}
-
 /** Starts the fault fixture, which interprets the request code as a scenario name. */
 export function faultWorker(scenario: string, toolNames: string[] = []) {
   return new Worker(new URL("../fixtures/worker-fault.ts", import.meta.url), {
