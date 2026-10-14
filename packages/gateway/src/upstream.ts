@@ -21,6 +21,7 @@ export async function connectUpstream(
   signal: AbortSignal,
   options: CredentialOptions = {},
 ) {
+  // Partial setup failures await registered cleanup in reverse order before rejecting.
   await using setup = new AsyncDisposableStack();
   let session: OAuthSession | undefined;
   if (upstream.transport === "http" && upstream.auth !== undefined) {
@@ -96,6 +97,8 @@ export async function connectUpstream(
 
   if (session !== undefined) catalog = publicAuthFailures(catalog);
 
+  // `move()` empties setup and transfers cleanup to the returned connection; otherwise
+  // leaving this function would close the resources before the caller could use them.
   const cleanup = setup.move();
 
   return { catalog, [Symbol.asyncDispose]: () => cleanup.disposeAsync() };

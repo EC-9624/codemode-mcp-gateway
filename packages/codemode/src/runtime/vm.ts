@@ -11,7 +11,8 @@ export async function createVm(limits: VmLimits = DEFAULT_LIMITS): Promise<Quick
   vm.runtime.setMemoryLimit(limits.memoryLimitBytes);
   vm.runtime.setMaxStackSize(limits.maxStackSizeBytes);
 
-  // Transfer ownership only after configuration succeeds; failed cleanup preserves both errors.
+  // `move()` empties the scoped stack so returning does not dispose the caller-owned VM.
+  // Before this transfer, configuration failures dispose the VM and preserve cleanup errors.
   cleanup.move();
 
   return vm;

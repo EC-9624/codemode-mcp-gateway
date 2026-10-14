@@ -23,6 +23,8 @@ export async function main(
 
   try {
     if (command === "login") {
+      // The stack keeps listeners installed across await login, then removes them on
+      // return or throw from this branch. `using` suffices because removal is synchronous.
       using listeners = new DisposableStack();
       const shutdown = new AbortController();
       const stop = () => shutdown.abort();

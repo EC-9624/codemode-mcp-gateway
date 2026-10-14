@@ -28,6 +28,8 @@ export async function executeEngine(
   installToolBridge: (vm: QuickJSContext, scope: Scope) => ToolBridge,
   interrupt: Int32Array<SharedArrayBuffer>,
 ): Promise<GuestResult> {
+  // `using` disposes in reverse declaration order on return or throw, so bridge handles
+  // are released before their VM. Both remain alive across the awaited execution.
   using vm = await createVm(limits);
   using bridgeScope = new Scope();
   const bridge = installToolBridge(vm, bridgeScope);
@@ -133,6 +135,7 @@ async function executeScript(
     if (turn) return turn;
 
     // Resolving a guest promise queues work; QuickJS does not run it for us.
+    // This loop-body scope releases the result each turn, including on continue or return.
     using jobs = runtime.executePendingJobs(JOBS_PER_TURN);
     const pumped = checkpoint();
     if (pumped) return pumped;
