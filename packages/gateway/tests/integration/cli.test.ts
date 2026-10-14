@@ -6,6 +6,8 @@ const cli = fileURLToPath(new URL("../../src/cli.ts", import.meta.url));
 describe("cmg executable", () => {
   test.each([
     { name: "missing configuration", args: [] },
+    { name: "missing login configuration", args: ["login"] },
+    { name: "missing logout configuration", args: ["logout"] },
     { name: "extra arguments", args: ["unused.json", "extra"] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);

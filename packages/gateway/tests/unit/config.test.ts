@@ -31,6 +31,57 @@ describe("application configuration", () => {
     expect(config.sandbox.maxToolCalls).toBe(2);
   });
 
+  test("accepts explicitly named OAuth connections without static bearer headers", () => {
+    const upstream = {
+      id: "notion",
+      transport: "http",
+      url: "https://mcp.notion.com/mcp",
+      auth: { type: "oauth", scope: "read" },
+    } satisfies Configuration["upstream"];
+
+    expect(Configuration.parse({ upstream }).upstream).toEqual(upstream);
+  });
+
+  test.each([
+    [
+      "missing connection id",
+      { transport: "http", url: "https://example.com/mcp", auth: { type: "oauth" } },
+    ],
+    [
+      "competing bearer header",
+      {
+        id: "test",
+        transport: "http",
+        url: "https://example.com/mcp",
+        headers: { aUtHoRiZaTiOn: "private-token" },
+        auth: { type: "oauth" },
+      },
+    ],
+    [
+      "cleartext remote endpoint",
+      { id: "test", transport: "http", url: "http://example.com/mcp", auth: { type: "oauth" } },
+    ],
+    [
+      "embedded credentials",
+      {
+        id: "test",
+        transport: "http",
+        url: "https://user:private@example.com/mcp",
+        auth: { type: "oauth" },
+      },
+    ],
+  ])("rejects OAuth %s", (_name, upstream) => {
+    expect(Configuration.safeParse({ upstream }).success).toBe(false);
+  });
+
+  test("returns a validation failure rather than throwing for malformed OAuth URLs", () => {
+    expect(
+      Configuration.safeParse({
+        upstream: { id: "test", transport: "http", url: "invalid", auth: { type: "oauth" } },
+      }).success,
+    ).toBe(false);
+  });
+
   test.each([
     ["unsupported transport", { transport: "sse", url: "https://example.com/mcp" }],
     ["non-HTTP URL", { transport: "http", url: "file:///etc/hosts" }],

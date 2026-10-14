@@ -33,6 +33,7 @@
     "@cmg/mcp": "workspace:*",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
+    "proper-lockfile": "4.1.2",
     "zod": "4.3.6"
   },
   "engines": {

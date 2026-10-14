@@ -17,6 +17,7 @@ export async function gatewayProcess(
     client?: ClientOptions;
     upstream?: Configuration["upstream"];
     environment?: NodeJS.ProcessEnv;
+    entry?: string;
   } = {},
 ) {
   await using setup = new AsyncDisposableStack();
@@ -42,7 +43,7 @@ export async function gatewayProcess(
     process.execPath,
     [
       "--conditions=development",
-      fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
+      options.entry ?? fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
       config,
     ],
     {
@@ -91,6 +92,7 @@ export async function gatewayProcess(
   const cleanup = setup.move();
 
   return {
+    config,
     client,
     child,
     transport,

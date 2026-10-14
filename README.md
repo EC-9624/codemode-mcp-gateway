@@ -63,6 +63,16 @@ tool bodies. The [gateway README](packages/gateway/README.md) covers configurati
 authentication headers, process ownership, and shutdown. HTTP support is upstream
 only; remote agent hosting is not implemented.
 
+For an OAuth-protected upstream, explicitly log in before serving:
+
+```sh
+bun run cmg login examples/notion.json
+bun run example:notion examples/notion.json "your test page"
+```
+
+The [local OAuth guide](packages/gateway/README.md#local-oauth) covers OS credential
+storage, refresh/ownership, logout, and current platform/provider limitations.
+
 ## Packages
 
 Choose the smallest layer your application needs:
@@ -144,6 +154,8 @@ Completed slices:
 17. Single-dispatcher guest protocol with prelude-owned promises and execution-level wakeups.
 18. Documented workspaces, injected MCP execution, compiled ESM/declarations, and packed-consumer checks.
 19. Package-owned tests and the `codemode-mcp-gateway` product package with separate API and `cmg` CLI entries.
+20. Single-user local OAuth login/logout, OS-backed credentials, noninteractive refresh,
+    cross-process refresh coordination, and a read-only Notion smoke example.
 
 Next: real-upstream validation, soak/fault testing, latency/memory measurements,
 and payload/retention bounds based on integration evidence. Current guest limits

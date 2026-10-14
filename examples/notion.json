@@ -1,0 +1,9 @@
+{
+  "upstream": {
+    "id": "notion",
+    "transport": "http",
+    "url": "https://mcp.notion.com/mcp",
+    "auth": { "type": "oauth" }
+  },
+  "sandbox": { "timeoutMs": 30000, "totalTimeoutMs": 45000 }
+}

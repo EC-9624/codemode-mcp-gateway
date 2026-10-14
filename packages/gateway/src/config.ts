@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SandboxLimits } from "@cmg/codemode";
+import { GatewayError } from "./errors.ts";
 
 const stdio = z.strictObject({
   transport: z.literal("stdio").default("stdio"),
@@ -9,11 +10,59 @@ const stdio = z.strictObject({
   env: z.record(z.string(), z.string()).optional(),
 });
 
-const http = z.strictObject({
-  transport: z.literal("http"),
-  url: z.url({ protocol: /^https?$/ }),
-  headers: z.record(z.string(), z.string()).optional(),
-});
+const http = z
+  .strictObject({
+    id: z
+      .string()
+      .regex(/^[a-zA-Z0-9_-]+$/)
+      .optional(),
+    transport: z.literal("http"),
+    url: z.url({ protocol: /^https?$/ }),
+    headers: z.record(z.string(), z.string()).optional(),
+    auth: z
+      .strictObject({
+        type: z.literal("oauth"),
+        scope: z.string().trim().min(1).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((upstream, context) => {
+    if (upstream.auth === undefined) return;
+
+    if (upstream.id === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["id"],
+        message: "OAuth requires a connection id.",
+      });
+    }
+
+    if (
+      Object.keys(upstream.headers ?? {}).some((name) => name.toLowerCase() === "authorization")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["headers"],
+        message: "OAuth owns the Authorization header.",
+      });
+    }
+
+    if (!URL.canParse(upstream.url)) return;
+
+    const url = new URL(upstream.url);
+    if (
+      url.username !== "" ||
+      url.password !== "" ||
+      url.hash !== "" ||
+      (url.protocol !== "https:" && !["127.0.0.1", "[::1]", "localhost"].includes(url.hostname))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "OAuth requires HTTPS or a loopback URL without credentials or a fragment.",
+      });
+    }
+  });
 
 /** Transport configuration and fixed sandbox policy; gateway deadlines default to 5 s / 10 s. */
 export const Configuration = z.strictObject({
@@ -33,6 +82,21 @@ export const Configuration = z.strictObject({
 });
 
 export type Configuration = z.infer<typeof Configuration>;
+
+/** File parsing is shared by serving and the explicit credential commands. */
+export async function readConfiguration(path: string): Promise<Configuration> {
+  let input: unknown;
+  try {
+    input = await Bun.file(path).json();
+  } catch (cause) {
+    throw new GatewayError(`Could not read configuration JSON at ${path}.`, { cause });
+  }
+
+  const parsed = Configuration.safeParse(input);
+  if (!parsed.success) throw new GatewayError("Invalid CMG configuration: " + parsed.error.message);
+
+  return parsed.data;
+}
 
 /**
  * Expand {env:NAME} from the host environment and validate the resulting HTTP headers.

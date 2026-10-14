@@ -5,6 +5,7 @@ import {
   type ToolCatalog,
 } from "@cmg/codemode";
 import { createCodemodeServer } from "@cmg/mcp";
+import { GatewayError } from "./errors.ts";
 
 /**
  * Create a fixed-policy QuickJS executor with local discovery and expose it over MCP.
@@ -16,7 +17,7 @@ export function createServer(catalog: ToolCatalog, options: Omit<SandboxOptions,
   const discovery = createDiscoveryTools(catalog);
   for (const name of Object.keys(discovery)) {
     if (Object.hasOwn(catalog.tools, name)) {
-      throw new Error(
+      throw new GatewayError(
         `Upstream tool ${JSON.stringify(name)} conflicts with a CMG discovery helper.`,
       );
     }

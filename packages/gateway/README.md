@@ -83,7 +83,7 @@ HTTP upstream:
 ```
 
 Header templates expand host environment variables before connecting. Missing
-variables fail startup. The app does not perform OAuth login or store credentials.
+variables fail startup. This static-header mode does not perform OAuth or store credentials.
 Optional `sandbox` settings configure the fixed QuickJS policy; app defaults use
 a 5-second guest deadline and 10-second total deadline. Other defaults come from codemode.
 
@@ -99,6 +99,110 @@ For example, cap total tool calls without allowing request overrides:
 Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
 Startup has separate budgets: 5 seconds for the upstream handshake and 15 seconds
 for discovery. Configuration and the catalog do not reload during a run.
+
+### Local OAuth
+
+OAuth is opt-in for an explicitly named HTTP connection:
+
+```json
+{
+  "upstream": {
+    "id": "notion",
+    "transport": "http",
+    "url": "https://mcp.notion.com/mcp",
+    "auth": { "type": "oauth" }
+  }
+}
+```
+
+From the repository root:
+
+```sh
+bun run cmg login examples/notion.json
+bun run example:notion examples/notion.json "your test page" "optional-page-url-or-id"
+bun run cmg examples/notion.json
+bun run cmg logout examples/notion.json
+```
+
+`login` displays an authorization URL and attempts to open the browser. One
+five-minute deadline covers credential-lock acquisition, discovery, registration,
+browser waiting, and code exchange. Credential-store operations already in progress
+cannot be interrupted. PKCE, callback state, and issuer validation
+protect the code exchange. Login uses the SDK's metadata, registration, and token
+helpers, not a Notion-specific OAuth implementation. Discovery probes the upstream
+without credentials for a `WWW-Authenticate` metadata URL, falling back to well-known
+discovery when none is advertised. Optional `auth.scope` requests
+an explicit space-delimited scope; CMG does not infer a request for every advertised scope.
+
+Serving is noninteractive: it loads the current OS user's saved credentials and
+refreshes them without prompting for browser consent. Missing or revoked authorization
+requires another explicit login. A permission/scope denial never automatically widens
+the grant. Your upstream account and granted authorization determine access.
+
+Credentials and registration details use Bun's experimental `secrets` API (macOS
+Keychain or Linux libsecret); there is no plaintext fallback. The OS service may
+require unlocking or an access prompt. Connection id and canonical upstream URL
+select the entry; stored issuer/resource bindings are checked before refreshing.
+Registration's loopback redirect URI is reused, so its port must be available during
+later logins. Changing the id or URL selects a new entry; use the original configuration
+to log out of the old entry.
+
+Multiple gateway processes can share the same connection and credentials. Ordinary
+tool calls hold no credential lock. Before refreshing, CMG acquires a short
+`proper-lockfile` lock, reloads credentials, and reuses a token already replaced by
+another process. Otherwise it refreshes and saves under that lock. No native FFI is used.
+
+The lock lives in `$XDG_STATE_HOME/cmg/locks` (default `~/.local/state/cmg/locks`)
+and contains no credentials. CMG renews it every second; an abandoned lock becomes
+eligible for recovery after 20 seconds. Acquisition waits up to 25 seconds and is
+cancellable during serving/login. Lost ownership aborts auth requests and blocks
+further credential writes. This is an advisory heartbeat lock, not transactional
+fencing against an arbitrarily suspended process. The OS credential service must
+still be available on the host. Restart all older gateways when upgrading from the
+previous native lifetime-lock implementation; the two lock protocols must not mix.
+
+Login locks registration setup and final persistence, but releases the lock during
+browser consent. If credentials change meanwhile (another login, logout, or refresh),
+the pending login asks you to retry rather than overwrite them. Logout uses the same
+lock, so an active refresh finishes before deletion and cannot restore the removed
+grant. Running gateways read the current credential snapshot for subsequent requests
+and can adopt a later login with the same upstream/issuer/resource binding. Logout
+does not cancel requests already sent or revoke tokens upstream. Session deletion at
+shutdown is skipped if authorization is no longer available or shutdown cancellation
+prevents authenticating the deletion request.
+
+Refreshes are shared within each process. Rotated tokens are saved before
+being used; a failed refresh or save stops further refresh attempts for that unchanged
+credential snapshot in that process. A newly saved grant permits recovery.
+Remote rotation and local persistence are not transactional: interrupted/lost
+responses can require reauthorization. Auth network requests have a 15-second
+timeout, use HTTPS except for loopback development, and reject HTTP redirects.
+Tool payloads and aggregate memory remain subject to the existing documented limitations.
+
+`logout` removes local credentials and registration details; it does **not** revoke
+the upstream grant. Revoke access in the provider's settings when necessary.
+The Notion smoke example performs read-only discovery/search and optional fetch,
+printing summaries rather than page bodies. Its tool names target Notion's current
+user-authorized server, not older workspace-owned catalogs.
+
+Automated OAuth tests use synthetic servers and isolated stores. Live Notion and
+real OS credential-service validation require explicit interactive authorization
+and are not part of the default suite.
+
+The implementation follows the login workflow: prepare an authorization attempt,
+present its URL, await completion, then conditionally save the grant under a short lock.
+`src/auth/login.ts` owns that workflow and logout. Following Tern's loopback pattern,
+`loopback.ts` checks the method, host, path, and state, then accepts one callback URL;
+replays receive HTTP 409. `login.ts` owns the shared deadline; `oauth.ts` owns registered-port reuse and
+callback interpretation (including code/error and issuer validation), using SDK
+helpers for discovery, registration, and code exchange. The listener acknowledges
+receipt, not successful authorization; malformed OAuth responses fail the attempt
+before token exchange.
+The attempt retains its PKCE verifier and shares one code exchange across completion
+calls. Rejected client registrations are removed only if the stored snapshot still
+matches the attempt, so another login can register again without deleting a newer grant.
+`session.ts` owns noninteractive refresh coordination, and `credentials.ts`
+owns token normalization and OS-backed persistence. All are internal modules.
 
 ## Programmatic API
 
@@ -122,6 +226,22 @@ The public entry also exports `Configuration`, `resolveHeaders`, and
 `serve(configurationPath)`. Unlike `createServer`, `serve` owns the complete stdio
 process lifetime, including configuration loading and shutdown listeners. Importing
 the package alone starts neither path. See the [public exports](src/index.ts).
+
+`login(path, options?)` and `logout(path, options?)` return explicit `AuthResult`
+values for expected authorization/storage failures. Configuration, infrastructure,
+and cleanup failures may reject, including `AuthorizationError` when releasing a
+credential lock fails. `serve(path, options?)` accepts the same
+host-owned scoped credential-store factory and lock-directory override; the CLI
+uses the OS store. A custom store must preserve credential bindings and durable,
+atomic snapshot replacement, including for readers outside the lock. The exported
+`Credentials` schema validates stored snapshots; custom stores must also validate
+the connection binding. All processes
+sharing credentials must use the same lock directory. Imports perform no credential reads, browser launches, or
+process-listener registration.
+
+`serve` rejects with exported `AuthorizationError` for recognized authorization
+failures. Its `failure` carries a controlled kind/message and optional private cause;
+do not serialize causes into MCP responses or diagnostic logs.
 
 ## How it works
 
@@ -156,7 +276,9 @@ One upstream, a startup catalog snapshot, and agent-facing stdio only. HTTP refe
 to the upstream connection, not remote agent hosting. There is no model loop,
 multi-upstream routing, persistence, or Node support. Cancellation cannot roll back
 upstream side effects. Real-upstream validation, performance measurement, and
-aggregate/payload resource hardening remain future work.
+aggregate/payload resource hardening remain future work. Local OAuth serves one
+OS user; team-member identity, hosted authentication, and shared credential management
+are not implemented.
 
 ## Development
 
