@@ -1,16 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import {
-  CodemodeSandbox,
-  ToolResult,
-  type ExecuteOptions,
-  type SandboxOptions,
-} from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ExecuteOptions, type SandboxOptions } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
-describe("CodemodeSandbox", () => {
+describe("CodeExecutor", () => {
   test("snapshots tool bindings at construction", async () => {
     const tools = { read: () => ToolResult.success("original") };
-    const sandbox = new CodemodeSandbox({ tools });
+    const sandbox = new CodeExecutor({ tools });
     tools.read = () => ToolResult.success("replacement");
 
     const report = await sandbox.execute("return await tools.read();");
@@ -20,7 +15,7 @@ describe("CodemodeSandbox", () => {
 
   test("snapshots configuration at construction", async () => {
     const options = { maxSourceBytes: 1 };
-    const sandbox = new CodemodeSandbox(options);
+    const sandbox = new CodeExecutor(options);
     options.maxSourceBytes = 100;
 
     const report = await sandbox.execute("return 42;");
@@ -40,7 +35,7 @@ describe("CodemodeSandbox", () => {
   });
 
   test("ignores per-request limit overrides from JavaScript callers", async () => {
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { read: () => ToolResult.success(42) },
       maxToolCalls: 1,
     });
@@ -75,7 +70,7 @@ describe("CodemodeSandbox", () => {
     // Strict TypeScript rejects this literal; JavaScript and non-strict callers can still send it.
     Object.assign(options, { maxToolCalls: undefined });
 
-    const sandbox = new CodemodeSandbox(options);
+    const sandbox = new CodeExecutor(options);
     const report = await sandbox.execute("await tools.read(); return await tools.read();");
 
     expect(report.result).toEqual({ ok: true, value: 42 });
@@ -83,7 +78,7 @@ describe("CodemodeSandbox", () => {
   });
 
   test("starts each execution with fresh guest state, call IDs, and budgets", async () => {
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { read: () => ToolResult.success(42) },
       maxToolCalls: 1,
     });
@@ -128,7 +123,7 @@ describe("CodemodeSandbox", () => {
             };
 
       const failure = await executionErrorOf(
-        Promise.resolve().then(() => new CodemodeSandbox(options)),
+        Promise.resolve().then(() => new CodeExecutor(options)),
       );
 
       expect(failure.cause).toBe(cause);
@@ -140,7 +135,7 @@ describe("CodemodeSandbox", () => {
     let limitReads = 0;
     let toolReads = 0;
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       get maxToolCalls() {
         limitReads++;
         if (limitReads > 1) throw new Error("Configuration read after construction");
@@ -177,7 +172,7 @@ describe("CodemodeSandbox", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve());
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         wait: async (args, { signal }) => {
           signals.set(args, signal);

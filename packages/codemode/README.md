@@ -7,9 +7,9 @@ access the host's filesystem, network, or process directly. MCP is not required.
 ## Usage
 
 ```ts
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: { answer: () => ToolResult.success(42) },
   timeoutMs: 1_000,
 });
@@ -154,7 +154,7 @@ bun run --cwd packages/codemode test
 bun run --cwd packages/codemode check
 ```
 
-The unit is a public module: flat `tests/*.test.ts` exercise `CodemodeSandbox`,
+The unit is a public module: flat `tests/*.test.ts` exercise `CodeExecutor`,
 `ToolCatalog`, `defineTool`, and `validateTool` through `@cmg/codemode`. Sandbox
 subjects are split by contract (tools, limits, cancellation, reports), not by
 implementation layers. Tests use real QuickJS and workers.

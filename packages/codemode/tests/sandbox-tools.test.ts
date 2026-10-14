@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult, type SandboxTool } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type SandboxTool } from "@cmg/codemode";
 
 const add: SandboxTool = async (args) => {
   if (
@@ -18,11 +18,11 @@ const add: SandboxTool = async (args) => {
   return ToolResult.success(args.a + args.b);
 };
 
-describe("CodemodeSandbox tools", () => {
+describe("CodeExecutor tools", () => {
   test("lets the script catch public host errors and continue", async () => {
     expect(
       (
-        await new CodemodeSandbox({
+        await new CodeExecutor({
           tools: {
             add,
             fail: async () => {
@@ -43,7 +43,7 @@ describe("CodemodeSandbox tools", () => {
   });
 
   test("keeps an asynchronous non-Error host rejection private", async () => {
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         fail: async () => {
           await Bun.sleep(0);
@@ -62,7 +62,7 @@ describe("CodemodeSandbox tools", () => {
     const value = { ok: false, error: { message: "Ordinary data" } };
     expect(
       (
-        await new CodemodeSandbox({ tools: { read: () => ToolResult.success(value) } }).execute(
+        await new CodeExecutor({ tools: { read: () => ToolResult.success(value) } }).execute(
           "return await tools.read();",
         )
       ).result,
@@ -85,7 +85,7 @@ describe("CodemodeSandbox tools", () => {
       let completed = false;
       let settled = false;
 
-      const completion = new CodemodeSandbox({
+      const completion = new CodeExecutor({
         tools: {
           write: async () => {
             started.resolve();
@@ -127,7 +127,7 @@ describe("CodemodeSandbox tools", () => {
     let settled = false;
     const signals: AbortSignal[] = [];
 
-    const completion = new CodemodeSandbox({
+    const completion = new CodeExecutor({
       tools: {
         fast: () => ToolResult.success(1),
         slow: async (_args, { signal }) => {
@@ -172,7 +172,7 @@ describe("CodemodeSandbox tools", () => {
     const value = 'Hello "mcm"\n日本語';
     expect(
       (
-        await new CodemodeSandbox({
+        await new CodeExecutor({
           tools: {
             echo: (args) => ToolResult.success(args),
           },
@@ -194,7 +194,7 @@ describe("CodemodeSandbox tools", () => {
     async (_name, code, message) => {
       let calls = 0;
 
-      const report = await new CodemodeSandbox({
+      const report = await new CodeExecutor({
         tools: {
           echo: (args) => {
             calls += 1;
@@ -221,7 +221,7 @@ describe("CodemodeSandbox tools", () => {
   ] as const)(
     "rejects a non-JSON %s host result with a public conversion error",
     async (_name, value) => {
-      const report = await new CodemodeSandbox({
+      const report = await new CodeExecutor({
         tools: {
           read: () => ToolResult.success(value),
         },
@@ -237,7 +237,7 @@ describe("CodemodeSandbox tools", () => {
   test("reads an undefined tool result value once for guest delivery and retention", async () => {
     let reads = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ({
           ok: true,
@@ -261,7 +261,7 @@ describe("CodemodeSandbox tools", () => {
   });
 
   test("lets the guest catch a private tool result value getter failure as a conversion error", async () => {
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ({
           ok: true,
@@ -296,7 +296,7 @@ describe("CodemodeSandbox tools", () => {
       },
     ],
   ] as const)("treats a throwing host %s as a conversion failure", async (_name, value) => {
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(value),
       },
@@ -311,7 +311,7 @@ describe("CodemodeSandbox tools", () => {
   test("only exposes supplied tools and no inherited host functions", async () => {
     expect(
       (
-        await new CodemodeSandbox({
+        await new CodeExecutor({
           tools: {
             add,
           },
@@ -320,7 +320,7 @@ describe("CodemodeSandbox tools", () => {
     ).toEqual({ ok: true, value: [["add"], "undefined", "undefined"] });
 
     const result = (
-      await new CodemodeSandbox({ tools: { add } }).execute("return await tools.hidden();")
+      await new CodeExecutor({ tools: { add } }).execute("return await tools.hidden();")
     ).result;
 
     expect(result.ok).toBe(false);
@@ -329,7 +329,7 @@ describe("CodemodeSandbox tools", () => {
 
   test("reports guest promises that cannot make progress", async () => {
     expect(
-      (await new CodemodeSandbox().execute("return await new Promise(() => {});")).result,
+      (await new CodeExecutor().execute("return await new Promise(() => {});")).result,
     ).toEqual({
       ok: false,
       error: {
@@ -342,7 +342,7 @@ describe("CodemodeSandbox tools", () => {
   test("receives tool replies while guest jobs keep arriving", async () => {
     expect(
       (
-        await new CodemodeSandbox({
+        await new CodeExecutor({
           tools: {
             wait: async () => {
               await Bun.sleep(5);
@@ -362,7 +362,7 @@ describe("CodemodeSandbox tools", () => {
   });
 
   test("continues executing tools after a validation failure", async () => {
-    const sandbox = new CodemodeSandbox({ tools: { add } });
+    const sandbox = new CodeExecutor({ tools: { add } });
     const succeeded = await sandbox.execute("return await tools.add({ a: 1, b: 2 });");
     const failed = await sandbox.execute("return await tools.add(null);");
     const recovered = await sandbox.execute("return await tools.add({ a: 1, b: 2 });");

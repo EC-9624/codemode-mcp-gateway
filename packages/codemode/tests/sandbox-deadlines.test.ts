@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
-describe("CodemodeSandbox guest deadline", () => {
+describe("CodeExecutor guest deadline", () => {
   test("applies a custom deadline to infinite computation and permits the next execution", async () => {
     const started = performance.now();
 
-    const { result } = await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {} ");
+    const { result } = await new CodeExecutor({ timeoutMs: 100 }).execute("while (true) {} ");
     const elapsed = performance.now() - started;
 
     expect(result).toEqual({
@@ -13,7 +13,7 @@ describe("CodemodeSandbox guest deadline", () => {
       error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
     });
     expect(elapsed).toBeGreaterThanOrEqual(100);
-    expect((await new CodemodeSandbox().execute("return 3;")).result).toEqual({
+    expect((await new CodeExecutor().execute("return 3;")).result).toEqual({
       ok: true,
       value: 3,
     });
@@ -22,7 +22,7 @@ describe("CodemodeSandbox guest deadline", () => {
   test("applies the default one-second deadline", async () => {
     const started = performance.now();
 
-    const { result } = await new CodemodeSandbox().execute("while (true) {} ");
+    const { result } = await new CodeExecutor().execute("while (true) {} ");
 
     expect(result).toEqual({
       ok: false,
@@ -32,11 +32,11 @@ describe("CodemodeSandbox guest deadline", () => {
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
-    const timedOut = await new CodemodeSandbox({ timeoutMs: 100 }).execute(
+    const timedOut = await new CodeExecutor({ timeoutMs: 100 }).execute(
       "while (true) await Promise.resolve();",
     );
 
-    const recovered = await new CodemodeSandbox({
+    const recovered = await new CodeExecutor({
       tools: {
         answer: () => ToolResult.success(3),
       },
@@ -54,7 +54,7 @@ describe("CodemodeSandbox guest deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: { wait: () => late.promise },
       timeoutMs: 100,
     }).execute("tools.wait(); return 3;");
@@ -79,7 +79,7 @@ describe("CodemodeSandbox guest deadline", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const timedOut = await new CodemodeSandbox({
+    const timedOut = await new CodeExecutor({
       tools: { wait: () => late.promise },
       timeoutMs: 100,
     }).execute("return await tools.wait();");
@@ -87,7 +87,7 @@ describe("CodemodeSandbox guest deadline", () => {
     settle(late);
     await Bun.sleep(0);
 
-    const recovered = await new CodemodeSandbox({
+    const recovered = await new CodeExecutor({
       tools: {
         answer: () => ToolResult.success(3),
       },
@@ -109,7 +109,7 @@ describe("total deadline", () => {
     const signals: AbortSignal[] = [];
     let conversions = 0;
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       timeoutMs: 10000,
       totalTimeoutMs: 1000,
       tools: {
@@ -149,7 +149,7 @@ describe("total deadline", () => {
     let calls = 0;
     let conversions = 0;
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       timeoutMs: 10000,
       totalTimeoutMs: 1000,
       tools: {
@@ -184,7 +184,7 @@ describe("total deadline", () => {
   test("does not retain a response whose JSON conversion exhausts the budget", async () => {
     let conversions = 0;
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       timeoutMs: 10000,
       totalTimeoutMs: 1000,
       tools: {
@@ -215,7 +215,7 @@ describe("total deadline", () => {
   test("chooses an expired total deadline when cancellation arrives before the timer can run", async () => {
     const controller = new AbortController();
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       timeoutMs: 10000,
       totalTimeoutMs: 1000,
       tools: {
@@ -243,7 +243,7 @@ describe("total deadline", () => {
   });
 
   test("accepts the minimum total budget", async () => {
-    const { result } = await new CodemodeSandbox({ totalTimeoutMs: 1 }).execute("while (true) {}");
+    const { result } = await new CodeExecutor({ totalTimeoutMs: 1 }).execute("while (true) {}");
 
     expect(result).toEqual({
       ok: false,
@@ -252,7 +252,7 @@ describe("total deadline", () => {
   });
 
   test("preserves a guest timeout that arrives before the parent deadline", async () => {
-    const { result } = await new CodemodeSandbox({ timeoutMs: 50, totalTimeoutMs: 2000 }).execute(
+    const { result } = await new CodeExecutor({ timeoutMs: 50, totalTimeoutMs: 2000 }).execute(
       "while (true) {}",
     );
 
@@ -269,7 +269,7 @@ describe("host responsiveness", () => {
     const timer = setInterval(() => ticks.push(Date.now()), 10);
     try {
       const result = (
-        await new CodemodeSandbox().execute(`
+        await new CodeExecutor().execute(`
         const started = Date.now();
         while (Date.now() - started < 400) {}
         return { started, ended: Date.now() };

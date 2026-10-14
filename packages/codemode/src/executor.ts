@@ -8,7 +8,7 @@ import { cancelled, WorkerExecution, type WorkerControl } from "./runtime/execut
 import { type WorkerStartupData } from "./runtime/protocol.ts";
 
 /** Owns fixed configuration and tool bindings. Each execution gets a fresh worker and VM. */
-export class CodemodeSandbox {
+export class CodeExecutor {
   private readonly tools: ReadonlyMap<string, SandboxTool>;
   private readonly options: ResolvedOptions;
 

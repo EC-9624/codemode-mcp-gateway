@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { rejects } from "node:assert/strict";
 import { Worker } from "node:worker_threads";
-import { CodemodeSandbox, SandboxExecutionError, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, SandboxExecutionError, ToolResult } from "@cmg/codemode";
 import { WorkerToMainMessage } from "../src/runtime/protocol.ts";
 import { executionErrorOf } from "./support/execution-error.ts";
 import {
@@ -45,7 +45,7 @@ describe("worker supervisor", () => {
     expect(failure).toBeInstanceOf(Error);
     if (failure instanceof Error) expect(failure.message).toContain("Sandbox worker failed.");
 
-    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+    expect((await new CodeExecutor().execute("return 42;")).result).toEqual({
       ok: true,
       value: 42,
     });
@@ -68,7 +68,7 @@ describe("worker supervisor", () => {
 
       expectNoExecutionListeners(worker);
       expect(terminate).toHaveBeenCalledTimes(1);
-      expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+      expect((await new CodeExecutor().execute("return 42;")).result).toEqual({
         ok: true,
         value: 42,
       });
@@ -109,7 +109,7 @@ describe("worker supervisor", () => {
       expect(failure.message).not.toContain("Private parser infrastructure details");
     }
 
-    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+    expect((await new CodeExecutor().execute("return 42;")).result).toEqual({
       ok: true,
       value: 42,
     });
@@ -172,7 +172,7 @@ describe("worker supervisor", () => {
     }
 
     expectNoExecutionListeners(worker);
-    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+    expect((await new CodeExecutor().execute("return 42;")).result).toEqual({
       ok: true,
       value: 42,
     });

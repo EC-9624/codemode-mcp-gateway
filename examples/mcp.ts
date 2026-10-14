@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 
 const client = new Client({ name: "cmg-example", version: "0.0.0" });
@@ -15,7 +15,7 @@ await using cleanup = new AsyncDisposableStack();
 cleanup.defer(() => client.close());
 await client.connect(transport, { timeout: 5_000 });
 const catalog = await createMcpCatalog(client);
-const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 5_000 });
+const sandbox = new CodeExecutor({ tools: catalog.tools, timeoutMs: 5_000 });
 
 console.log(
   await sandbox.execute(

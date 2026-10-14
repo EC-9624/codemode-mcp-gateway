@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 
-describe("CodemodeSandbox guest boundary", () => {
+describe("CodeExecutor guest boundary", () => {
   test("does not put raw callbacks or codec helpers in the user function's scope", async () => {
     expect(
       (
-        await new CodemodeSandbox({ tools: { answer: () => ToolResult.success(42) } }).execute(
+        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
           `return [
           typeof hostTools, typeof stringify, typeof parse, typeof decodeResult,
           typeof ConversionError, typeof AsyncFunction, typeof compile, typeof run,
@@ -21,7 +21,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("rejects access to raw callbacks without dispatching a host call", async () => {
     let calls = 0;
 
-    const { result } = await new CodemodeSandbox({
+    const { result } = await new CodeExecutor({
       tools: {
         answer: () => {
           calls += 1;
@@ -40,7 +40,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("keeps private bindings hidden from eval and dynamic function constructors", async () => {
     expect(
       (
-        await new CodemodeSandbox().execute(
+        await new CodeExecutor().execute(
           `const AsyncConstructor = Object.getPrototypeOf(async function() {}).constructor;
          return [
            eval("typeof hostTools"),
@@ -56,7 +56,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("lets eval and dynamic functions call the permitted public tools", async () => {
     expect(
       (
-        await new CodemodeSandbox({ tools: { answer: () => ToolResult.success(42) } }).execute(
+        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
           `return [
           await eval("tools.answer()"),
           await (0, eval)("tools.answer()"),
@@ -76,7 +76,7 @@ describe("CodemodeSandbox guest boundary", () => {
     async (_name, code) => {
       let calls = 0;
 
-      const rejected = await new CodemodeSandbox({
+      const rejected = await new CodeExecutor({
         tools: {
           write: () => {
             calls += 1;
@@ -86,7 +86,7 @@ describe("CodemodeSandbox guest boundary", () => {
         },
       }).execute(code);
 
-      const recovered = await new CodemodeSandbox().execute("return 3;");
+      const recovered = await new CodeExecutor().execute("return 3;");
 
       expect(rejected).toEqual({
         result: {
@@ -106,7 +106,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("accepts classes, generators, and wrapper-like text in strings, regexes, and comments", async () => {
     expect(
       (
-        await new CodemodeSandbox().execute(`
+        await new CodeExecutor().execute(`
         const text = "}); tools.write(); (async () => {";
         const braces = /[{}]/g;
         /* } }) ; */
@@ -130,7 +130,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("keeps normal function-local closures independent of the private prelude", async () => {
     expect(
       (
-        await new CodemodeSandbox({ tools: { answer: () => ToolResult.success(42) } }).execute(
+        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
           `const hostTools = { answer: () => 1 };
          const stringify = () => "local";
          const local = () => [hostTools.answer(), stringify()];
@@ -143,7 +143,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("does not let user globals replace private prelude helpers", async () => {
     expect(
       (
-        await new CodemodeSandbox({ tools: { answer: () => ToolResult.success(42) } }).execute(
+        await new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } }).execute(
           `globalThis.hostTools = { answer: () => 0 };
          globalThis.stringify = () => "broken";
          globalThis.parse = () => "broken";
@@ -158,7 +158,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("binds guest this and public tools to globalThis", async () => {
     expect(
       (
-        await new CodemodeSandbox().execute(
+        await new CodeExecutor().execute(
           "return [this === globalThis, tools === globalThis.tools];",
         )
       ).result,
@@ -171,7 +171,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("rejects assignments to public tools before dispatch", async () => {
     let calls = 0;
 
-    const { result } = await new CodemodeSandbox({
+    const { result } = await new CodeExecutor({
       tools: {
         answer: () => {
           calls += 1;
@@ -190,7 +190,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("keeps codecs working after global JSON, Promise, and TypeError are replaced", async () => {
     expect(
       (
-        await new CodemodeSandbox({ tools: { echo: (args) => ToolResult.success(args) } }).execute(
+        await new CodeExecutor({ tools: { echo: (args) => ToolResult.success(args) } }).execute(
           `JSON.stringify = () => "broken";
          JSON.parse = () => "broken";
          Promise.prototype.then = () => { throw new Error("Modified then"); };
@@ -211,7 +211,7 @@ describe("CodemodeSandbox guest boundary", () => {
   });
 
   test("releases the call slot before decoded-result then getters start another call", async () => {
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: () => ToolResult.success({ marker: true }),
         follow: () => ToolResult.success(),
@@ -231,7 +231,7 @@ describe("CodemodeSandbox guest boundary", () => {
   });
 
   test("keeps private promise bookkeeping intact when guest built-ins are replaced", async () => {
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: (args) => ToolResult.success(args),
         fail: () => ToolResult.failure("Public failure"),
@@ -254,7 +254,7 @@ describe("CodemodeSandbox guest boundary", () => {
   test("does not let inherited toJSON rewrite private call envelopes", async () => {
     const received: unknown[] = [];
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: (args) => {
           received.push(args);
@@ -300,7 +300,7 @@ describe("CodemodeSandbox guest boundary", () => {
       ),
     );
 
-    const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+    const sandbox = new CodeExecutor({ tools: catalog.tools });
 
     const report = await sandbox.execute(
       `return await Promise.all(${JSON.stringify(names)}.map(name => tools[name]()));`,
@@ -312,7 +312,7 @@ describe("CodemodeSandbox guest boundary", () => {
 
   test("delivers complete public failure text despite guest-global mutations", async () => {
     const message = "before\u0000after\ud800";
-    const sandbox = new CodemodeSandbox({ tools: { fail: () => ToolResult.failure(message) } });
+    const sandbox = new CodeExecutor({ tools: { fail: () => ToolResult.failure(message) } });
 
     const report = await sandbox.execute(`
       JSON.parse = JSON.stringify = () => "replaced";

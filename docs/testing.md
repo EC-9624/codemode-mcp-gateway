@@ -7,7 +7,7 @@ Each package owns its `tests/`, support helpers, fixtures, and `test`/`check` co
 
 | Package             | Test through                                                  | Owns                                                                                |
 | ------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `packages/codemode` | `CodemodeSandbox`, `ToolCatalog`, public tool APIs            | JavaScript and host-call semantics, discovery, limits, cancellation, reports        |
+| `packages/codemode` | `CodeExecutor`, `ToolCatalog`, public tool APIs               | JavaScript and host-call semantics, discovery, limits, cancellation, reports        |
 | `packages/mcp`      | `createMcpCatalog`, `createCodemodeServer`                    | Schema adaptation, dispatch, response projection, borrowed-client/executor lifetime |
 | `packages/gateway`  | Configuration, `createServer`, `login`, `logout`, serving/CLI | Composition, authorization, fixed policy, upstream/process lifetime                 |
 
@@ -88,7 +88,7 @@ inside an omnibus test. Neither a test-count target nor a coverage percentage is
 test("returns cancelled when the caller aborts before startup", async () => {
   const signal = AbortSignal.abort();
 
-  const sandbox = new CodemodeSandbox();
+  const sandbox = new CodeExecutor();
   const report = await sandbox.execute("return 42;", { signal });
 
   expect(report).toEqual({

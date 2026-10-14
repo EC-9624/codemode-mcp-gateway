@@ -1,4 +1,4 @@
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 import {
   faultWorker,
   interruptFlag,
@@ -37,7 +37,7 @@ const timer = setInterval(() => ticks++, 10);
 let startedTicks = 0;
 let called = false;
 try {
-  const { result } = await new CodemodeSandbox({
+  const { result } = await new CodeExecutor({
     tools: {
       started: () => {
         called = true;
@@ -83,6 +83,6 @@ console.log(
 // An uncleared parent timer would keep this child alive after successful completion.
 console.log(
   JSON.stringify(
-    (await new CodemodeSandbox({ totalTimeoutMs: 2 ** 31 - 1 }).execute("return 42;")).result,
+    (await new CodeExecutor({ totalTimeoutMs: 2 ** 31 - 1 }).execute("return 42;")).result,
   ),
 );

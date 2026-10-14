@@ -9,14 +9,14 @@ Two adapters between MCP and code-mode execution:
 ## Usage
 
 ```ts
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
 import { type Client } from "@modelcontextprotocol/client";
 
 // The caller connects/authenticates client and retains ownership of it.
 export async function compose(client: Client) {
   const catalog = await createMcpCatalog(client);
-  const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+  const sandbox = new CodeExecutor({ tools: catalog.tools });
   return createCodemodeServer({
     execute: (code, options) => sandbox.execute(code, options),
     description: "Run JavaScript as an async function body using the supplied upstream tools.",

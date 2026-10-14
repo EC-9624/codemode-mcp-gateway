@@ -1,13 +1,13 @@
 import { z } from "zod";
 import {
-  CodemodeSandbox,
+  CodeExecutor,
   createDiscoveryTools,
   defineTool,
   ToolCatalog,
   ToolResult,
 } from "@cmg/codemode";
 
-const basic = new CodemodeSandbox({
+const basic = new CodeExecutor({
   tools: {
     add: async (args) => {
       if (
@@ -32,21 +32,21 @@ console.log(await basic.execute("return 1 + 2;"));
 console.log(await basic.execute('throw new Error("An example failure");'));
 console.log(await basic.execute("return await tools.add({ a: 1, b: 2 });"));
 
-console.log(await new CodemodeSandbox({ timeoutMs: 100 }).execute("while (true) {}"));
+console.log(await new CodeExecutor({ timeoutMs: 100 }).execute("while (true) {}"));
 console.log(
-  await new CodemodeSandbox({ timeoutMs: 1000, totalTimeoutMs: 100 }).execute("while (true) {}"),
+  await new CodeExecutor({ timeoutMs: 1000, totalTimeoutMs: 100 }).execute("while (true) {}"),
 );
 
-console.log(await new CodemodeSandbox({ maxSourceBytes: 5 }).execute("return 42;"));
-console.log(await new CodemodeSandbox({ maxOutputBytes: 5 }).execute('return "too much";'));
+console.log(await new CodeExecutor({ maxSourceBytes: 5 }).execute("return 42;"));
+console.log(await new CodeExecutor({ maxOutputBytes: 5 }).execute('return "too much";'));
 console.log(
-  await new CodemodeSandbox({ memoryLimitBytes: 8 * 1024 * 1024 }).execute(
+  await new CodeExecutor({ memoryLimitBytes: 8 * 1024 * 1024 }).execute(
     "return new ArrayBuffer(1024).byteLength;",
   ),
 );
 
 console.log(
-  await new CodemodeSandbox({
+  await new CodeExecutor({
     tools: {
       read: () => ToolResult.success(42),
     },
@@ -57,7 +57,7 @@ console.log(
 const controller = new AbortController();
 const started = Promise.withResolvers<void>();
 
-const invoicing = new CodemodeSandbox({
+const invoicing = new CodeExecutor({
   tools: {
     createInvoice: () => ToolResult.success({ id: "invoice-1" }),
     wait: async (_args, { signal }) => {
@@ -99,7 +99,7 @@ const catalog = ToolCatalog.create({
 
 const discovery = createDiscoveryTools(catalog);
 
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: {
     ...catalog.tools,
     searchTools: discovery.searchTools,

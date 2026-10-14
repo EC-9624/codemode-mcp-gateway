@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { Client, StreamableHTTPClientTransport, type Tool } from "@modelcontextprotocol/client";
 import { createMcpHandler, McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
-import { CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 import { connectMcp, requireTool, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
@@ -466,7 +466,7 @@ describe("MCP invocation boundary", () => {
 
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
-    const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+    const sandbox = new CodeExecutor({ tools: catalog.tools });
 
     const report = await sandbox.execute("return await tools.read({});");
 

@@ -1,5 +1,5 @@
 import {
-  CodemodeSandbox,
+  CodeExecutor,
   createDiscoveryTools,
   type SandboxOptions,
   type ToolCatalog,
@@ -23,10 +23,10 @@ export function createServer(catalog: ToolCatalog, options: Omit<SandboxOptions,
     }
   }
 
-  const sandbox = new CodemodeSandbox({ ...options, tools: { ...catalog.tools, ...discovery } });
+  const executor = new CodeExecutor({ ...options, tools: { ...catalog.tools, ...discovery } });
 
   return createCodemodeServer({
-    execute: (code, options) => sandbox.execute(code, options),
+    execute: (code, options) => executor.execute(code, options),
     description: `Run JavaScript as an async function body in a fresh QuickJS sandbox.
 Start with: return await tools.searchTools({ query: "what you need" });
 Search returns exact tool names, descriptions, and input schemas. Inspect one with

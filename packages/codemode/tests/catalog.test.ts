@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult, createDiscoveryTools, ToolCatalog } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, createDiscoveryTools, ToolCatalog } from "@cmg/codemode";
 
 describe("ToolCatalog", () => {
   test("describes tools without invoking or exposing their implementations", () => {
@@ -163,7 +163,7 @@ describe("catalog discovery", () => {
       },
     });
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
     });
 
@@ -205,7 +205,7 @@ describe("catalog discovery", () => {
 
     const discovery = createDiscoveryTools(catalog);
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { ...catalog.tools, findTools: discovery.searchTools },
     });
 

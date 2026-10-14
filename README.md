@@ -23,9 +23,9 @@ Repository commands run source directly; a build is not required for these examp
 ## Standalone execution
 
 ```ts
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: { answer: () => ToolResult.success(42) },
 });
 const report = await sandbox.execute("return await tools.answer();");

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { createDiscoveryTools, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 
-describe("CodemodeSandbox call budget", () => {
+describe("CodeExecutor call budget", () => {
   test("preserves admission failure triggered by guest error conversion", async () => {
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { read: () => ToolResult.success(42) },
       maxToolCalls: 1,
       maxOutputBytes: 1,
@@ -29,7 +29,7 @@ describe("CodemodeSandbox call budget", () => {
   test("allows the default 100 calls and stops the 101st without invoking it", async () => {
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(++calls),
       },
@@ -57,7 +57,7 @@ describe("CodemodeSandbox call budget", () => {
 
   test("permits a larger total limit and resets counters for the next execution", async () => {
     const tools = { read: () => ToolResult.success(42) };
-    const sandbox = new CodemodeSandbox({ tools, maxToolCalls: 101 });
+    const sandbox = new CodeExecutor({ tools, maxToolCalls: 101 });
 
     const report = await sandbox.execute(
       "for (let i = 0; i < 101; i++) await tools.read(); return 42;",
@@ -76,7 +76,7 @@ describe("CodemodeSandbox call budget", () => {
   test("counts a shared promise once even when awaited repeatedly", async () => {
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(++calls),
       },
@@ -91,7 +91,7 @@ describe("CodemodeSandbox call budget", () => {
   test("does not charge argument serialization failures before admission", async () => {
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: (args) => {
           calls++;
@@ -110,7 +110,7 @@ describe("CodemodeSandbox call budget", () => {
   test("failed responses release concurrency but still consume total calls", async () => {
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => {
           calls++;
@@ -157,7 +157,7 @@ describe("CodemodeSandbox call budget", () => {
 
     const discovery = createDiscoveryTools(catalog);
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         ...catalog.tools,
         ...discovery,
@@ -180,7 +180,7 @@ describe("CodemodeSandbox call budget", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     const signals: AbortSignal[] = [];
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         done: () => ToolResult.success(42),
         pending: (_args, { signal }) => {
@@ -222,7 +222,7 @@ describe("concurrent tool calls", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => {
           calls++;
@@ -257,7 +257,7 @@ describe("concurrent tool calls", () => {
     cleanup.defer(() => release.resolve(ToolResult.success()));
     let calls = 0;
 
-    const completion = new CodemodeSandbox({
+    const completion = new CodeExecutor({
       tools: {
         read: () => {
           if (++calls === 11) started.resolve();
@@ -280,7 +280,7 @@ describe("concurrent tool calls", () => {
   test("reuses a single slot for sequential successful calls", async () => {
     let calls = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(++calls),
       },
@@ -305,7 +305,7 @@ describe("concurrent tool calls", () => {
       return release.promise;
     };
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { read },
       maxToolCalls: 1,
       maxConcurrentToolCalls: 1,

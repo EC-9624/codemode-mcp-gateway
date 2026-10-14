@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { isMainThread } from "node:worker_threads";
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
-describe("CodemodeSandbox reports", () => {
+describe("CodeExecutor reports", () => {
   test("records responses in invocation order even when replies finish in reverse order", async () => {
     const second = Promise.withResolvers<void>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => second.resolve());
     const order: number[] = [];
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: async (args) => {
           if (args === 1) await second.promise;
@@ -38,7 +38,7 @@ describe("CodemodeSandbox reports", () => {
     let conversions = 0;
     const value = { nested: { amount: 42 } };
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () =>
           ToolResult.success({
@@ -77,7 +77,7 @@ describe("CodemodeSandbox reports", () => {
     let calls = 0;
 
     const completions = [1, 2].map((value) =>
-      new CodemodeSandbox({
+      new CodeExecutor({
         tools: {
           read: async () => {
             if (++calls === 2) started.resolve();
@@ -109,7 +109,7 @@ describe("CodemodeSandbox reports", () => {
   test("retains undefined distinctly from null", async () => {
     const received: unknown[] = [];
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         echo: (args) => {
           received.push(args);
@@ -138,7 +138,7 @@ describe("CodemodeSandbox reports", () => {
       privateCallback: () => {},
     } as const;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => failure,
       },
@@ -158,7 +158,7 @@ describe("CodemodeSandbox reports", () => {
   });
 
   test("retains a generic response for thrown host errors without private details", async () => {
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => {
           throw new Error("Private credentials");
@@ -180,7 +180,7 @@ describe("CodemodeSandbox reports", () => {
   });
 
   test("retains the conversion failure response rather than an unserializable host value", async () => {
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(1n),
       },
@@ -210,7 +210,7 @@ describe("CodemodeSandbox reports", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     let conversions = 0;
 
-    const completion = new CodemodeSandbox({
+    const completion = new CodeExecutor({
       tools: {
         create: () => ToolResult.success({ id: "invoice-1" }),
         send: () => {
@@ -261,7 +261,7 @@ describe("CodemodeSandbox reports", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     const signals: AbortSignal[] = [];
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         done: () => ToolResult.success(42),
         pending: (_args, { signal }) => {
@@ -298,7 +298,7 @@ describe("CodemodeSandbox reports", () => {
     cleanup.defer(() => late.resolve(ToolResult.success()));
     const signals: AbortSignal[] = [];
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         done: () => ToolResult.success(42),
         pending: (_args, { signal }) => {

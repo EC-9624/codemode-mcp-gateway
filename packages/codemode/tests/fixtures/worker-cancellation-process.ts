@@ -1,4 +1,4 @@
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 import { faultWorker, interruptFlag, superviseWorker } from "../support/workers.ts";
 
 // An outer process timeout bounds regressions that would otherwise hang bun:test.
@@ -24,7 +24,7 @@ const computation = new AbortController();
 console.log(
   JSON.stringify(
     (
-      await new CodemodeSandbox({
+      await new CodeExecutor({
         tools: {
           started: () => {
             computation.abort();
@@ -40,7 +40,7 @@ console.log(
 
 console.log(
   JSON.stringify(
-    (await new CodemodeSandbox().execute("return 42;", { signal: new AbortController().signal }))
+    (await new CodeExecutor().execute("return 42;", { signal: new AbortController().signal }))
       .result,
   ),
 );

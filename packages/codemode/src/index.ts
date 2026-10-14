@@ -1,5 +1,5 @@
 /** Standalone execution and tool contracts. MCP and application lifecycle are separate packages. */
-export { CodemodeSandbox } from "./sandbox.ts";
+export { CodeExecutor } from "./executor.ts";
 export { SandboxLimits } from "./limits.ts";
 export { SandboxExecutionError } from "./errors.ts";
 export {

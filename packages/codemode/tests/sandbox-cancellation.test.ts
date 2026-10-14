@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { CodemodeSandbox, ToolResult, type SandboxResult, type ToolContext } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type SandboxResult, type ToolContext } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 const cancelled = {
@@ -8,13 +8,13 @@ const cancelled = {
   error: { kind: "cancelled", message: "Execution cancelled." },
 } satisfies SandboxResult;
 
-describe("CodemodeSandbox cancellation", () => {
+describe("CodeExecutor cancellation", () => {
   test("pre-aborted execution skips tool dispatch and keeps the reason private", async () => {
     const controller = new AbortController();
     controller.abort(() => "Private cancellation reason");
     let reads = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         read: () => {
           reads++;
@@ -42,7 +42,7 @@ describe("CodemodeSandbox cancellation", () => {
       },
     );
 
-    const report = await new CodemodeSandbox().execute("return 42;", { signal });
+    const report = await new CodeExecutor().execute("return 42;", { signal });
 
     expect(report).toEqual({ result: cancelled, calls: [] });
     expect(add).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe("CodemodeSandbox cancellation", () => {
       },
     );
 
-    const error = await executionErrorOf(new CodemodeSandbox().execute("return 42;", { signal }));
+    const error = await executionErrorOf(new CodeExecutor().execute("return 42;", { signal }));
 
     expect(error.cause).toBe(failure);
     expect(error.calls).toEqual([]);
@@ -77,7 +77,7 @@ describe("host tool cancellation", () => {
     const signals: AbortSignal[] = [];
     let stopped = 0;
 
-    const completion = new CodemodeSandbox({
+    const completion = new CodeExecutor({
       tools: {
         read: async (_args, { signal }) => {
           signals.push(signal);
@@ -122,7 +122,7 @@ describe("host tool cancellation", () => {
   test("records dispatch before a callback synchronously cancels execution", async () => {
     const controller = new AbortController();
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: () => {
           controller.abort();
@@ -146,7 +146,7 @@ describe("host tool cancellation", () => {
   test("drops a response that cancels execution during its JSON conversion", async () => {
     const controller = new AbortController();
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: () =>
           ToolResult.success({
@@ -180,7 +180,7 @@ describe("host tool cancellation", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const first = new CodemodeSandbox({
+    const first = new CodeExecutor({
       tools: {
         read: (_args, context) => {
           contexts.push(context);
@@ -193,7 +193,7 @@ describe("host tool cancellation", () => {
 
     await started.promise;
 
-    const second = await new CodemodeSandbox({
+    const second = await new CodeExecutor({
       tools: {
         read: (_args, context) => {
           contexts.push(context);
@@ -222,7 +222,7 @@ describe("host tool cancellation", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         wait: () => {
           started.resolve();

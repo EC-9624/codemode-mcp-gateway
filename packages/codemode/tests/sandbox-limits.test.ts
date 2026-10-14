@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult, type SandboxOptions } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type SandboxOptions } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
-describe("CodemodeSandbox limit configuration", () => {
+describe("CodeExecutor limit configuration", () => {
   test.each([
     ["null", null],
     ["string", "1"],
@@ -24,7 +24,7 @@ describe("CodemodeSandbox limit configuration", () => {
 
     Object.assign(options, { maxToolCalls: value });
 
-    expect(() => new CodemodeSandbox(options)).toThrow(RangeError);
+    expect(() => new CodeExecutor(options)).toThrow(RangeError);
     expect(reads).toBe(0);
   });
 
@@ -38,9 +38,9 @@ describe("CodemodeSandbox limit configuration", () => {
     ["maxToolCalls", 2147483647],
     ["maxConcurrentToolCalls", 2147483647],
   ] as const)("accepts the endpoints and rejects overflow for %s", (name, maximum) => {
-    expect(() => new CodemodeSandbox({ [name]: 1 })).not.toThrow();
-    expect(() => new CodemodeSandbox({ [name]: maximum })).not.toThrow();
-    expect(() => new CodemodeSandbox({ [name]: maximum + 1 })).toThrow(
+    expect(() => new CodeExecutor({ [name]: 1 })).not.toThrow();
+    expect(() => new CodeExecutor({ [name]: maximum })).not.toThrow();
+    expect(() => new CodeExecutor({ [name]: maximum + 1 })).toThrow(
       new RangeError(`${name} must be an integer from 1 to ${maximum}.`),
     );
   });
@@ -49,7 +49,7 @@ describe("CodemodeSandbox limit configuration", () => {
     const options: SandboxOptions = {};
     Object.assign(options, { totalTimeoutMs: null });
 
-    expect(() => new CodemodeSandbox(options)).toThrow(RangeError);
+    expect(() => new CodeExecutor(options)).toThrow(RangeError);
   });
 });
 
@@ -58,7 +58,7 @@ describe("source admission", () => {
     const code = "return await tools.read();".padEnd(256 * 1024, " ");
     let reads = 0;
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: {
         read: () => {
           reads++;
@@ -93,8 +93,8 @@ describe("source admission", () => {
   test.each([["multibyte", 'return "é😀";', 16, "é😀"]] as const)(
     "measures %s source in UTF-8 bytes",
     async (_name, code, bytes, value) => {
-      const accepted = await new CodemodeSandbox({ maxSourceBytes: bytes }).execute(code);
-      const rejected = await new CodemodeSandbox({ maxSourceBytes: bytes - 1 }).execute(code);
+      const accepted = await new CodeExecutor({ maxSourceBytes: bytes }).execute(code);
+      const rejected = await new CodeExecutor({ maxSourceBytes: bytes - 1 }).execute(code);
 
       expect(accepted).toEqual({ result: { ok: true, value }, calls: [] });
       expect(rejected).toEqual({
@@ -115,13 +115,13 @@ describe("source admission", () => {
   test("allows increasing the source limit without configuring VM limits", async () => {
     const code = "return 42;".padEnd(256 * 1024 + 1, " ");
 
-    const report = await new CodemodeSandbox({ maxSourceBytes: 512 * 1024 }).execute(code);
+    const report = await new CodeExecutor({ maxSourceBytes: 512 * 1024 }).execute(code);
 
     expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
   });
 
   test("honors pre-aborted cancellation before source admission", async () => {
-    const report = await new CodemodeSandbox({ maxSourceBytes: 1 }).execute("return 42;", {
+    const report = await new CodeExecutor({ maxSourceBytes: 1 }).execute("return 42;", {
       signal: AbortSignal.abort(),
     });
 
@@ -132,8 +132,8 @@ describe("source admission", () => {
   });
 
   test("rejects oversized invalid syntax before parsing and permits the next execution", async () => {
-    const rejected = await new CodemodeSandbox({ maxSourceBytes: 1 }).execute("return (;");
-    const recovered = await new CodemodeSandbox().execute("return 42;");
+    const rejected = await new CodeExecutor({ maxSourceBytes: 1 }).execute("return (;");
+    const recovered = await new CodeExecutor().execute("return 42;");
 
     expect(rejected.result).toMatchObject({
       ok: false,
@@ -146,7 +146,7 @@ describe("source admission", () => {
 
 describe("worker VM limits", () => {
   test("executes at the maximum supported stack limit", async () => {
-    const report = await new CodemodeSandbox({ maxStackSizeBytes: 4 * 1024 * 1024 }).execute(
+    const report = await new CodeExecutor({ maxStackSizeBytes: 4 * 1024 * 1024 }).execute(
       "return 42;",
     );
 
@@ -159,7 +159,7 @@ describe("worker VM limits", () => {
   ] as const)(
     "rejects prelude setup failure under a tiny %s limit and recovers",
     async (_name, options) => {
-      const failure = await executionErrorOf(new CodemodeSandbox(options).execute("return 42;"));
+      const failure = await executionErrorOf(new CodeExecutor(options).execute("return 42;"));
 
       expect(failure.calls).toEqual([]);
       expect(failure.cause).toBeInstanceOf(Error);
@@ -169,7 +169,7 @@ describe("worker VM limits", () => {
         );
       }
 
-      expect(await new CodemodeSandbox().execute("return 42;")).toEqual({
+      expect(await new CodeExecutor().execute("return 42;")).toEqual({
         result: { ok: true, value: 42 },
         calls: [],
       });
@@ -179,13 +179,11 @@ describe("worker VM limits", () => {
   test("isolates memory limits between sandbox instances", async () => {
     const code = "return new ArrayBuffer(2 * 1024 * 1024).byteLength;";
 
-    const limited = await new CodemodeSandbox({ memoryLimitBytes: 1024 * 1024 }).execute(code);
+    const limited = await new CodeExecutor({ memoryLimitBytes: 1024 * 1024 }).execute(code);
 
-    const increased = await new CodemodeSandbox({ memoryLimitBytes: 4 * 1024 * 1024 }).execute(
-      code,
-    );
+    const increased = await new CodeExecutor({ memoryLimitBytes: 4 * 1024 * 1024 }).execute(code);
 
-    const defaults = await new CodemodeSandbox().execute(code);
+    const defaults = await new CodeExecutor().execute(code);
 
     expect(limited.result).toMatchObject({
       ok: false,
@@ -199,7 +197,7 @@ describe("worker VM limits", () => {
   });
 
   test("can catch guest allocation failure and continue in the same execution", async () => {
-    const report = await new CodemodeSandbox().execute(`
+    const report = await new CodeExecutor().execute(`
       let failed = false;
       try { new ArrayBuffer(128 * 1024 * 1024); } catch { failed = true; }
       return { failed, value: 1 + 2 };
@@ -218,8 +216,8 @@ describe("worker VM limits", () => {
       return depth;
     `;
 
-    const lower = await new CodemodeSandbox({ maxStackSizeBytes: 64 * 1024 }).execute(code);
-    const higher = await new CodemodeSandbox({ maxStackSizeBytes: 256 * 1024 }).execute(code);
+    const lower = await new CodeExecutor({ maxStackSizeBytes: 64 * 1024 }).execute(code);
+    const higher = await new CodeExecutor({ maxStackSizeBytes: 256 * 1024 }).execute(code);
 
     expect(lower.result.ok).toBe(true);
     expect(higher.result.ok).toBe(true);
@@ -231,7 +229,7 @@ describe("worker VM limits", () => {
 
     expect(lower.result.value).toBeGreaterThan(0);
     expect(higher.result.value).toBeGreaterThan(lower.result.value);
-    expect((await new CodemodeSandbox().execute("return 42;")).result).toEqual({
+    expect((await new CodeExecutor().execute("return 42;")).result).toEqual({
       ok: true,
       value: 42,
     });

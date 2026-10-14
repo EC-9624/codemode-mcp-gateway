@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
-describe("CodemodeSandbox output limit", () => {
+describe("CodeExecutor output limit", () => {
   test("measures the entire thrown string across embedded NULs", async () => {
     const code = 'JSON.stringify = () => "replaced"; throw "a\\0b";';
 
-    const accepted = await new CodemodeSandbox({ maxOutputBytes: 3 }).execute(code);
-    const rejected = await new CodemodeSandbox({ maxOutputBytes: 2 }).execute(code);
+    const accepted = await new CodeExecutor({ maxOutputBytes: 3 }).execute(code);
+    const rejected = await new CodeExecutor({ maxOutputBytes: 2 }).execute(code);
 
     expect(accepted.result).toEqual({ ok: false, error: { kind: "script", message: "a\u0000b" } });
     expect(rejected.result).toMatchObject({
@@ -16,7 +16,7 @@ describe("CodemodeSandbox output limit", () => {
   });
 
   test("accepts exactly 256 KiB of JSON by default and rejects one byte more", async () => {
-    const sandbox = new CodemodeSandbox();
+    const sandbox = new CodeExecutor();
     const accepted = await sandbox.execute('return "x".repeat(262142);');
     const rejected = await sandbox.execute('return "x".repeat(262143);');
 
@@ -38,8 +38,8 @@ describe("CodemodeSandbox output limit", () => {
   test("isolates a larger output limit from another sandbox's defaults", async () => {
     const code = 'return "x".repeat(262143);';
 
-    const increased = await new CodemodeSandbox({ maxOutputBytes: 512 * 1024 }).execute(code);
-    const defaults = await new CodemodeSandbox().execute(code);
+    const increased = await new CodeExecutor({ maxOutputBytes: 512 * 1024 }).execute(code);
+    const defaults = await new CodeExecutor().execute(code);
 
     expect(increased.result).toEqual({ ok: true, value: "x".repeat(262143) });
     expect(defaults.result).toMatchObject({
@@ -55,8 +55,8 @@ describe("CodemodeSandbox output limit", () => {
     ["object", "return { a: 1 };", 7, { a: 1 }],
     ["undefined normalized to null", "return undefined;", 4, null],
   ] as const)("measures %s as serialized UTF-8 JSON", async (_name, code, bytes, value) => {
-    const accepted = await new CodemodeSandbox({ maxOutputBytes: bytes }).execute(code);
-    const rejected = await new CodemodeSandbox({ maxOutputBytes: bytes - 1 }).execute(code);
+    const accepted = await new CodeExecutor({ maxOutputBytes: bytes }).execute(code);
+    const rejected = await new CodeExecutor({ maxOutputBytes: bytes - 1 }).execute(code);
 
     expect(accepted.result).toEqual({ ok: true, value });
     expect(rejected.result).toEqual({
@@ -71,7 +71,7 @@ describe("CodemodeSandbox output limit", () => {
   });
 
   test("accepts a one-byte return value with the minimum limit", async () => {
-    const report = await new CodemodeSandbox({ maxOutputBytes: 1 }).execute("return 1;");
+    const report = await new CodeExecutor({ maxOutputBytes: 1 }).execute("return 1;");
 
     expect(report).toEqual({ result: { ok: true, value: 1 }, calls: [] });
   });
@@ -81,8 +81,8 @@ describe("CodemodeSandbox output limit", () => {
     ["string", 'throw "é😀";'],
     ["message getter", 'throw { get message() { return "é😀"; } };'],
   ] as const)("bounds a thrown %s by raw message bytes", async (_name, code) => {
-    const accepted = await new CodemodeSandbox({ maxOutputBytes: 6 }).execute(code);
-    const rejected = await new CodemodeSandbox({ maxOutputBytes: 5 }).execute(code);
+    const accepted = await new CodeExecutor({ maxOutputBytes: 6 }).execute(code);
+    const rejected = await new CodeExecutor({ maxOutputBytes: 5 }).execute(code);
 
     expect(accepted.result).toEqual({ ok: false, error: { kind: "script", message: "é😀" } });
     expect(rejected).toEqual({
@@ -100,7 +100,7 @@ describe("CodemodeSandbox output limit", () => {
   });
 
   test("bounds generated large error messages by default and recovers", async () => {
-    const rejected = await new CodemodeSandbox().execute('throw new Error("x".repeat(262145));');
+    const rejected = await new CodeExecutor().execute('throw new Error("x".repeat(262145));');
 
     expect(rejected).toEqual({
       result: {
@@ -114,7 +114,7 @@ describe("CodemodeSandbox output limit", () => {
       },
       calls: [],
     });
-    expect(await new CodemodeSandbox().execute("return 42;")).toEqual({
+    expect(await new CodeExecutor().execute("return 42;")).toEqual({
       result: { ok: true, value: 42 },
       calls: [],
     });
@@ -125,7 +125,7 @@ describe("CodemodeSandbox output limit", () => {
     ["conversion error", "return 1n;"],
     ["stalled promise", "return new Promise(() => {});"],
   ] as const)("also bounds the %s message", async (_name, code) => {
-    const report = await new CodemodeSandbox({ maxOutputBytes: 1 }).execute(code);
+    const report = await new CodeExecutor({ maxOutputBytes: 1 }).execute(code);
 
     expect(report.result).toEqual({
       ok: false,
@@ -139,7 +139,7 @@ describe("CodemodeSandbox output limit", () => {
   });
 
   test("preserves timeout classification even when its diagnostic exceeds the output limit", async () => {
-    const report = await new CodemodeSandbox({ maxOutputBytes: 1, timeoutMs: 20 }).execute(
+    const report = await new CodeExecutor({ maxOutputBytes: 1, timeoutMs: 20 }).execute(
       "while (true) {}",
     );
 
@@ -152,7 +152,7 @@ describe("CodemodeSandbox output limit", () => {
   test("allows processing large tool payloads into small final output", async () => {
     let received = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         echo: (args) => {
           if (typeof args !== "string") return ToolResult.failure("Expected text");
@@ -183,7 +183,7 @@ describe("CodemodeSandbox output limit", () => {
     using cleanup = new DisposableStack();
     cleanup.defer(() => release.resolve(ToolResult.success()));
 
-    const completion = new CodemodeSandbox({
+    const completion = new CodeExecutor({
       tools: {
         record: () => {
           calls++;
@@ -227,7 +227,7 @@ describe("CodemodeSandbox output limit", () => {
     const signals: AbortSignal[] = [];
     let conversions = 0;
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: {
         done: () => ToolResult.success(42),
         pending: (_args, { signal }) => {

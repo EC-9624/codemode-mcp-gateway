@@ -1,6 +1,6 @@
 import { ok, deepEqual, rejects } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { CodemodeSandbox, ToolResult, type ExecutionReport } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ExecutionReport } from "@cmg/codemode";
 
 // Installed alone: no MCP dependencies or repository source can satisfy accidental imports.
 const installed = fileURLToPath(import.meta.resolve("@cmg/codemode"));
@@ -9,7 +9,7 @@ ok(installed.endsWith("/dist/index.js"));
 const internal = "@cmg/codemode/runtime/engine";
 await rejects(() => import(internal));
 
-const sandbox = new CodemodeSandbox({ tools: { answer: () => ToolResult.success(42) } });
+const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
 
 const report: ExecutionReport = await sandbox.execute(
   "globalThis.saved = 7; return await tools.answer();",
@@ -29,7 +29,7 @@ const started = Promise.withResolvers<void>();
 const release = Promise.withResolvers<ToolResult>();
 const controller = new AbortController();
 
-const cancellable = new CodemodeSandbox({
+const cancellable = new CodeExecutor({
   tools: {
     wait: () => {
       started.resolve();

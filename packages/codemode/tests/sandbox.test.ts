@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 
-const sandbox = new CodemodeSandbox();
+const sandbox = new CodeExecutor();
 
-describe("CodemodeSandbox execution", () => {
+describe("CodeExecutor execution", () => {
   test("executes a JavaScript function body", async () => {
     expect(await sandbox.execute("return 1 + 2;")).toEqual({
       result: { ok: true, value: 3 },
@@ -48,7 +48,7 @@ describe("CodemodeSandbox execution", () => {
     ["message getter", "throw { get message() { while (true) {} } };"],
     ["toJSON", "throw { toJSON() { while (true) {} } };"],
   ])("reports timeout when error conversion loops in %s", async (_name, code) => {
-    const report = await new CodemodeSandbox({ timeoutMs: 100 }).execute(code);
+    const report = await new CodeExecutor({ timeoutMs: 100 }).execute(code);
 
     expect(report.result).toEqual({
       ok: false,

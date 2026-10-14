@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { z } from "zod";
 import {
-  CodemodeSandbox,
+  CodeExecutor,
   createDiscoveryTools,
   defineTool,
   validateTool,
@@ -26,7 +26,7 @@ describe("Standard Schema native tools", () => {
       },
     });
 
-    const sandbox = new CodemodeSandbox({ tools: { read: read.execute } });
+    const sandbox = new CodeExecutor({ tools: { read: read.execute } });
 
     const report = await sandbox.execute(`
       let message;
@@ -61,7 +61,7 @@ describe("Standard Schema native tools", () => {
       execute: () => ToolResult.success(++calls),
     });
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: { read: read.execute },
       maxToolCalls: 1,
     }).execute('try { await tools.read("wrong"); } catch {} return await tools.read(1);');
@@ -104,7 +104,7 @@ describe("Standard Schema native tools", () => {
       },
     });
 
-    const report = await new CodemodeSandbox({
+    const report = await new CodeExecutor({
       tools: { accept: accept.execute, object: object.execute },
     }).execute(`
       const absent = await tools.accept();
@@ -131,7 +131,7 @@ describe("Standard Schema native tools", () => {
       }),
     });
 
-    const sandbox = new CodemodeSandbox({
+    const sandbox = new CodeExecutor({
       tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
     });
 
@@ -173,7 +173,7 @@ describe("Standard Schema native tools", () => {
     );
 
     const controller = new AbortController();
-    const sandbox = new CodemodeSandbox({ tools: { read } });
+    const sandbox = new CodeExecutor({ tools: { read } });
 
     const completion = sandbox.execute('return await tools.read("invoice-1");', {
       signal: controller.signal,
@@ -293,7 +293,7 @@ describe("Standard Schema native tools", () => {
       execute: () => ToolResult.success(),
     });
 
-    const report = await new CodemodeSandbox({ tools: { read: tool.execute } }).execute(
+    const report = await new CodeExecutor({ tools: { read: tool.execute } }).execute(
       "try { await tools.read('input'); } catch (error) { return error.message; }",
     );
 

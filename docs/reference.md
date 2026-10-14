@@ -19,7 +19,7 @@ Import package roots; runtime deep imports are unsupported. Exact signatures and
 field contracts live in the public exports of [codemode](../packages/codemode/src/index.ts),
 [MCP](../packages/mcp/src/index.ts), and [gateway](../packages/gateway/src/index.ts).
 
-`new CodemodeSandbox({ tools, ...configuration })` validates limits and snapshots tool
+`new CodeExecutor({ tools, ...configuration })` validates limits and snapshots tool
 bindings synchronously, before any worker starts. Constructor registry failures
 throw `SandboxExecutionError` with no calls; invalid configuration throws `RangeError`.
 Tools and limits stay fixed for that instance. `sandbox.execute(code, { signal }?)`
@@ -57,7 +57,7 @@ or parent deadline can win; neither must be larger than the other. See
 All limits are optional, flat fields on `SandboxOptions`. Configure them once:
 
 ```ts
-const sandbox = new CodemodeSandbox({ tools, memoryLimitBytes: 128 * 1024 * 1024 });
+const sandbox = new CodeExecutor({ tools, memoryLimitBytes: 128 * 1024 * 1024 });
 await sandbox.execute(code);
 ```
 
@@ -73,7 +73,7 @@ At execution time, pre-aborted cancellation wins. Otherwise oversized source
 returns this report before creating the worker or parsing code:
 
 ```ts
-await new CodemodeSandbox({ maxSourceBytes: 5 }).execute("return 42;");
+await new CodeExecutor({ maxSourceBytes: 5 }).execute("return 42;");
 // {
 //   result: {
 //     ok: false,
@@ -114,7 +114,7 @@ guest parsing remains covered by `timeoutMs` and the optional parent deadline.
 `maxOutputBytes` bounds the guest's final return value and script-error message:
 
 ```ts
-await new CodemodeSandbox({ maxOutputBytes: 5 }).execute('return "too much";');
+await new CodeExecutor({ maxOutputBytes: 5 }).execute('return "too much";');
 // {
 //   result: {
 //     ok: false,
@@ -162,7 +162,7 @@ Each execution defaults to **100 total calls** and **10 outstanding calls**.
 Configure either field independently on the sandbox:
 
 ```ts
-const sandbox = new CodemodeSandbox({ tools, maxToolCalls: 200, maxConcurrentToolCalls: 5 });
+const sandbox = new CodeExecutor({ tools, maxToolCalls: 200, maxConcurrentToolCalls: 5 });
 await sandbox.execute(code);
 ```
 
@@ -184,7 +184,7 @@ between them.
   identifies the total-call limit.
 
 ```ts
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: {
     read: () => ToolResult.success(42),
   },
@@ -301,10 +301,10 @@ cancellation followed by a termination failure rejects with `SandboxExecutionErr
 but pending calls keep `reason: "cancelled"`. Completed responses remain completed.
 
 ```ts
-import { CodemodeSandbox, SandboxExecutionError } from "@cmg/codemode";
+import { CodeExecutor, SandboxExecutionError } from "@cmg/codemode";
 
 try {
-  const sandbox = new CodemodeSandbox();
+  const sandbox = new CodeExecutor();
   const report = await sandbox.execute("return 42;");
   console.log(report.result, report.calls);
 } catch (error) {
@@ -323,7 +323,7 @@ signal to cancellable APIs such as `fetch`:
 
 ```ts
 const controller = new AbortController();
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: {
     read: async (_args, { signal }) => {
       const response = await fetch("https://example.com/data", { signal });
@@ -360,7 +360,7 @@ metadata and the callback owns validation. Discovery schema objects should be
 treated as read-only.
 
 ```ts
-import { createDiscoveryTools, CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { createDiscoveryTools, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 
 const catalog = ToolCatalog.create({
   answer: {
@@ -373,7 +373,7 @@ catalog.search("answer"); // [{ name: "answer", description: "..." }]
 catalog.describe("answer"); // metadata; undefined for an unknown name
 
 const discovery = createDiscoveryTools(catalog);
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: {
     ...catalog.tools,
     searchTools: discovery.searchTools,
@@ -415,7 +415,7 @@ schema's inferred **output** type, including intentional transformations:
 
 ```ts
 import { z } from "zod";
-import { defineTool, CodemodeSandbox, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { defineTool, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
 
 const catalog = ToolCatalog.create({
   length: defineTool({
@@ -428,7 +428,7 @@ const catalog = ToolCatalog.create({
   }),
 });
 
-const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+const sandbox = new CodeExecutor({ tools: catalog.tools });
 await sandbox.execute('return await tools.length("hello");');
 // result: { ok: true, value: 6 }
 ```
@@ -478,12 +478,12 @@ protocol negotiation, and closing the client. The adapter borrows it on both
 success and failure; cancelling one execution does not close the shared client.
 
 ```ts
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 
 // client is an application-owned, connected @modelcontextprotocol/client Client.
 const catalog = await createMcpCatalog(client);
-const sandbox = new CodemodeSandbox({ tools: catalog.tools });
+const sandbox = new CodeExecutor({ tools: catalog.tools });
 const report = await sandbox.execute(
   `
     const response = await tools.add({ a: 2, b: 3 });
@@ -620,11 +620,11 @@ infrastructure rejection path as asynchronous failures. An optional description
 documents the supplied environment; the default makes no engine-specific claims.
 
 ```ts
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 import { createCodemodeServer, createMcpCatalog } from "@cmg/mcp";
 
 const catalog = await createMcpCatalog(client);
-const sandbox = new CodemodeSandbox({
+const sandbox = new CodeExecutor({
   tools: catalog.tools,
   timeoutMs: 5_000,
   totalTimeoutMs: 10_000,
@@ -762,7 +762,7 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 
 | Owner                        | Resources                                                                           |
 | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `CodemodeSandbox`            | Fixed resource limits and snapshotted callback bindings                             |
+| `CodeExecutor`               | Fixed resource limits and snapshotted callback bindings                             |
 | `WorkerExecution`            | Worker, listeners, parent timer/interrupt flag, tool abort controller, call records |
 | Worker entry's cleanup stack | Transport listeners                                                                 |
 | Engine                       | QuickJS context and runtime, deadline, and bridge scope                             |

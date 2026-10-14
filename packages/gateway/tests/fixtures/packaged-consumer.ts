@@ -1,6 +1,6 @@
 import { ok, deepEqual } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { CodemodeSandbox, createDiscoveryTools } from "@cmg/codemode";
+import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
 import { createServer } from "codemode-mcp-gateway";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -31,7 +31,7 @@ await upstream.connect(upstreamWire);
 await upstreamClient.connect(clientWire);
 const catalog = await createMcpCatalog(upstreamClient);
 
-const executor = new CodemodeSandbox({
+const executor = new CodeExecutor({
   tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
 });
 

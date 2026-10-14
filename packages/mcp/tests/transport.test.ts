@@ -5,7 +5,7 @@ import { McpServer, ProtocolError, ProtocolErrorCode } from "@modelcontextprotoc
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { CodemodeSandbox } from "@cmg/codemode";
+import { CodeExecutor } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 import { connectMcp, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
@@ -15,7 +15,7 @@ describe("MCP transport contracts", () => {
     await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
 
-    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
+    const report = await new CodeExecutor({ tools: catalog.tools }).execute(
       "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;",
     );
 
@@ -44,7 +44,7 @@ describe("MCP transport contracts", () => {
     await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
 
-    const report = await new CodemodeSandbox({ tools: catalog.tools, maxOutputBytes: 4 }).execute(
+    const report = await new CodeExecutor({ tools: catalog.tools, maxOutputBytes: 4 }).execute(
       `
       const response = await tools.dataset({ count: 3000 });
       return response.structuredContent.records.filter(row => row.id % 2 === 0).length;
@@ -65,7 +65,7 @@ describe("MCP transport contracts", () => {
     const catalog = await createMcpCatalog(upstream.client);
     const controller = new AbortController();
 
-    const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 2000 });
+    const sandbox = new CodeExecutor({ tools: catalog.tools, timeoutMs: 2000 });
 
     const completion = sandbox.execute(
       "await tools.add({ a: 1, b: 2 }); return await tools.pending();",
@@ -101,7 +101,7 @@ describe("MCP transport contracts", () => {
     await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
 
-    const sandbox = new CodemodeSandbox({ tools: catalog.tools, timeoutMs: 200 });
+    const sandbox = new CodeExecutor({ tools: catalog.tools, timeoutMs: 200 });
     const report = await sandbox.execute("return await tools.pending();");
 
     await upstream.waitFor("request-started");
@@ -138,7 +138,7 @@ describe("MCP transport contracts", () => {
     const catalog = await createMcpCatalog(connection.client);
     const controller = new AbortController();
 
-    const completion = new CodemodeSandbox({ tools: catalog.tools }).execute(
+    const completion = new CodeExecutor({ tools: catalog.tools }).execute(
       "return await tools.wait();",
       {
         signal: controller.signal,
@@ -170,7 +170,7 @@ describe("MCP transport contracts", () => {
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
 
-    const report = await new CodemodeSandbox({ tools: catalog.tools }).execute(
+    const report = await new CodeExecutor({ tools: catalog.tools }).execute(
       "return await tools.read();",
     );
 
@@ -191,7 +191,7 @@ describe("MCP transport contracts", () => {
     await using upstream = await connectMcpProcess("invoke");
     const catalog = await createMcpCatalog(upstream.client);
 
-    const completion = new CodemodeSandbox({ tools: catalog.tools }).execute(
+    const completion = new CodeExecutor({ tools: catalog.tools }).execute(
       "return await tools.pending();",
     );
 
