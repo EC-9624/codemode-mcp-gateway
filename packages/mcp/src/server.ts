@@ -3,7 +3,7 @@
  * application chooses the engine, tools, and resource policy outside this module.
  *
  * Each request tracks its execution promise before invoking the callback. Responses
- * keep the final result and call summaries, not retained tool bodies. Executor
+ * keep the final result and metadata-only call summaries. Executor
  * rejections become controlled public failures with host-only diagnostics.
  *
  * Closing aborts the server's request signals and awaits the tracked executions.
@@ -93,6 +93,7 @@ observations, not a guarantee of external success or safe retry.`,
 }
 
 function summarize(calls: readonly CallOutcome[]): CallSummary[] {
+  // Injected executors can attach additional fields despite the public structural type.
   return calls.map((call) => {
     const summary = { callId: call.callId, name: call.name };
 

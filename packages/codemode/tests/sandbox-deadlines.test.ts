@@ -197,7 +197,7 @@ describe("total deadline", () => {
     expect(conversions).toBe(0);
   });
 
-  test("does not retain a response whose JSON conversion exhausts the budget", async () => {
+  test("marks the call interrupted when JSON conversion exhausts the budget", async () => {
     let conversions = 0;
     const now = performance.now();
     using clock = spyOn(performance, "now").mockReturnValue(now);

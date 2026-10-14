@@ -326,8 +326,6 @@ describe("CodeExecutor guest boundary", () => {
     `);
 
     expect(report.result).toEqual({ ok: true, value: message + "!" });
-    expect(report.calls).toEqual([
-      { callId: 1, name: "fail", status: "completed", result: { ok: false, error: { message } } },
-    ]);
+    expect(report.calls).toEqual([{ callId: 1, name: "fail", status: "completed" }]);
   });
 });

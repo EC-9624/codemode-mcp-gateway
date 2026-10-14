@@ -23,7 +23,7 @@ describe("CodeExecutor call budget", () => {
           message: "Execution exceeded the 1 tool-call limit.",
         },
       },
-      calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }],
+      calls: [{ callId: 1, name: "read", status: "completed" }],
     });
   });
   test("allows the default 100 calls and stops the 101st without invoking it", async () => {
@@ -51,7 +51,6 @@ describe("CodeExecutor call budget", () => {
       callId: 100,
       name: "read",
       status: "completed",
-      result: { ok: true, json: "100" },
     });
   });
 
@@ -69,7 +68,7 @@ describe("CodeExecutor call budget", () => {
     expect(report.calls).toHaveLength(101);
     expect(next).toEqual({
       result: { ok: true, value: 42 },
-      calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }],
+      calls: [{ callId: 1, name: "read", status: "completed" }],
     });
   });
 
@@ -137,13 +136,11 @@ describe("CodeExecutor call budget", () => {
         callId: 1,
         name: "read",
         status: "completed",
-        result: { ok: false, error: { message: "Public failure" } },
       },
       {
         callId: 2,
         name: "read",
         status: "completed",
-        result: { ok: false, error: { message: "Public failure" } },
       },
     ]);
   });
@@ -174,7 +171,7 @@ describe("CodeExecutor call budget", () => {
     expect(calls).toBe(0);
   });
 
-  test("retains earlier responses and interrupts dispatched pending calls on exhaustion", async () => {
+  test("keeps completed call summaries and interrupts dispatched pending calls on exhaustion", async () => {
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
@@ -206,7 +203,7 @@ describe("CodeExecutor call budget", () => {
         },
       },
       calls: [
-        { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "done", status: "completed" },
         { callId: 2, name: "pending", status: "interrupted", reason: "call-limit" },
       ],
     });

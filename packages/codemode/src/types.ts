@@ -1,4 +1,4 @@
-import { type SandboxTool, type SerializedToolResult } from "./tools.ts";
+import { type SandboxTool } from "./tools.ts";
 
 export type ToolCallLimit = {
   kind: "limit";
@@ -26,13 +26,16 @@ export type InterruptionReason =
   | "concurrency-limit"
   | "output-limit";
 
-/** Parent observations, not proof of external side effects or guest receipt. */
+/**
+ * Metadata-only observations; no tool arguments or response bodies are retained.
+ * Completed means a response was serialized, not proof of success, external effects, or guest receipt.
+ */
 export type CallOutcome = {
   /** Execution-local sequence, starting at 1. Records remain in invocation order. */
   readonly callId: number;
   readonly name: string;
 } & (
-  | { readonly status: "completed"; readonly result: SerializedToolResult }
+  | { readonly status: "completed" }
   | { readonly status: "interrupted"; readonly reason: InterruptionReason }
 );
 

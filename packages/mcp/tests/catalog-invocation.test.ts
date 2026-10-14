@@ -222,7 +222,6 @@ describe("createMcpCatalog invocation", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Host tool failed." } },
         },
       ],
     });

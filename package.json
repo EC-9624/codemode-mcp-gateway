@@ -15,6 +15,8 @@
     "example:mcp": "bun --conditions=development run examples/mcp.ts",
     "example:server": "bun --conditions=development run examples/agent-client.ts",
     "example:notion": "bun --conditions=development run examples/notion-client.ts",
+    "baseline": "bun --conditions=development run scripts/execution-baseline.ts",
+    "baseline:memory": "bun --conditions=development run scripts/memory-baseline.ts",
     "typecheck": "bun run --cwd packages/codemode typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/gateway typecheck && tsc --noEmit",
     "test": "bun run --cwd packages/codemode test && bun run --cwd packages/mcp test && bun run --cwd packages/gateway test",
     "lint": "oxlint --deny-warnings .",

@@ -97,7 +97,7 @@ describe("CodeExecutor", () => {
     for (const report of [first, second]) {
       expect(report).toEqual({
         result: { ok: true, value: ["undefined", "undefined"] },
-        calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }],
+        calls: [{ callId: 1, name: "read", status: "completed" }],
       });
     }
   });

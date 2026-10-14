@@ -6,22 +6,22 @@ event sequence its own test. Support code owns mechanics, not scenario decisions
 
 ## Public subjects
 
-| File                               | Primary contracts                                                                         |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| `sandbox.test.ts`                  | Function bodies, JSON conversion, exceptions, promises/thenables, recovery                |
-| `sandbox-options.test.ts`          | Construction snapshots, fixed options, fresh and overlapping executions                   |
-| `sandbox-tools.test.ts`            | Host invocation, public/private failures, draining, argument/result conversion            |
-| `sandbox-reports.test.ts`          | Invocation order, detached retained responses, interruption snapshots                     |
-| `sandbox-boundary.test.ts`         | Host API exclusion, lexical isolation, wrapper validation, mutable built-ins, exact names |
-| `sandbox-limits.test.ts`           | Constructor validation, source admission, real memory/stack behavior                      |
-| `sandbox-output.test.ts`           | Serialized JSON/raw-message byte limits and output interruption                           |
-| `sandbox-budget.test.ts`           | Total/concurrent admission, slot reuse, discovery/validation charging                     |
-| `sandbox-cancellation.test.ts`     | Cancellation, signal privacy, late callbacks, registration races                          |
-| `sandbox-deadlines.test.ts`        | Guest/total deadlines, error conversion, host work/waits, responsiveness                  |
-| `sandbox-worker.test.ts`           | Public infrastructure rejection, malformed worker traffic, independent host admission     |
-| `sandbox-lifecycle-faults.test.ts` | Public outcome selection, reentrant events, held cleanup, cleanup failure                 |
-| `catalog.test.ts`                  | Metadata, search/ranking, snapshots, descriptive schemas, discovery composition           |
-| `tools.test.ts`                    | Standard Schema validation, transforms, metadata export, cancellation, composition        |
+| File                               | Primary contracts                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `sandbox.test.ts`                  | Function bodies, JSON conversion, exceptions, promises/thenables, recovery                  |
+| `sandbox-options.test.ts`          | Construction snapshots, fixed options, fresh and overlapping executions                     |
+| `sandbox-tools.test.ts`            | Host invocation, public/private failures, draining, argument/result conversion              |
+| `sandbox-reports.test.ts`          | Invocation order, metadata-only summaries, complete guest responses, interruption snapshots |
+| `sandbox-boundary.test.ts`         | Host API exclusion, lexical isolation, wrapper validation, mutable built-ins, exact names   |
+| `sandbox-limits.test.ts`           | Constructor validation, source admission, real memory/stack behavior                        |
+| `sandbox-output.test.ts`           | Serialized JSON/raw-message byte limits and output interruption                             |
+| `sandbox-budget.test.ts`           | Total/concurrent admission, slot reuse, discovery/validation charging                       |
+| `sandbox-cancellation.test.ts`     | Cancellation, signal privacy, late callbacks, registration races                            |
+| `sandbox-deadlines.test.ts`        | Guest/total deadlines, error conversion, host work/waits, responsiveness                    |
+| `sandbox-worker.test.ts`           | Public infrastructure rejection, malformed worker traffic, independent host admission       |
+| `sandbox-lifecycle-faults.test.ts` | Public outcome selection, reentrant events, held cleanup, cleanup failure                   |
+| `catalog.test.ts`                  | Metadata, search/ranking, snapshots, descriptive schemas, discovery composition             |
+| `tools.test.ts`                    | Standard Schema validation, transforms, metadata export, cancellation, composition          |
 
 `sandbox-worker` and `sandbox-lifecycle-faults` call `CodeExecutor.execute`, not
 `WorkerExecution.run`. `captureWorker` observes the worker dependency without

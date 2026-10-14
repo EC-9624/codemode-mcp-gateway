@@ -47,8 +47,8 @@ describe("CodeExecutor worker failures", () => {
         },
       },
       calls: [
-        { callId: 1, name: "read", status: "completed", result: { ok: true, json: "1" } },
-        { callId: 2, name: "read", status: "completed", result: { ok: true, json: "2" } },
+        { callId: 1, name: "read", status: "completed" },
+        { callId: 2, name: "read", status: "completed" },
       ],
     });
     expect(calls).toBe(2);
@@ -286,7 +286,7 @@ describe("CodeExecutor worker failures", () => {
     expectNoExecutionListeners(worker);
   });
 
-  test("retains a completed response when reply transport fails without retry", async () => {
+  test("keeps a completed call summary when reply transport fails without retry", async () => {
     using captured = captureWorker();
     const sandbox = new CodeExecutor({ tools: { read: () => ToolResult.success(42) } });
 
@@ -304,9 +304,7 @@ describe("CodeExecutor worker failures", () => {
     const error = await completion;
 
     expect(error.cause).toBe(failure);
-    expect(error.calls).toEqual([
-      { callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } },
-    ]);
+    expect(error.calls).toEqual([{ callId: 1, name: "read", status: "completed" }]);
     expect(post).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
   });

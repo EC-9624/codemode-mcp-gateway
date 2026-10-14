@@ -203,13 +203,7 @@ describe("CodeExecutor output limit", () => {
 
     expect(received).toBe(1048576);
     expect(report.result).toEqual({ ok: true, value: 1048576 });
-    expect(report.calls).toHaveLength(1);
-    const call = report.calls[0];
-    expect(call).toMatchObject({ status: "completed", result: { ok: true } });
-    if (call?.status !== "completed" || !call.result.ok)
-      throw new Error("Expected a retained success.");
-
-    expect(call.result.json?.length).toBe(1048578);
+    expect(report.calls).toEqual([{ callId: 1, name: "echo", status: "completed" }]);
   });
 
   test("serializes once and drains calls started by toJSON before reporting oversized output", async () => {
@@ -250,8 +244,8 @@ describe("CodeExecutor output limit", () => {
         },
       },
       calls: [
-        { callId: 1, name: "record", status: "completed", result: { ok: true, json: "42" } },
-        { callId: 2, name: "acknowledge", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "record", status: "completed" },
+        { callId: 2, name: "acknowledge", status: "completed" },
       ],
     });
   });
@@ -286,7 +280,7 @@ describe("CodeExecutor output limit", () => {
         },
       },
       calls: [
-        { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "done", status: "completed" },
         { callId: 2, name: "pending", status: "interrupted", reason: "output-limit" },
       ],
     });

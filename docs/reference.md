@@ -6,7 +6,7 @@ Detailed edge cases and execution contracts. For usage, start with the
 
 - [Usage](#usage)
 - [Resource limits](#resource-limits), [output limits](#final-output-limit), and [tool-call limits](#tool-call-limits)
-- [Execution reports](#execution-reports-and-retained-calls) and [cancellation](#cancellation)
+- [Execution reports](#execution-reports-and-call-summaries) and [cancellation](#cancellation)
 - [Catalog and discovery](#catalog-and-discovery)
 - [Validated tools](#validated-tool-contracts) and [MCP adapter](#mcp-upstream-adapter)
 - [Agent-facing MCP server](#agent-facing-mcp-server)
@@ -145,10 +145,10 @@ text is checked before parsing into host data. Controlled timeout, cancellation,
 and limit diagnostics are not subject to this content limit; an output-limit
 message can itself be longer than a very small configured maximum.
 
-Completed tool responses remain available. Pending calls when an oversized script
+Completed call summaries remain available. Pending calls when an oversized script
 error ends execution are interrupted with `reason: "output-limit"`, including
 when worker cleanup later fails. Return values retain the existing drain-before-
-completion behavior. Tool arguments, tool responses, and retained response bodies
+completion behavior. Tool arguments and responses
 are not capped by `maxOutputBytes`: a script can process a large dataset and return
 a small summary. This is a final guest-output bound, not a bound on the full report.
 
@@ -200,7 +200,7 @@ await sandbox.execute("await tools.read(); return await tools.read();");
 //       message: "Execution exceeded the 1 tool-call limit."
 //     }
 //   },
-//   calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }]
+//   calls: [{ callId: 1, name: "read", status: "completed" }]
 // }
 ```
 
@@ -229,7 +229,7 @@ worker slot occupied after the parent has released its slot. Limits are per
 execution, not application-wide. Tools that ignore cancellation may continue after
 their execution has ended.
 
-### Execution reports and retained calls
+### Execution reports and call summaries
 
 `sandbox.execute` returns `Promise<ExecutionReport>`: `{ result: SandboxResult, calls }`.
 Callers migrating from the earlier API read `report.result` for the execution outcome.
@@ -237,10 +237,9 @@ The worker-local engine still returns `GuestResult`; only the parent owns call r
 
 Each call record has an execution-local `callId`, tool `name`, and one of:
 
-- `completed`: the parent recorded a serialized public response before selecting
-  the execution outcome. `result` is `{ ok: true, json: string | undefined }` or
-  `{ ok: false, error: { message: string } }`.
-- `interrupted`: the parent started invocation but had not recorded its response
+- `completed`: the parent serialized a public response before selecting
+  the execution outcome. The record contains no response body or failure message.
+- `interrupted`: the parent started invocation but had not marked it completed
   when execution stopped. `reason` explains why observation ended:
   `cancelled`, `timeout`, `script-error`, `sandbox-error`, `call-limit`, `concurrency-limit`, or `output-limit`.
   The operation may still finish or have side effects.
@@ -259,9 +258,15 @@ deadline expiry during result conversion leaves the call interrupted for that re
 
 Records remain in invocation order, even when replies arrive out of order. Calls
 rejected before invocation, including malformed requests, do not appear. Call
-arguments and raw host objects are not retained. Success bodies are the same JSON
-text prepared for the guest; retention never repeats `toJSON`. Undefined tool
-results retain a present `json: undefined` field (ordinary JSON export omits it).
+arguments, raw host objects, serialized response bodies, and tool failure messages
+are never stored in the call log or report. Serialization still runs once to prepare
+complete values for the guest, preserving undefined distinctly from null. Transient
+tool results and transport buffers remain necessary while delivery is in progress.
+
+**API change:** the former completed-call `result` field is removed. There is one
+summary-only policy for library reports, infrastructure-error call snapshots, and
+gateway responses, with no configuration switch. Scripts can deliberately return
+selected tool data through the final `report.result`, subject to the output limit.
 
 Call outcomes are exposed through `readonly` TypeScript types. The sandbox stops
 updating the snapshot when the parent selects the execution outcome, before
@@ -282,7 +287,6 @@ const report = {
       callId: 1,
       name: "createInvoice",
       status: "completed",
-      result: { ok: true, json: '{"id":"invoice-1"}' },
     },
     { callId: 2, name: "wait", status: "interrupted", reason: "cancelled" },
   ],
@@ -298,7 +302,7 @@ throw, the cause retains the disposal `SuppressedError` chain. See
 
 Once selected, interruption reasons do not change during cleanup. For example,
 cancellation followed by a termination failure rejects with `SandboxExecutionError`,
-but pending calls keep `reason: "cancelled"`. Completed responses remain completed.
+but pending calls keep `reason: "cancelled"`. Completed calls remain completed.
 
 ```ts
 import { CodeExecutor, SandboxExecutionError } from "@cmg/codemode";
@@ -456,8 +460,8 @@ One reported issue becomes a catchable failure such as
 as JSON Pointers, including escaped object keys. CMG does not append the arguments;
 custom validators own the content of their public issue messages.
 
-Locally rejected calls consume the existing call budget and are retained as
-`status: "completed"` with `result.ok: false`. The guest can catch the rejection
+Locally rejected calls consume the existing call budget and are recorded as
+`status: "completed"` without the failure body. The guest can catch the rejection
 and correct its arguments. Thrown exceptions and rejected validation promises use
 the existing private host-tool failure boundary. Standard Schema supplies no
 cancellation signal: cancellation can end observation while validation is pending,
@@ -535,7 +539,7 @@ guest calls tools[name](args)
   -> client.callTool with the execution's AbortSignal
   -> project content, optional structuredContent, optional isError
   -> ToolResult.success(response)
-  -> existing single serialization, retained response, guest settlement
+  -> existing single serialization, completed call summary, guest settlement
 ```
 
 Arrays, null, and primitive arguments return the public failure
@@ -580,9 +584,9 @@ Guest response handling preserves MCP data:
   Arbitrary protocol/transport/validator exception text is never forwarded by the
   adapter. A `ProtocolError` class alone does not prove a message came from upstream.
 
-A completed retained call with `result.ok: true` can therefore contain JSON with
-`isError: true`: the outer result records a received public response, while the
-inner MCP flag describes the tool's outcome. A lost connection only establishes
+A completed call can therefore have delivered an upstream response with
+`isError: true`: the summary records completion, while the MCP flag received by
+the script describes the tool's outcome. A lost connection only establishes
 that a usable response was not obtained; it does not establish external failure.
 
 #### Cancellation, ownership, and current scope
@@ -606,8 +610,8 @@ v2.3.1 a failed legacy handshake initiates close without awaiting it, so a subse
 The adapter adds no retries. SDK protocol flows may issue multiple wire requests
 per invocation; execution call budgets count host-tool invocations, not wire
 attempts. Catalog refresh is explicit, and client reuse, authentication, and
-interactive request handlers remain application-owned. Tool payloads and retained
-response bytes still have no CMG-specific cap; SDK transport limits also apply.
+interactive request handlers remain application-owned. Tool payloads still have no
+CMG-specific cap; SDK transport limits also apply. Reports do not retain tool bodies.
 
 ## Agent-facing MCP server
 
@@ -674,8 +678,9 @@ Both `structuredContent` and a JSON text content block contain a `CodemodeRespon
 - `calls`: invocation-ordered `{ callId, name, status: "completed" }` or
   `{ callId, name, status: "interrupted", reason }` summaries.
 
-The adapter omits retained response bodies, arguments, private causes, and stacks.
-Completed means a response was recorded; an upstream `isError` can still occur in a
+The adapter projects only public summary fields from the supplied executor, omitting
+additional fields, private causes, and stacks. Completed means a response was
+serialized; an upstream `isError` can still occur in a
 completed call. Inspect the upstream response within JavaScript when its outcome matters.
 Final unsuccessful results set the outer MCP `isError: true`. A script that handles
 an upstream failure and returns normally is still successful.
@@ -994,7 +999,7 @@ ordinary argument and result conversion still observes native guest semantics.
   be interrupted. The guest deadline checks source parsing after it returns;
   the parent can request worker termination meanwhile.
 - Cancellation provides no rollback, automatic retry, or exactly-once guarantee.
-  Tool payloads and retained response bytes remain unbounded by sandbox policy.
+  Tool payloads and their temporary host/transport allocations remain unbounded by sandbox policy.
 - No guest imports, TypeScript, or persistent state. MCP integration currently
   adapts tools from one application-owned client per catalog.
 - This is a learning project, not a production-hardened sandbox.

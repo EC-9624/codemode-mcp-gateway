@@ -179,7 +179,7 @@ describe("MCP client through codemode to upstream MCP", () => {
     ]);
   });
 
-  test("processes an upstream dataset in QuickJS without forwarding retained tool bodies", async () => {
+  test("processes an upstream dataset in QuickJS and returns only the selected output and call summary", async () => {
     const upstreamServer = new McpServer({ name: "dataset-upstream", version: "1" });
     upstreamServer.registerTool("dataset", {}, () => ({
       content: [],

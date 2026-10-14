@@ -11,7 +11,7 @@ import { connectMcp, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("MCP transport contracts", () => {
-  test("discovers and calls a stdio tool, retaining its public response", async () => {
+  test("discovers and calls a stdio tool, returning its processed value and call summary", async () => {
     await using upstream = await connectMcpProcess();
     const catalog = await createMcpCatalog(upstream.client);
 
@@ -25,10 +25,6 @@ describe("MCP transport contracts", () => {
         callId: 1,
         name: "add",
         status: "completed",
-        result: {
-          ok: true,
-          json: '{"content":[{"type":"text","text":"{\\"sum\\":5}"}],"structuredContent":{"sum":5}}',
-        },
       },
     ]);
     const pid = upstream.transport.pid;
@@ -52,12 +48,7 @@ describe("MCP transport contracts", () => {
     );
 
     expect(report.result).toEqual({ ok: true, value: 1500 });
-    expect(report.calls).toHaveLength(1);
-    const call = report.calls[0];
-    if (call?.status !== "completed" || !call.result.ok)
-      throw new Error("Expected completed dataset response");
-
-    expect(Buffer.byteLength(call.result.json ?? "")).toBeGreaterThan(256 * 1024);
+    expect(report.calls).toEqual([{ callId: 1, name: "dataset", status: "completed" }]);
   });
 
   test("cancellation reaches the stdio handler and leaves the shared client usable", async () => {
@@ -160,7 +151,7 @@ describe("MCP transport contracts", () => {
     expect(JSON.stringify(report)).toBe(snapshot);
   });
 
-  test("keeps server protocol-error details out of guest errors and retained failures", async () => {
+  test("keeps server protocol-error details out of guest errors and call summaries", async () => {
     const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
     // Tool callbacks turn exceptions into public error data; this test needs a protocol failure.
     server.server.setRequestHandler("tools/call", () => {
@@ -181,7 +172,6 @@ describe("MCP transport contracts", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Host tool failed." } },
         },
       ],
     });
@@ -206,10 +196,7 @@ describe("MCP transport contracts", () => {
       ok: false,
       error: { kind: "script", message: "Host tool failed." },
     });
-    expect(report.calls[0]).toMatchObject({
-      status: "completed",
-      result: { ok: false, error: { message: "Host tool failed." } },
-    });
+    expect(report.calls).toEqual([{ callId: 1, name: "pending", status: "completed" }]);
   });
 
   test("the caller closes the actual child after discovery times out", async () => {

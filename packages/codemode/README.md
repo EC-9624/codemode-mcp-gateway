@@ -17,7 +17,7 @@ const sandbox = new CodeExecutor({
 const report = await sandbox.execute("return await tools.answer();");
 console.log(report.result); // { ok: true, value: 42 }
 console.log(report.calls);
-// [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }]
+// [{ callId: 1, name: "answer", status: "completed" }]
 ```
 
 Submit the body of an async function: top-level `await` and `return` work, but
@@ -55,9 +55,15 @@ Return `ToolResult.failure(message)` for a deliberately public, catchable guest
 rejection. Unexpected callback exceptions become `Host tool failed.` without
 exposing their messages or stacks. Failure-shaped values inside `success()` remain data.
 
-Call records stay in invocation order. A completed record retains the serialized
-response; an interrupted record explains why observation stopped. Neither proves
-external success or establishes that retrying is safe.
+Call records stay in invocation order and contain only `callId`, `name`, `status`,
+and an interruption `reason` when applicable. `completed` means the parent serialized
+a response before execution ended, including tool failures; it does not establish
+guest receipt, external success, or safe retry. Scripts receive complete tool values
+and public failures, but call records never retain their bodies or arguments.
+
+**API change:** completed calls no longer have a `result` field, including calls on
+`SandboxExecutionError`. To expose selected tool data, return it explicitly from the
+script through `report.result`. There is no response-retention setting.
 
 ### Cancellation and completion
 
@@ -93,8 +99,10 @@ deadline can cover startup, but is not a hard response-latency cap: synchronous
 host work can delay enforcement, and cleanup may finish after the deadline.
 See [exact boundaries](../../docs/reference.md#resource-limits).
 
-Workers provide thread separation, not OS/process isolation. Tool payloads,
-retained report bytes, and aggregate host/WASM memory are not bounded by guest limits.
+Workers provide thread separation, not OS/process isolation. Tool payloads, temporary
+serialization/transport allocations, and aggregate host/WASM memory are not bounded
+by guest limits. Call reports contain metadata only; the final guest result may
+include tool data the script deliberately returns.
 This is a working MVP, not a production-hardened sandbox.
 
 ## Tools and discovery

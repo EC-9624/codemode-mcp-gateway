@@ -166,17 +166,17 @@ describe("agent-facing MCP server", () => {
     expect(executions).toBe(0);
   });
 
-  test("projects completed calls without retaining tool response bodies", async () => {
+  test("projects only public call fields from a custom executor", async () => {
+    const call = {
+      callId: 1,
+      name: "read",
+      status: "completed",
+      privateBody: "private payload",
+    } as const;
+
     const report = {
       result: { ok: true, value: 42 },
-      calls: [
-        {
-          callId: 1,
-          name: "read",
-          status: "completed",
-          result: { ok: true, json: '{"retained":"private payload"}' },
-        },
-      ],
+      calls: [call],
     } satisfies ExecutionReport;
 
     await using agent = await connectMcp(createCodemodeServer({ execute: async () => report }));
@@ -266,7 +266,6 @@ describe("agent-facing MCP server", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: true, json: '"private payload"' },
         },
       ],
       new Error("Private worker credentials"),
@@ -293,7 +292,6 @@ describe("agent-facing MCP server", () => {
       result: { ok: false, error: { kind: "sandbox", message: "Sandbox execution failed." } },
       calls: [{ callId: 1, name: "read", status: "completed" }],
     });
-    expect(JSON.stringify(response)).not.toContain("private payload");
     expect(JSON.stringify(response)).not.toContain("credentials");
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.cause).toBe(failure);

@@ -3,7 +3,7 @@ import { isMainThread } from "node:worker_threads";
 import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor reports", () => {
-  test("records responses in invocation order even when replies finish in reverse order", async () => {
+  test("records call summaries in invocation order even when replies finish in reverse order", async () => {
     const second = Promise.withResolvers<void>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => second.resolve());
@@ -28,13 +28,13 @@ describe("CodeExecutor reports", () => {
     expect(report).toEqual({
       result: { ok: true, value: [1, 2] },
       calls: [
-        { callId: 1, name: "read", status: "completed", result: { ok: true, json: "1" } },
-        { callId: 2, name: "read", status: "completed", result: { ok: true, json: "2" } },
+        { callId: 1, name: "read", status: "completed" },
+        { callId: 2, name: "read", status: "completed" },
       ],
     });
   });
 
-  test("serializes once on the main thread and retains detached public responses", async () => {
+  test("serializes once for the guest while keeping response bodies out of call summaries", async () => {
     let conversions = 0;
     const value = { nested: { amount: 42 } };
 
@@ -63,13 +63,12 @@ describe("CodeExecutor reports", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: true, json: '{"nested":{"amount":42}}' },
         },
       ],
     });
   });
 
-  test("keeps call IDs and responses separate across concurrent executions", async () => {
+  test("keeps call IDs and guest results separate across concurrent executions", async () => {
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     using cleanup = new DisposableStack();
@@ -97,16 +96,16 @@ describe("CodeExecutor reports", () => {
     expect(reports).toEqual([
       {
         result: { ok: true, value: 1 },
-        calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "1" } }],
+        calls: [{ callId: 1, name: "read", status: "completed" }],
       },
       {
         result: { ok: true, value: 2 },
-        calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "2" } }],
+        calls: [{ callId: 1, name: "read", status: "completed" }],
       },
     ]);
   });
 
-  test("retains undefined distinctly from null", async () => {
+  test("delivers undefined distinctly from null without retaining either response", async () => {
     const received: unknown[] = [];
 
     const report = await new CodeExecutor({
@@ -123,15 +122,13 @@ describe("CodeExecutor reports", () => {
     expect(report).toEqual({
       result: { ok: true, value: [true, null] },
       calls: [
-        { callId: 1, name: "echo", status: "completed", result: { ok: true, json: undefined } },
-        { callId: 2, name: "echo", status: "completed", result: { ok: true, json: "null" } },
+        { callId: 1, name: "echo", status: "completed" },
+        { callId: 2, name: "echo", status: "completed" },
       ],
     });
-    const call = report.calls[0];
-    if (call?.status === "completed") expect(Object.hasOwn(call.result, "json")).toBe(true);
   });
 
-  test("retains only public failure fields even when the guest catches the failure", async () => {
+  test("delivers only the public failure message to the guest and records completion without error bodies", async () => {
     const failure = {
       ok: false,
       error: { message: "Public failure", diagnostics: () => "Private details" },
@@ -151,13 +148,12 @@ describe("CodeExecutor reports", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Public failure" } },
         },
       ],
     });
   });
 
-  test("retains a generic response for thrown host errors without private details", async () => {
+  test("reports completion for a thrown host error while exposing only a generic guest error", async () => {
     const report = await new CodeExecutor({
       tools: {
         read: () => {
@@ -173,13 +169,12 @@ describe("CodeExecutor reports", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Host tool failed." } },
         },
       ],
     });
   });
 
-  test("retains the conversion failure response rather than an unserializable host value", async () => {
+  test("reports completion for an unserializable response and delivers its conversion error to the guest", async () => {
     const report = await new CodeExecutor({
       tools: {
         read: () => ToolResult.success(1n),
@@ -196,13 +191,12 @@ describe("CodeExecutor reports", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Tool result is not JSON-serializable." } },
         },
       ],
     });
   });
 
-  test("retains completed work and records cancellation for the interrupted call", async () => {
+  test("keeps completed call summaries and cancellation unchanged after a late response", async () => {
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
     const late = Promise.withResolvers<ToolResult>();
@@ -232,7 +226,6 @@ describe("CodeExecutor reports", () => {
           callId: 1,
           name: "create",
           status: "completed",
-          result: { ok: true, json: '{"id":"invoice-1"}' },
         },
         { callId: 2, name: "send", status: "interrupted", reason: "cancelled" },
       ],
@@ -255,7 +248,7 @@ describe("CodeExecutor reports", () => {
     expect(report).toEqual(expected);
   });
 
-  test("retains earlier responses and an unawaited pending call after a script throws", async () => {
+  test("keeps completed call summaries and marks an unawaited call interrupted after a script throws", async () => {
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
@@ -279,7 +272,7 @@ describe("CodeExecutor reports", () => {
     expect(report).toEqual({
       result: { ok: false, error: { kind: "script", message: "failed" } },
       calls: [
-        { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "done", status: "completed" },
         { callId: 2, name: "pending", status: "interrupted", reason: "script-error" },
       ],
     });
@@ -292,7 +285,7 @@ describe("CodeExecutor reports", () => {
     });
   });
 
-  test("retains earlier responses and a pending call after the guest deadline expires", async () => {
+  test("keeps completed call summaries and marks a pending call interrupted after the guest deadline", async () => {
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
@@ -316,7 +309,7 @@ describe("CodeExecutor reports", () => {
         error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
       },
       calls: [
-        { callId: 1, name: "done", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "done", status: "completed" },
         { callId: 2, name: "pending", status: "interrupted", reason: "timeout" },
       ],
     });

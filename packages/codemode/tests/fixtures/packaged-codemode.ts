@@ -17,7 +17,7 @@ const report: ExecutionReport = await sandbox.execute(
 
 deepEqual(report, {
   result: { ok: true, value: 42 },
-  calls: [{ callId: 1, name: "answer", status: "completed", result: { ok: true, json: "42" } }],
+  calls: [{ callId: 1, name: "answer", status: "completed" }],
 });
 deepEqual((await sandbox.execute("return typeof saved;")).result, { ok: true, value: "undefined" });
 deepEqual((await sandbox.execute('throw "before\\0after";')).result, {

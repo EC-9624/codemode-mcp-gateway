@@ -1,5 +1,4 @@
 import { type CallOutcome, type InterruptionReason } from "../types.ts";
-import { type SerializedToolResult } from "../tools.ts";
 
 type PendingCall = { readonly callId: number; readonly name: string; readonly status: "pending" };
 
@@ -14,13 +13,13 @@ export function createCallLog() {
 
       calls.set(callId, { callId, name, status: "pending" });
     },
-    complete(callId: number, result: SerializedToolResult) {
+    complete(callId: number) {
       if (snapshot !== undefined) return;
 
       const call = calls.get(callId);
       if (call === undefined) throw new Error("Cannot complete an undispatched sandbox call.");
 
-      calls.set(callId, { ...call, status: "completed", result });
+      calls.set(callId, { ...call, status: "completed" });
     },
     close(reason: InterruptionReason) {
       snapshot ??= [...calls.values()].map((call): CallOutcome => {

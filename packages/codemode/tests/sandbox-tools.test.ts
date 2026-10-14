@@ -84,9 +84,7 @@ describe("CodeExecutor tools", () => {
       release.resolve();
       expect(await completion).toEqual({
         result: { ok: true, value: scenario.value },
-        calls: [
-          { callId: 1, name: "write", status: "completed", result: { ok: true, json: undefined } },
-        ],
+        calls: [{ callId: 1, name: "write", status: "completed" }],
       });
       expect(completed).toBe(true);
     });
@@ -207,7 +205,7 @@ describe("CodeExecutor tools", () => {
     });
   });
 
-  test("reads an undefined tool result value once for guest delivery and retention", async () => {
+  test("reads an undefined tool result value once for guest delivery", async () => {
     let reads = 0;
 
     const report = await new CodeExecutor({
@@ -226,9 +224,7 @@ describe("CodeExecutor tools", () => {
 
     expect(report).toEqual({
       result: { ok: true, value: true },
-      calls: [
-        { callId: 1, name: "read", status: "completed", result: { ok: true, json: undefined } },
-      ],
+      calls: [{ callId: 1, name: "read", status: "completed" }],
     });
     expect(reads).toBe(1);
   });

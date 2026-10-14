@@ -12,7 +12,7 @@ import {
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("validated tools through CodeExecutor", () => {
-  test("rejects invalid input before implementation, retains the failure, and lets the guest recover", async () => {
+  test("rejects invalid input before implementation and lets the guest recover", async () => {
     const received: unknown[] = [];
 
     const read = defineTool({
@@ -45,9 +45,8 @@ describe("validated tools through CodeExecutor", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Invalid arguments: /id: Expected a number." } },
         },
-        { callId: 2, name: "read", status: "completed", result: { ok: true, json: '{"id":1}' } },
+        { callId: 2, name: "read", status: "completed" },
       ],
     });
   });
@@ -76,7 +75,6 @@ describe("validated tools through CodeExecutor", () => {
         callId: 1,
         name: "read",
         status: "completed",
-        result: { ok: false, error: { message: "Invalid arguments: Expected a number." } },
       },
     ]);
   });
@@ -365,7 +363,6 @@ describe("validated-tool failure boundaries", () => {
           callId: 1,
           name: "read",
           status: "completed",
-          result: { ok: false, error: { message: "Host tool failed." } },
         },
       ],
     });

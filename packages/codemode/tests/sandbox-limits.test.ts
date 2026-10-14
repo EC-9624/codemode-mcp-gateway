@@ -86,7 +86,7 @@ describe("source admission", () => {
 
     expect(accepted).toEqual({
       result: { ok: true, value: 42 },
-      calls: [{ callId: 1, name: "read", status: "completed", result: { ok: true, json: "42" } }],
+      calls: [{ callId: 1, name: "read", status: "completed" }],
     });
     expect(reads).toBe(1);
   });

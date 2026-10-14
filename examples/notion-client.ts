@@ -1,61 +1,302 @@
+import { spawn } from "node:child_process";
+import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { z } from "zod";
 
-const configuration = process.argv[2];
-const query = process.argv[3];
-const page = process.argv[4];
-if (configuration === undefined || query === undefined || query.trim() === "") {
-  console.error(
-    "Usage: bun run example:notion <configuration.json> <search query> [page URL or id]",
-  );
+const options = argumentsOf(process.argv.slice(2));
+if (!options.ok) {
+  console.error(options.message);
   process.exit(1);
 }
 
-const client = new Client({ name: "cmg-notion-smoke", version: "0.0.0" });
+const { configuration, query, page, marker, runs } = options.value;
 
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [
+const check = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("passed"),
+    summary: z.record(z.string(), z.union([z.number().nonnegative(), z.boolean()])),
+  }),
+  z.object({
+    status: z.literal("failed"),
+    kind: z.enum(["upstream", "validation"]),
+    message: z.string(),
+  }),
+]);
+
+const envelope = z.object({
+  result: z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), value: check }),
+    z.object({ ok: z.literal(false), error: z.object({ kind: z.string() }) }),
+  ]),
+});
+
+// Keep provider bodies in the guest. Only counts and validation outcomes leave it.
+const decoder = `
+  function invalid(message) { return { status: "failed", kind: "validation", message }; }
+  function decode(response) {
+    if (response.isError) return { status: "failed", kind: "upstream", message: "Notion returned a tool error." };
+    if (!Array.isArray(response.content) || response.content.length !== 1 || response.content[0].type !== "text") {
+      return invalid("Expected one Notion JSON text block.");
+    }
+    let value;
+    try { value = JSON.parse(response.content[0].text); }
+    catch { return invalid("Notion text was not JSON."); }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return invalid("Expected a Notion JSON object.");
+    return { status: "passed", value };
+  }
+  function pageId(value) {
+    if (typeof value !== "string") return undefined;
+    return value.replace(/-/g, "").match(/[a-f0-9]{32}/i)?.[0].toLowerCase();
+  }
+`;
+
+const steps = [
+  {
+    name: "discover",
+    code: `const toolsFound = await tools.searchTools({ query: "notion search" });
+      if (!Array.isArray(toolsFound) || !toolsFound.some(tool => tool.name === "notion-search")) {
+        return { status: "failed", kind: "validation", message: "Discovery did not include notion-search." };
+      }
+      return { status: "passed", summary: { toolsFound: toolsFound.length } };`,
+  },
+  ...["notion-search", ...(page === undefined ? [] : ["notion-fetch"])].map((name) => ({
+    name: `describe:${name}`,
+    code: `const description = await tools.describeTool({ name: ${JSON.stringify(name)} });
+      const field = ${JSON.stringify(name === "notion-search" ? "query" : "id")};
+      if (description?.name !== ${JSON.stringify(name)} || description.inputSchema?.type !== "object"
+        || description.inputSchema.properties?.[field]?.type !== "string"
+        || !description.inputSchema.required?.includes(field)) {
+        return { status: "failed", kind: "validation", message: "Required Notion input schema changed." };
+      }
+      return { status: "passed", summary: { schemaValidated: true } };`,
+  })),
+  {
+    name: "search",
+    code: `${decoder}
+      const response = await tools["notion-search"]({ query: ${JSON.stringify(query)}, page_size: 10, max_highlight_length: 0 });
+      const decoded = decode(response);
+      if (decoded.status === "failed") return decoded;
+      const value = decoded.value;
+      if (value.type !== "workspace_search" || !Array.isArray(value.results)
+        || !value.results.every(item => item !== null && typeof item === "object"
+          && typeof item.id === "string" && typeof item.title === "string" && typeof item.url === "string")) {
+        return invalid("Notion search result shape changed.");
+      }
+      const expectedPage = ${JSON.stringify(page ?? null)};
+      if (expectedPage !== null && !value.results.some(item => pageId(item.id) === pageId(expectedPage))) {
+        return invalid("Expected page was not in the first 10 search results. Use a more specific query.");
+      }
+      return { status: "passed", summary: { results: value.results.length, upstreamJsonCharacters: JSON.stringify(response).length } };`,
+  },
+];
+
+if (page !== undefined) {
+  steps.push({
+    name: "fetch",
+    code: `${decoder}
+      const response = await tools["notion-fetch"]({ id: ${JSON.stringify(page)} });
+      const decoded = decode(response);
+      if (decoded.status === "failed") return decoded;
+      const value = decoded.value;
+      if (typeof value.title !== "string" || typeof value.url !== "string" || typeof value.text !== "string") {
+        return invalid("Notion fetch result shape changed.");
+      }
+      if (pageId(value.url) !== pageId(${JSON.stringify(page)})) return invalid("Fetch returned a different page.");
+      if (value.text.length === 0) return invalid("Fetched page text was empty.");
+      const marker = ${JSON.stringify(marker ?? null)};
+      if (marker !== null && !value.text.includes(marker)) return invalid("Expected marker was absent from the fetched page.");
+      return { status: "passed", summary: { markerChecked: marker !== null, textCharacters: value.text.length, upstreamJsonCharacters: JSON.stringify(response).length } };`,
+  });
+}
+
+console.log(
+  JSON.stringify({
+    step: "environment",
+    bun: Bun.version,
+    platform: process.platform,
+    arch: process.arch,
+    runs,
+    fetchRequested: page !== undefined,
+    markerRequested: marker !== undefined,
+  }),
+);
+
+const started = performance.now();
+
+const child = spawn(
+  process.execPath,
+  [
     "--conditions=development",
     fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
     resolve(configuration),
   ],
-});
+  { stdio: ["pipe", "pipe", "inherit"] },
+);
 
+const closed = Promise.withResolvers<{ code: number | null; signal: NodeJS.Signals | null }>();
+child.once("close", (code, signal) => closed.resolve({ code, signal }));
+let spawnFailed = false;
+child.once("error", () => {
+  spawnFailed = true;
+});
+const client = new Client({ name: "cmg-notion-smoke", version: "0.0.0" });
+// Own the child directly: the SDK client transport can escalate to forced termination.
+const transport = new StdioServerTransport(child.stdout, child.stdin);
 await using cleanup = new AsyncDisposableStack();
-const closed = Promise.withResolvers<void>();
-transport.onclose = () => closed.resolve();
-const connecting = client.connect(transport, { timeout: 30_000 });
-const spawned = transport.pid !== null;
 cleanup.defer(async () => {
-  if (spawned) await closed.promise;
+  const stopping = performance.now();
+  const watchdog = setTimeout(() => child.kill("SIGKILL"), 10_000);
+  child.stdin.end();
+  const exit = await closed.promise;
+  clearTimeout(watchdog);
+  await client.close();
+  const passed = !spawnFailed && exit.code === 0 && exit.signal === null;
+  console.log(
+    JSON.stringify({
+      step: "shutdown",
+      status: passed ? "passed" : "failed",
+      elapsedMs: performance.now() - stopping,
+      ...exit,
+    }),
+  );
+  if (!passed) process.exitCode = 1;
 });
-cleanup.defer(() => transport.close());
-cleanup.defer(() => client.close());
-await connecting;
 
-const codes = [
-  'return (await tools.searchTools({ query: "notion search" })).map(tool => tool.name);',
-  'return (await tools.describeTool({ name: "notion-search" })).name;',
-  `const response = await tools["notion-search"]({ query: ${JSON.stringify(query)} });
-   if (response.isError) throw new Error("Notion search failed.");
-   return { contentBlocks: response.content.length };`,
-];
-
-if (page !== undefined) {
-  codes.push(`const response = await tools["notion-fetch"]({ id: ${JSON.stringify(page)} });
-    if (response.isError) throw new Error("Notion fetch failed.");
-    return { contentBlocks: response.content.length };`);
+try {
+  await client.connect(transport, { timeout: 30_000 });
+} catch {
+  console.log(
+    JSON.stringify({
+      step: "startup",
+      status: "failed",
+      kind: "transport",
+      message:
+        "Gateway initialization failed. See gateway diagnostics; if authorization is missing or rejected, run cmg login with this configuration.",
+    }),
+  );
+  process.exitCode = 1;
 }
 
-for (const code of codes) {
-  const response = await client.callTool({ name: "execute", arguments: { code } });
-  // Print compact verification results, not page contents or retained upstream bodies.
-  console.log(JSON.stringify(response.structuredContent));
-  if (response.isError) {
-    process.exitCode = 1;
-    break;
+if (process.exitCode !== 1) {
+  console.log(
+    JSON.stringify({ step: "startup", status: "passed", elapsedMs: performance.now() - started }),
+  );
+  for (let iteration = 1; iteration <= runs; iteration++) {
+    for (const step of steps) {
+      const passed = await runStep(step.name, step.code, iteration);
+      if (!passed) break;
+    }
+
+    if (process.exitCode === 1) break;
   }
+}
+
+async function runStep(step: string, code: string, iteration: number) {
+  const start = performance.now();
+  let response;
+  try {
+    response = await client.callTool({ name: "execute", arguments: { code } }, { timeout: 60_000 });
+  } catch {
+    console.log(
+      JSON.stringify({
+        step,
+        iteration,
+        status: "failed",
+        kind: "transport",
+        message: "MCP execution request failed.",
+      }),
+    );
+    process.exitCode = 1;
+
+    return false;
+  }
+
+  const parsed = envelope.safeParse(response.structuredContent);
+
+  const timing = {
+    elapsedMs: performance.now() - start,
+    responseJsonBytes: Buffer.byteLength(JSON.stringify(response), "utf8"),
+  };
+
+  if (!parsed.success) {
+    console.log(
+      JSON.stringify({
+        step,
+        iteration,
+        ...timing,
+        status: "failed",
+        kind: "validation",
+        message: "Gateway response shape changed.",
+      }),
+    );
+    process.exitCode = 1;
+
+    return false;
+  }
+
+  const result = parsed.data.result;
+  if (!result.ok || response.isError) {
+    console.log(
+      JSON.stringify({
+        step,
+        iteration,
+        ...timing,
+        status: "failed",
+        kind: "execution",
+        message: "Guest execution failed.",
+        executionKind: result.ok ? "protocol" : result.error.kind,
+      }),
+    );
+    process.exitCode = 1;
+
+    return false;
+  }
+
+  console.log(JSON.stringify({ step, iteration, ...timing, ...result.value }));
+  if (result.value.status === "failed") process.exitCode = 1;
+
+  return result.value.status === "passed";
+}
+
+function argumentsOf(args: string[]) {
+  const usage =
+    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>]";
+
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        page: { type: "string" },
+        expect: { type: "string" },
+        runs: { type: "string", default: "1" },
+      },
+    });
+  } catch {
+    return { ok: false, message: usage } as const;
+  }
+
+  const [configuration, query, legacyPage] = parsed.positionals;
+  const page = parsed.values.page ?? legacyPage;
+  const marker = parsed.values.expect;
+  const runs = Number(parsed.values.runs);
+  if (
+    !configuration ||
+    !query?.trim() ||
+    parsed.positionals.length > 3 ||
+    (legacyPage !== undefined && parsed.values.page !== undefined) ||
+    (page !== undefined && !page.replace(/-/g, "").match(/[a-f0-9]{32}/i)) ||
+    (marker !== undefined && (!marker.trim() || page === undefined)) ||
+    !Number.isInteger(runs) ||
+    runs < 1 ||
+    runs > 20
+  ) {
+    return { ok: false, message: usage } as const;
+  }
+
+  return { ok: true, value: { configuration, query, page, marker, runs } } as const;
 }

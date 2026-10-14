@@ -1,4 +1,4 @@
-import { type ExecutionReport, type InterruptionReason, type SandboxResult } from "@cmg/codemode";
+import { type CallOutcome, type ExecutionReport, type SandboxResult } from "@cmg/codemode";
 
 export type McpCatalogOptions = {
   /** Overall tool discovery deadline in milliseconds. Defaults to 15000. */
@@ -18,11 +18,8 @@ export type CodemodeServerOptions = {
   description?: string;
 };
 
-/** Compact observations: completed means a response was recorded, not external success. */
-export type CallSummary = {
-  callId: number;
-  name: string;
-} & ({ status: "completed" } | { status: "interrupted"; reason: InterruptionReason });
+/** The executor's metadata-only observations, also used at the MCP boundary. */
+export type CallSummary = CallOutcome;
 
 /** Agent-facing projection, emitted as both structured content and JSON text without tool bodies. */
 export type CodemodeResponse = {

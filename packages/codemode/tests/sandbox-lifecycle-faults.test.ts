@@ -183,7 +183,7 @@ describe("CodeExecutor outcome ownership", () => {
       new Error("Sandbox worker failed. Internal error details are not transferred."),
     );
     expect(error.calls).toEqual([
-      { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+      { callId: 1, name: "first", status: "completed" },
       { callId: 2, name: "wait", status: "interrupted", reason: "sandbox-error" },
     ]);
     expectNoExecutionListeners(worker, controller.signal);
@@ -262,7 +262,7 @@ describe("CodeExecutor outcome ownership", () => {
         error: { kind: "timeout", message: "Execution exceeded the 10000 ms total limit." },
       },
       calls: [
-        { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+        { callId: 1, name: "first", status: "completed" },
         { callId: 2, name: "wait", status: "interrupted", reason: "timeout" },
       ],
     });
@@ -370,7 +370,7 @@ describe("CodeExecutor outcome ownership", () => {
 
     expect(error.cause).toBe(cause);
     expect(error.calls).toEqual([
-      { callId: 1, name: "first", status: "completed", result: { ok: true, json: "42" } },
+      { callId: 1, name: "first", status: "completed" },
       { callId: 2, name: "wait", status: "interrupted", reason: "cancelled" },
     ]);
     expect(terminate).toHaveBeenCalledTimes(1);

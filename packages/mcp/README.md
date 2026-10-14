@@ -49,8 +49,8 @@ There are two different error signals:
   or handle it; returning that flag normally is still successful execution.
 - **Outer MCP `isError`:** set when the final `report.result.ok` is false.
 
-Completed call summaries omit retained tool bodies. They mean a response was
-recorded, not that the upstream operation succeeded. Executor rejections become
+Call summaries use the executor's metadata-only format. Completed means a response
+was serialized, not that the upstream operation succeeded. Executor rejections become
 the public error `{ kind: "sandbox", message: "Sandbox execution failed." }`.
 Original causes go only to the host SDK error hook; a throwing hook cannot replace
 the controlled response. `SandboxExecutionError(calls, cause)` preserves call
@@ -76,7 +76,8 @@ there is no automatic refresh or subscription to upstream changes.
 
 The server's `execute` tool accepts only `{ code: string }`. Limits stay in the supplied
 executor; request arguments cannot override them. This adapter adds no tool-payload
-or retained-response byte limit. See [schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
+byte limit. Scripts receive complete projected responses; call summaries contain no
+response bodies. See [schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
 
 ## How it works
 

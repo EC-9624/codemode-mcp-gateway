@@ -66,8 +66,8 @@ Two implementations agreeing does not establish that either one is correct.
   interface. Avoid repeating one shared validation rule across every caller and
   every possible combination of invalid fields.
 - Keep report assertions next to the scenario they describe: include empty calls
-  in the basic execution/pre-abort tests, and guest values plus retained public
-  responses in serialization/privacy tests.
+  in the basic execution/pre-abort tests, and full guest values plus metadata-only
+  call summaries in serialization/privacy tests.
 - MCP tests own strict execute inputs and response projection, using an injected
   executor with plain callbacks and counters rather than constructing a gateway.
   Injected reports test adapter behavior, not end-to-end execution. Gateway tests

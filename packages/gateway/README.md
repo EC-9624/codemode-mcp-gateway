@@ -50,13 +50,13 @@ that are not JavaScript identifiers. Local discovery calls share the execution b
 ## Results and failures
 
 The response is emitted as structured content and JSON text. It includes compact
-call summaries, not retained tool bodies. Upstream `isError` is data the script
+call summaries without tool bodies, matching the executor's report format. Upstream `isError` is data the script
 must inspect; outer MCP `isError` indicates that the final execution failed.
 
 Script errors, deadlines, cancellation, and execution limits appear in `result`.
 Infrastructure failures use a controlled `sandbox` error; private diagnostics stay
 host-side. Cancellation cannot roll back upstream side effects, and a completed
-summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-retained-calls).
+summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
 
 ## Configuration
 
@@ -120,6 +120,7 @@ From the repository root:
 ```sh
 bun run cmg login examples/notion.json
 bun run example:notion examples/notion.json "your test page" "optional-page-url-or-id"
+bun run example:notion examples/notion.json "your test page" --page "<page-url-or-id>" --expect "<known text>" --runs 3
 bun run cmg examples/notion.json
 bun run cmg logout examples/notion.json
 ```
@@ -182,12 +183,17 @@ Tool payloads and aggregate memory remain subject to the existing documented lim
 `logout` removes local credentials and registration details; it does **not** revoke
 the upstream grant. Revoke access in the provider's settings when necessary.
 The Notion smoke example performs read-only discovery/search and optional fetch,
-printing summaries rather than page bodies. Its tool names target Notion's current
-user-authorized server, not older workspace-owned catalogs.
+validating input schemas, provider response shapes, and expected page identity.
+`--expect` also checks a text marker; `--runs` accepts 1–20 sequential iterations.
+It prints JSON-line validation/timing summaries rather than page bodies, stops on
+failure with a nonzero exit, and checks natural gateway exit after EOF. Its tool
+names target Notion's current user-authorized server, not older workspace-owned
+catalogs. See the [measured baseline](../../README.md#real-upstream-validation-and-execution-baseline).
 
-Automated OAuth tests use synthetic servers and isolated stores. Live Notion and
-real OS credential-service validation require explicit interactive authorization
-and are not part of the default suite.
+Automated OAuth tests use synthetic servers and isolated stores. A live macOS
+login and subsequent Notion search/fetch workflow have been verified. Live runs
+require explicit interactive authorization and are not part of the default suite;
+`notion-example.test.ts` checks the runner against synthetic provider responses.
 
 The implementation follows the login workflow: prepare an authorization attempt,
 present its URL, await completion, then conditionally save the grant under a short lock.
@@ -275,8 +281,9 @@ build, invoke it as `cmg configuration.json`; dependencies are not bundled.
 One upstream, a startup catalog snapshot, and agent-facing stdio only. HTTP refers
 to the upstream connection, not remote agent hosting. There is no model loop,
 multi-upstream routing, persistence, or Node support. Cancellation cannot roll back
-upstream side effects. Real-upstream validation, performance measurement, and
-aggregate/payload resource hardening remain future work. Local OAuth serves one
+upstream side effects. A Notion validation run and sequential execution baseline
+are recorded; longer soak testing and aggregate/payload resource hardening remain
+future work. Local OAuth serves one
 OS user; team-member identity, hosted authentication, and shared credential management
 are not implemented.
 

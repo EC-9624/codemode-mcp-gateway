@@ -265,7 +265,7 @@ export class WorkerExecution {
       // Host getters/toJSON cannot be interrupted and may exhaust the parent budget.
       if (!this.checkRunning()) return;
 
-      this.calls.complete(call.callId, serialized);
+      this.calls.complete(call.callId);
       this.worker.postMessage({
         type: "tool-result",
         callId: call.callId,
