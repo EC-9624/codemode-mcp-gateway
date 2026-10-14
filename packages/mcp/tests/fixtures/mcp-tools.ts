@@ -32,32 +32,5 @@ export function createMcpServer() {
     }),
   );
 
-  server.registerTool("fail", { description: "Return an explicit public tool error" }, () => ({
-    content: [{ type: "text", text: "Synthetic tool failure." }],
-    isError: true,
-  }));
-
-  server.registerTool(
-    "wait",
-    {
-      description: "Wait for a duration, stopping cooperatively when cancelled",
-      inputSchema: z.object({ milliseconds: z.number().int().min(0).max(60_000) }),
-    },
-    async ({ milliseconds }, { mcpReq }) => {
-      mcpReq.signal.throwIfAborted();
-
-      using cleanup = new DisposableStack();
-      const completed = Promise.withResolvers<void>();
-      const abort = () => completed.reject(new Error("Synthetic wait cancelled."));
-      cleanup.defer(() => mcpReq.signal.removeEventListener("abort", abort));
-      mcpReq.signal.addEventListener("abort", abort, { once: true });
-      const timer = setTimeout(() => completed.resolve(), milliseconds);
-      cleanup.defer(() => clearTimeout(timer));
-      await completed.promise;
-
-      return { content: [{ type: "text", text: "Wait completed." }] };
-    },
-  );
-
   return server;
 }

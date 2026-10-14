@@ -4,8 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { createMcpServer } from "../fixtures/mcp-tools.ts";
-import { type CredentialStore, type Credentials } from "../../src/auth/credentials.ts";
-import { AuthResult } from "../../src/auth/result.ts";
+import { type CredentialStore, type Credentials } from "codemode-mcp-gateway";
 
 export function memoryCredentials(initial?: Credentials) {
   let record = initial;
@@ -13,18 +12,18 @@ export function memoryCredentials(initial?: Credentials) {
 
   const store = {
     async load() {
-      return AuthResult.success(record);
+      return { ok: true, value: structuredClone(record) };
     },
     async save(value) {
-      record = value;
+      record = structuredClone(value);
       writes++;
 
-      return AuthResult.success(undefined);
+      return { ok: true, value: undefined };
     },
     async clear() {
       record = undefined;
 
-      return AuthResult.success(undefined);
+      return { ok: true, value: undefined };
     },
   } satisfies CredentialStore;
 
@@ -45,8 +44,9 @@ export async function oauthFixture(
     auth?: (request: Request) => Promise<Response | undefined>;
     refresh?: (fields: URLSearchParams) => Promise<Response | undefined>;
     deny?: boolean;
+    challenge?: boolean;
     mcp?: (request: Request) => Promise<Response | undefined>;
-    unauthorized?: () => void;
+    unauthorized?: (request: Request) => void | Promise<void>;
   } = {},
 ) {
   await using setup = new AsyncDisposableStack();
@@ -75,7 +75,10 @@ export async function oauthFixture(
         if (intercepted !== undefined) return intercepted;
       }
 
-      if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+      if (
+        url.pathname === "/metadata" ||
+        url.pathname.startsWith("/.well-known/oauth-protected-resource")
+      ) {
         return Response.json({
           resource: new URL("/mcp", listener.url).href,
           authorization_servers: [listener.url.href],
@@ -93,7 +96,7 @@ export async function oauthFixture(
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
           authorization_response_iss_parameter_supported: true,
-          scopes_supported: ["read", "offline_access"],
+          scopes_supported: ["read", "write", "offline_access"],
         });
       }
 
@@ -173,12 +176,14 @@ export async function oauthFixture(
           rejectAccess ||
           request.headers.get("authorization") !== `Bearer access-${generation}`
         ) {
-          options.unauthorized?.();
+          await options.unauthorized?.(request);
+
+          if (options.challenge === false) return new Response(null, { status: 405 });
 
           return new Response("private resource detail", {
             status: 401,
             headers: {
-              "WWW-Authenticate": `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource", listener.url).href}"`,
+              "WWW-Authenticate": `Bearer resource_metadata="${new URL("/metadata", listener.url).href}"`,
             },
           });
         }

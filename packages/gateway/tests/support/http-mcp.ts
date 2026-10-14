@@ -1,13 +1,12 @@
 import {
   WebStandardStreamableHTTPServerTransport,
   type McpServer,
-  type Server,
 } from "@modelcontextprotocol/server";
 
 /** A sessionful HTTP upstream on a loopback port, owned by one test. */
 export async function httpMcp(
-  server: McpServer | Server,
-  intercept?: (request: Request) => Response | undefined,
+  server: McpServer,
+  intercept?: (request: Request) => Response | undefined | Promise<Response | undefined>,
 ) {
   await using setup = new AsyncDisposableStack();
 
@@ -23,10 +22,10 @@ export async function httpMcp(
   const listener = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       requests.push(request);
 
-      return intercept?.(request) ?? transport.handleRequest(request);
+      return (await intercept?.(request)) ?? transport.handleRequest(request);
     },
   });
 

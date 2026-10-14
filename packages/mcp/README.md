@@ -117,7 +117,9 @@ bun run --cwd packages/mcp check
 The package is private and its name provisional. Bun 1.4.2 is the supported runtime;
 Node compatibility is not an acceptance requirement.
 
-This package owns catalog, schema, executor-adapter, and upstream lifecycle tests
-under `tests/`. Helpers and synthetic upstream fixtures stay package-local;
-integration tests use only codemode's public API.
+Tests under `tests/` exercise the public catalog and server modules. Catalog tests
+validate upstream schemas through discovered tools; server tests use real SDK
+requests and injected executors. A small transport suite checks real execution,
+cancellation, and child cleanup through public APIs. Helpers and synthetic
+upstream fixtures stay package-local.
 See [testing conventions](../../docs/testing.md).

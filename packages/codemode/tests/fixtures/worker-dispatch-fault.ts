@@ -1,6 +1,9 @@
-import { QuickJSContext } from "quickjs-emscripten";
+import { GuestCall } from "../../src/runtime/protocol.ts";
 
-QuickJSContext.prototype.getString = () => {
+const decode = GuestCall.decode.bind(GuestCall);
+GuestCall.decode = () => {
+  // A persistent VM fault could also fail final extraction after the guest catches it.
+  GuestCall.decode = decode;
   throw new Error("Private worker dispatch details");
 };
 

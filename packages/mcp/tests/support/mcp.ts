@@ -1,17 +1,12 @@
-import {
-  Client,
-  InMemoryTransport,
-  type ClientOptions,
-  type Tool,
-} from "@modelcontextprotocol/client";
-import { Server, type McpServer } from "@modelcontextprotocol/server";
+import { Client, InMemoryTransport, type Tool } from "@modelcontextprotocol/client";
+import { McpServer } from "@modelcontextprotocol/server";
 import { type ToolCatalog } from "@cmg/codemode";
 
 /** Own both ends, including partially completed setup. Each test owns its server handlers. */
-export async function connectMcp(server: Server | McpServer, options?: ClientOptions) {
+export async function connectMcp(server: McpServer) {
   await using cleanup = new AsyncDisposableStack();
   cleanup.defer(() => server.close());
-  const client = new Client({ name: "cmg-test", version: "0.0.0" }, options);
+  const client = new Client({ name: "cmg-test", version: "0.0.0" });
   cleanup.defer(() => client.close());
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -25,14 +20,14 @@ export async function connectMcp(server: Server | McpServer, options?: ClientOpt
   };
 }
 
-/** A server with the tools capability. Given `tools`, it answers `tools/list` with that listing. */
+/** Raw listings let the catalog validate upstream schemas without SDK registration normalizing them. */
 export function toolServer(tools?: Tool[]) {
-  const server = new Server(
+  const server = new McpServer(
     { name: "cmg-test", version: "0.0.0" },
     { capabilities: { tools: {} } },
   );
 
-  if (tools !== undefined) server.setRequestHandler("tools/list", () => ({ tools }));
+  if (tools !== undefined) server.server.setRequestHandler("tools/list", () => ({ tools }));
 
   return server;
 }

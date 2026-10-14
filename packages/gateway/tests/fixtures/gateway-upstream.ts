@@ -7,6 +7,8 @@ const mode = process.argv[2];
 
 serveStdio(() => {
   const server = createMcpServer();
+  // Startup stalls and malformed catalog responses need raw protocol handlers;
+  // ordinary tools below use the supported registration API.
   if (mode === "initialize") {
     server.server.setRequestHandler("initialize", async ({ params }, { mcpReq }) => {
       await waitForCancellation(mcpReq.signal);

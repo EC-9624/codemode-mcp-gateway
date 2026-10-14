@@ -5,18 +5,6 @@ const mode = process.argv[2];
 
 serveStdio(() => {
   const server = createMcpServer();
-  if (mode === "initialize") {
-    server.server.setRequestHandler("initialize", async ({ params }, { mcpReq }) => {
-      await waitForCancellation(mcpReq.signal);
-
-      return {
-        protocolVersion: params.protocolVersion,
-        capabilities: { tools: {} },
-        serverInfo: { name: "stalled", version: "1" },
-      };
-    });
-  }
-
   if (mode === "discovery") {
     server.server.setRequestHandler("tools/list", async (_request, { mcpReq }) => {
       await waitForCancellation(mcpReq.signal);

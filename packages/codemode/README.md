@@ -154,7 +154,17 @@ bun run --cwd packages/codemode test
 bun run --cwd packages/codemode check
 ```
 
-This package owns its execution, worker, VM, discovery, and tool-validation tests
-under `tests/`, including subprocess fixtures and ownership helpers.
+The unit is a public module: flat `tests/*.test.ts` exercise `CodemodeSandbox`,
+`ToolCatalog`, `defineTool`, and `validateTool` through `@cmg/codemode`. Sandbox
+subjects are split by contract (tools, limits, cancellation, reports), not by
+implementation layers. Tests use real QuickJS and workers.
+
+The private ownership/fault probes explain why their observations cannot be made
+through `execute()`: VM handles, original worker-local causes, independent admission,
+transport listeners, and controlled cleanup races. Process fixtures separately prove
+actual exit; `fixtures/packaged-codemode.ts` checks the installed public package.
+See the [test ownership and migration map](tests/README.md) for named surviving contracts
+and the reasons for each private exception.
+
 See [testing conventions](../../docs/testing.md) and the
 [behavioral reference](../../docs/reference.md) for detailed semantics and fault handling.

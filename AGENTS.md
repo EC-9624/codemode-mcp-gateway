@@ -165,18 +165,27 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 
 - Use `bun:test`.
 - Test actual implementation and observable semantics.
-- Prefer public contract tests with explicit expected results. Give each behavior
-  one primary owner; additional boundary tests must cover a distinct failure risk.
-  Test shared validation rules once, then verify boundary wiring and field-specific limits.
-- Each package owns its tests, helpers, and fixtures. Organize them by boundary:
-  `tests/unit/` for isolated logic, `tests/component/`
-  for focused subsystem/ownership tests, and `tests/integration/` for public
-  execution and process lifecycle. See `docs/testing.md` for placement and examples.
-  Tests may use another package's public API, never its internals or test files.
+- The unit is a cohesive public module. Start contract tests through the package's
+  supported interface, using package-root imports. Exercise internal functions through
+  their owning module rather than creating a suite for each helper or source file.
+- Keep explicit expected results and one primary owner per contract. Additional
+  boundary tests must protect a distinct failure risk. Prefer strengthening an existing
+  scenario to adding another case; use representative inputs rather than exhaustive matrices.
+- Each package owns a flat `tests/` directory organized by public subject, with
+  focused subject files when needed. Do not split suites into unit/component/integration
+  directories. Keep a small set of real process and packed-consumer checks for guarantees
+  that in-process tests cannot establish. See `docs/testing.md`.
+- Tests may use another package's public API, never its internals or test files.
+- Do not export implementation helpers solely for tests. Retain a private-boundary
+  probe only when it proves an important ownership or infrastructure guarantee that
+  cannot reasonably be observed through the public API; document that reason near the probe.
 - Keep one behavior per test, with visible setup, action, and assertions. Use named
   table cases for data variations; separate scenarios with different event sequences.
 - Share mechanical setup in `tests/support/`; keep scenario inputs, ordering, and
   expected outcomes visible in the test. Executable fixtures belong in `tests/fixtures/`.
+- Prefer DAMP over DRY: use explicit meaningful data and consistent local names;
+  accept repetition when a shared fixture would hide the contract. Avoid generic
+  builders, deeply nested assertions, and custom branching where an assertion suffices.
 - Name recovery tests as recovery tests; claims about disposal require assertions
   on the actual owned resources.
 - Assert listener lifetime and required ordering, rather than exact registration

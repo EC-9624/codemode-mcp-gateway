@@ -109,7 +109,9 @@ to JavaScript extensions during the build.
 
 ## Development
 
-Each package owns its `tests/`, support helpers, fixtures, and test/check commands:
+Each package owns its `tests/`, support helpers, fixtures, and test/check commands.
+Tests are organized by public module contract, with real implementations and a small
+set of process/distribution checks. See the [testing conventions](docs/testing.md).
 
 ```sh
 bun run check
