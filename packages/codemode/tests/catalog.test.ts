@@ -62,6 +62,30 @@ describe("ToolCatalog", () => {
     expect(matches.map((tool) => tool.name)).toEqual(["sendEmail"]);
   });
 
+  test("prioritizes action names over unrelated descriptions mentioning all query terms", () => {
+    const catalog = ToolCatalog.create({
+      "notion-update": {
+        description: "Update Notion pages after search and fetch",
+        execute: () => ToolResult.success(),
+      },
+      "notion-search": { description: "Find pages", execute: () => ToolResult.success() },
+      "notion-fetch": { description: "Read a page", execute: () => ToolResult.success() },
+      archive: {
+        description: "Search and fetch Notion archives",
+        execute: () => ToolResult.success(),
+      },
+    });
+
+    const matches = catalog.search("NOTION search fetch");
+
+    expect(matches.map((tool) => tool.name)).toEqual([
+      "notion-search",
+      "notion-fetch",
+      "notion-update",
+      "archive",
+    ]);
+  });
+
   test.each([
     ["blank", " "],
     ["unmatched", "unmatched"],
@@ -175,6 +199,34 @@ describe("discovery input validation", () => {
   });
 
   test.each([
+    { name: "zero limit", field: "limit", value: 0 },
+    { name: "negative limit", field: "limit", value: -1 },
+    { name: "fractional limit", field: "limit", value: 1.5 },
+    { name: "null limit", field: "limit", value: null },
+    { name: "string limit", field: "limit", value: "5" },
+    { name: "infinite limit", field: "limit", value: Infinity },
+    { name: "unsafe limit", field: "limit", value: Number.MAX_SAFE_INTEGER + 1 },
+    { name: "negative offset", field: "offset", value: -1 },
+    { name: "fractional offset", field: "offset", value: 0.5 },
+    { name: "null offset", field: "offset", value: null },
+    { name: "string offset", field: "offset", value: "0" },
+    { name: "NaN offset", field: "offset", value: NaN },
+    { name: "unsafe offset", field: "offset", value: Number.MAX_SAFE_INTEGER + 1 },
+  ])("rejects a $name", ({ field, value }) => {
+    const discovery = createDiscoveryTools(ToolCatalog.create({}));
+
+    const result = discovery.searchTools({ query: "records", [field]: value });
+
+    expect(result).toEqual(
+      ToolResult.failure(
+        field === "limit"
+          ? "searchTools limit must be a positive safe integer."
+          : "searchTools offset must be a non-negative safe integer.",
+      ),
+    );
+  });
+
+  test.each([
     ["null", null],
     ["numeric name", { name: 42 }],
   ] as const)("rejects %s description arguments", (_name, args) => {
@@ -189,6 +241,127 @@ describe("discovery input validation", () => {
 });
 
 describe("catalog discovery", () => {
+  test("pages all matches with five summaries by default and explicit completion", async () => {
+    const catalog = ToolCatalog.create(
+      Object.fromEntries(
+        ["search", "fetch", "list", "count", "export", "status", "delete"].map((name) => [
+          `records.${name}`,
+          {
+            description: `${name} records`,
+            inputSchema: { type: "object" },
+            execute: () => ToolResult.success(),
+          },
+        ]),
+      ),
+    );
+
+    const sandbox = new CodeExecutor({ tools: createDiscoveryTools(catalog) });
+
+    const first = await sandbox.execute('return await tools.searchTools({ query: "records" });');
+
+    const last = await sandbox.execute(
+      'return await tools.searchTools({ query: "records", offset: 5 });',
+    );
+
+    const beyond = await sandbox.execute(
+      'return await tools.searchTools({ query: "records", offset: 99 });',
+    );
+
+    const custom = await sandbox.execute(
+      'return await tools.searchTools({ query: "records", offset: 1, limit: 2 });',
+    );
+
+    const larger = await sandbox.execute(`
+      const page = await tools.searchTools({ query: "records", limit: 10 });
+      return { count: page.tools.length, total: page.total, nextOffset: page.nextOffset };
+    `);
+
+    expect(first.result).toEqual({
+      ok: true,
+      value: {
+        tools: [
+          { name: "records.search", description: "search records" },
+          { name: "records.fetch", description: "fetch records" },
+          { name: "records.list", description: "list records" },
+          { name: "records.count", description: "count records" },
+          { name: "records.export", description: "export records" },
+        ],
+        total: 7,
+        nextOffset: 5,
+      },
+    });
+    expect(last.result).toEqual({
+      ok: true,
+      value: {
+        tools: [
+          { name: "records.status", description: "status records" },
+          { name: "records.delete", description: "delete records" },
+        ],
+        total: 7,
+        nextOffset: null,
+      },
+    });
+    expect(beyond.result).toEqual({ ok: true, value: { tools: [], total: 7, nextOffset: null } });
+    expect(custom.result).toEqual({
+      ok: true,
+      value: {
+        tools: [
+          { name: "records.fetch", description: "fetch records" },
+          { name: "records.list", description: "list records" },
+        ],
+        total: 7,
+        nextOffset: 3,
+      },
+    });
+    expect(larger.result).toEqual({ ok: true, value: { count: 7, total: 7, nextOffset: null } });
+  });
+
+  test("keeps search small with large schemas while selected descriptions remain complete", async () => {
+    let invoked = 0;
+    const description = "  Search records.\n  " + "x".repeat(200) + " ";
+
+    const catalog = ToolCatalog.create({
+      "records.search": {
+        description,
+        inputSchema: { type: "object", description: "x".repeat(300_000) + "schema end" },
+        execute: () => {
+          invoked++;
+
+          return ToolResult.success();
+        },
+      },
+    });
+
+    const sandbox = new CodeExecutor({
+      tools: createDiscoveryTools(catalog),
+      maxOutputBytes: 1024,
+    });
+
+    const report = await sandbox.execute(`
+      const page = await tools.searchTools({ query: "records" });
+      const selected = await tools.describeTool({ name: page.tools[0].name });
+      return { page, description: selected.description, schemaLength: selected.inputSchema.description.length,
+        schemaEnd: selected.inputSchema.description.endsWith("schema end") };
+    `);
+
+    expect(report.result).toEqual({
+      ok: true,
+      value: {
+        page: {
+          tools: [
+            { name: "records.search", description: "Search records. " + "x".repeat(183) + "…" },
+          ],
+          total: 1,
+          nextOffset: null,
+        },
+        description,
+        schemaLength: 300_010,
+        schemaEnd: true,
+      },
+    });
+    expect(invoked).toBe(0);
+  });
+
   test("discovers descriptive schema metadata and invokes the selected named tool", async () => {
     const received: unknown[] = [];
 
@@ -214,10 +387,10 @@ describe("catalog discovery", () => {
 
     const report = await sandbox.execute(`
       const matches = await tools.searchTools({ query: "customer invoices" });
-      const description = await tools.describeTool({ name: matches[0].name });
+      const description = await tools.describeTool({ name: matches.tools[0].name });
       return {
         required: description.inputSchema.required,
-        invoices: await tools[matches[0].name]({ customerId: 123 }),
+        invoices: await tools[matches.tools[0].name]({ customerId: 123 }),
       };
     `);
 
@@ -247,7 +420,7 @@ describe("catalog discovery", () => {
 
     const result = discovery.searchTools({ query: "unmatched" });
 
-    expect(result).toEqual({ ok: true, value: [] });
+    expect(result).toEqual({ ok: true, value: { tools: [], total: 0, nextOffset: null } });
   });
 
   test("lets the app choose discovery names without replacing a catalog tool", async () => {
@@ -263,7 +436,7 @@ describe("catalog discovery", () => {
 
     const report = await sandbox.execute(`return {
       value: await tools.searchTools(),
-      names: (await tools.findTools({ query: "application" })).map(tool => tool.name),
+      names: (await tools.findTools({ query: "application" })).tools.map(tool => tool.name),
     };`);
 
     expect(report.result).toEqual({ ok: true, value: { value: 42, names: ["searchTools"] } });

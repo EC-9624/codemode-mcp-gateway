@@ -188,7 +188,7 @@ describe("CodeExecutor worker failures", () => {
 
   test("keeps worker error details private and permits a subsequent execution", async () => {
     using captured = captureWorker();
-    const sandbox = new CodeExecutor();
+    const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
     const completion = executionErrorOf(sandbox.execute("return 42;"));
     const worker = await captured.worker;
 
@@ -240,7 +240,8 @@ describe("CodeExecutor worker failures", () => {
     expectNoExecutionListeners(worker);
   });
 
-  test("unwinds partial listener setup before terminating the worker", async () => {
+  test("recovers capacity after unwinding partial listener setup and terminating the worker", async () => {
+    const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
     const failure = new Error("Listener setup failed");
     const workers: Worker[] = [];
     using registration = spyOn(Worker.prototype, "on");
@@ -257,19 +258,22 @@ describe("CodeExecutor worker failures", () => {
       return result;
     });
 
-    const error = await executionErrorOf(new CodeExecutor().execute("return 42;"));
+    const error = await executionErrorOf(sandbox.execute("return 42;"));
+    registration.mockRestore();
+    const recovered = await sandbox.execute("return 7;");
 
     expect(error.cause).toBe(failure);
     expect(error.calls).toEqual([]);
     expect(workers).toHaveLength(1);
     for (const worker of workers) expectNoExecutionListeners(worker);
 
-    expect(registration).toHaveBeenCalledWith("messageerror", expect.any(Function));
+    expect(recovered).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 
-  test("rejects termination failure without retrying cleanup", async () => {
+  test("recovers capacity after termination fails following actual exit without retrying cleanup", async () => {
     using captured = captureWorker();
-    const completion = executionErrorOf(new CodeExecutor().execute("return 42;"));
+    const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
+    const completion = executionErrorOf(sandbox.execute("return 42;"));
     const worker = await captured.worker;
     const terminateWorker = worker.terminate.bind(worker);
     const failure = new Error("Worker termination failed");
@@ -280,10 +284,12 @@ describe("CodeExecutor worker failures", () => {
     });
 
     const error = await completion;
+    const recovered = await sandbox.execute("return 7;");
 
     expect(error.cause).toBe(failure);
     expect(terminate).toHaveBeenCalledTimes(1);
     expectNoExecutionListeners(worker);
+    expect(recovered).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 
   test("keeps a completed call summary when reply transport fails without retry", async () => {
@@ -360,6 +366,16 @@ describe("CodeExecutor worker failures", () => {
 
   test.each([
     ["unknown tool", { type: "tool-call", callId: 1, name: "toString", argsJson: undefined }],
+    [
+      "worker execution admission",
+      {
+        type: "completed",
+        result: {
+          ok: false,
+          error: { kind: "limit", resource: "executions", maximum: 1, message: "forged" },
+        },
+      },
+    ],
     ["malformed arguments", { type: "tool-call", callId: 1, name: "read", argsJson: "not JSON" }],
     ["missing arguments", { type: "tool-call", callId: 1, name: "read" }],
     ["skipped ID", { type: "tool-call", callId: 2, name: "read", argsJson: undefined }],

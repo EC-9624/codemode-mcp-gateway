@@ -12,7 +12,7 @@ if (!options.ok) {
   process.exit(1);
 }
 
-const { configuration, query, page, marker, runs } = options.value;
+const { configuration, query, page, marker, runs, agents } = options.value;
 
 const check = z.discriminatedUnion("status", [
   z.object({
@@ -29,7 +29,10 @@ const check = z.discriminatedUnion("status", [
 const envelope = z.object({
   result: z.discriminatedUnion("ok", [
     z.object({ ok: z.literal(true), value: check }),
-    z.object({ ok: z.literal(false), error: z.object({ kind: z.string() }) }),
+    z.object({
+      ok: z.literal(false),
+      error: z.object({ kind: z.string(), resource: z.string().optional() }),
+    }),
   ]),
 });
 
@@ -57,10 +60,10 @@ const steps = [
   {
     name: "discover",
     code: `const toolsFound = await tools.searchTools({ query: "notion search" });
-      if (!Array.isArray(toolsFound) || !toolsFound.some(tool => tool.name === "notion-search")) {
+      if (!Array.isArray(toolsFound.tools) || !toolsFound.tools.some(tool => tool.name === "notion-search")) {
         return { status: "failed", kind: "validation", message: "Discovery did not include notion-search." };
       }
-      return { status: "passed", summary: { toolsFound: toolsFound.length } };`,
+      return { status: "passed", summary: { toolsFound: toolsFound.tools.length, totalMatches: toolsFound.total } };`,
   },
   ...["notion-search", ...(page === undefined ? [] : ["notion-fetch"])].map((name) => ({
     name: `describe:${name}`,
@@ -119,6 +122,7 @@ console.log(
     platform: process.platform,
     arch: process.arch,
     runs,
+    agents,
     fetchRequested: page !== undefined,
     markerRequested: marker !== undefined,
   }),
@@ -185,16 +189,21 @@ if (process.exitCode !== 1) {
     JSON.stringify({ step: "startup", status: "passed", elapsedMs: performance.now() - started }),
   );
   for (let iteration = 1; iteration <= runs; iteration++) {
-    for (const step of steps) {
-      const passed = await runStep(step.name, step.code, iteration);
-      if (!passed) break;
-    }
+    // Multiplex independent workflows over this connection so they share one executor.
+    await Promise.all(
+      Array.from({ length: agents }, async (_, index) => {
+        for (const step of steps) {
+          const passed = await runStep(step.name, step.code, iteration, index + 1);
+          if (!passed) break;
+        }
+      }),
+    );
 
     if (process.exitCode === 1) break;
   }
 }
 
-async function runStep(step: string, code: string, iteration: number) {
+async function runStep(step: string, code: string, iteration: number, agent: number) {
   const start = performance.now();
   let response;
   try {
@@ -204,6 +213,7 @@ async function runStep(step: string, code: string, iteration: number) {
       JSON.stringify({
         step,
         iteration,
+        agent,
         status: "failed",
         kind: "transport",
         message: "MCP execution request failed.",
@@ -226,6 +236,7 @@ async function runStep(step: string, code: string, iteration: number) {
       JSON.stringify({
         step,
         iteration,
+        agent,
         ...timing,
         status: "failed",
         kind: "validation",
@@ -243,11 +254,13 @@ async function runStep(step: string, code: string, iteration: number) {
       JSON.stringify({
         step,
         iteration,
+        agent,
         ...timing,
         status: "failed",
         kind: "execution",
         message: "Guest execution failed.",
         executionKind: result.ok ? "protocol" : result.error.kind,
+        executionResource: result.ok ? undefined : result.error.resource,
       }),
     );
     process.exitCode = 1;
@@ -255,7 +268,7 @@ async function runStep(step: string, code: string, iteration: number) {
     return false;
   }
 
-  console.log(JSON.stringify({ step, iteration, ...timing, ...result.value }));
+  console.log(JSON.stringify({ step, iteration, agent, ...timing, ...result.value }));
   if (result.value.status === "failed") process.exitCode = 1;
 
   return result.value.status === "passed";
@@ -263,7 +276,7 @@ async function runStep(step: string, code: string, iteration: number) {
 
 function argumentsOf(args: string[]) {
   const usage =
-    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>]";
+    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>]";
 
   let parsed;
   try {
@@ -274,6 +287,7 @@ function argumentsOf(args: string[]) {
         page: { type: "string" },
         expect: { type: "string" },
         runs: { type: "string", default: "1" },
+        agents: { type: "string", default: "1" },
       },
     });
   } catch {
@@ -284,6 +298,7 @@ function argumentsOf(args: string[]) {
   const page = parsed.values.page ?? legacyPage;
   const marker = parsed.values.expect;
   const runs = Number(parsed.values.runs);
+  const agents = Number(parsed.values.agents);
   if (
     !configuration ||
     !query?.trim() ||
@@ -293,10 +308,13 @@ function argumentsOf(args: string[]) {
     (marker !== undefined && (!marker.trim() || page === undefined)) ||
     !Number.isInteger(runs) ||
     runs < 1 ||
-    runs > 20
+    runs > 20 ||
+    !Number.isInteger(agents) ||
+    agents < 1 ||
+    agents > 8
   ) {
     return { ok: false, message: usage } as const;
   }
 
-  return { ok: true, value: { configuration, query, page, marker, runs } } as const;
+  return { ok: true, value: { configuration, query, page, marker, runs, agents } } as const;
 }

@@ -6,7 +6,7 @@ import { ToolCatalog, ToolResult } from "@cmg/codemode";
 import { z } from "zod";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { createMcpCatalog } from "@cmg/mcp";
-import { createServer } from "codemode-mcp-gateway";
+import { Configuration, createServer } from "codemode-mcp-gateway";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("MCP client through codemode to upstream MCP", () => {
@@ -52,6 +52,70 @@ describe("MCP client through codemode to upstream MCP", () => {
       },
       calls: [{ callId: 1, name: "searchTools", status: "completed" }],
     });
+  });
+
+  test("applies configured execution capacity across requests and admits a later request after completion", async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let calls = 0;
+
+    const catalog = ToolCatalog.create({
+      wait: {
+        description: "Wait",
+        execute: async () => {
+          calls++;
+          started.resolve();
+          await release.promise;
+
+          return ToolResult.success(42);
+        },
+      },
+    });
+
+    const config = Configuration.parse({
+      upstream: { command: "unused" },
+      sandbox: { maxConcurrentExecutions: 1 },
+    });
+
+    await using agent = await connectMcp(createServer(catalog, config.sandbox));
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve());
+
+    const first = agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return await tools.wait();" },
+    });
+
+    await started.promise;
+
+    const rejected = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return await tools.wait();" },
+    });
+
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "limit",
+          resource: "executions",
+          maximum: 1,
+          message: "Executor reached the 1 concurrent-execution limit.",
+        },
+      },
+      calls: [],
+    });
+    expect(calls).toBe(1);
+    release.resolve();
+    expect((await first).isError).toBe(false);
+
+    const recovered = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return 7;" },
+    });
+
+    expect(recovered.structuredContent).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 
   test("closing the composed server leaves its caller-owned upstream connection usable", async () => {
@@ -145,12 +209,23 @@ describe("MCP client through codemode to upstream MCP", () => {
       .object({
         result: z.object({
           ok: z.literal(true),
-          value: z.array(z.object({ name: z.string() })).min(1),
+          value: z.object({ tools: z.array(z.object({ name: z.string() })).min(1) }),
         }),
       })
       .parse(search.structuredContent);
 
-    const name = discovered.result.value[0]?.name;
+    expect(search.structuredContent).toEqual({
+      result: {
+        ok: true,
+        value: {
+          tools: [{ name: "add", description: "Add two numbers" }],
+          total: 1,
+          nextOffset: null,
+        },
+      },
+      calls: [{ callId: 1, name: "searchTools", status: "completed" }],
+    });
+    const name = discovered.result.value.tools[0]?.name;
     if (name === undefined) throw new Error("Expected a discovered tool");
 
     const description = await agent.client.callTool({

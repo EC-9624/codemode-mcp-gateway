@@ -11,4 +11,5 @@ export const SandboxLimits = {
   maxOutputBytes: { default: 256 * 1024, maximum: MAX_LIMIT },
   maxToolCalls: { default: 100, maximum: MAX_LIMIT },
   maxConcurrentToolCalls: { default: 10, maximum: MAX_LIMIT },
+  maxConcurrentExecutions: { default: 4, maximum: MAX_LIMIT },
 } as const;

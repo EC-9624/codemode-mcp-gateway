@@ -24,8 +24,8 @@ bindings synchronously, before any worker starts. Constructor registry failures
 throw `SandboxExecutionError` with no calls; invalid configuration throws `RangeError`.
 Tools and limits stay fixed for that instance. `sandbox.execute(code, { signal }?)`
 accepts only per-request cancellation; it does not read resource-limit overrides.
-Each run owns its resources and can overlap other runs; caller signals belong to
-individual runs, not the constructor.
+Each admitted run owns its resources and can overlap other runs up to the instance's
+`maxConcurrentExecutions` (default 4); caller signals belong to individual runs.
 The sandbox holds configuration rather than live workers between runs, so it needs
 no `close()` call. Every execution awaits its own worker cleanup.
 
@@ -94,7 +94,9 @@ copy of the source.
 ```text
 construction: apply defaults -> validate configuration -> snapshot tools
 execution: check pre-aborted cancellation -> measure source bytes
-  -> reject oversized source with no calls, or start worker with stored limits
+  -> reject oversized source with no calls
+  -> reserve execution capacity, or reject with limit/executions and no calls
+  -> start worker with stored limits
   -> worker validates startup data -> configure VM -> execute
 ```
 
@@ -108,6 +110,30 @@ sandbox setup from completing.
 These settings do not cap total host/WASM memory or enlarge the WASM build's
 physical stack. Source admission happens before the execution deadlines start;
 guest parsing remains covered by `timeoutMs` and the optional parent deadline.
+
+### Execution capacity
+
+`maxConcurrentExecutions` is a fixed positive integer from 1 to 2147483647, default
+4, counted independently by each executor. It is parent-owned policy and is not sent
+to or enforced by the guest. Reusing an executor shares capacity across requests;
+constructing another executor creates a separate budget.
+
+Admission happens synchronously after pre-aborted cancellation and source-size
+checks, before worker creation. An excess submission resolves to
+`{ result: { ok: false, error: { kind: "limit", resource: "executions", maximum,
+message: "Executor reached the N concurrent-execution limit." } }, calls: [] }`,
+with `N` replaced by the configured maximum. No queue, tool dispatch, or retry occurs.
+Only the rejected submission fails; already admitted executions continue.
+
+The reservation is released after worker cleanup settles, including guest failures,
+timeouts, cancellation, and infrastructure errors. A startup-construction failure
+also releases it. If termination rejects before actual worker exit, the execution
+still rejects, but its capacity is held until exit is observed. Cleanup settling
+after native exit still holds capacity until that cleanup promise settles.
+
+Capacity counts executions through worker cleanup, not uncooperative host callbacks
+that continue after cancellation. It does not impose a process-wide memory bound,
+span separate gateway instances, or replace the per-execution tool-call limits.
 
 ### Final output limit
 
@@ -388,18 +414,33 @@ const sandbox = new CodeExecutor({
 await sandbox.execute(
   `
   const matches = await tools.searchTools({ query: "answer" });
-  const name = matches[0].name;
+  const name = matches.tools[0].name;
   const description = await tools.describeTool({ name });
   return { description, value: await tools[name]() };
 `,
 );
 ```
 
-- Search matches whitespace-separated query terms against names and descriptions,
-  case-insensitively. More distinct matching terms rank first; ties retain catalog
-  order. Blank or unmatched host queries return an empty list.
-- Search and description lookup return names, descriptions, and any input schema,
-  never implementations or extra definition fields. Discovery does not invoke tools.
+- Search matches whitespace-separated query terms case-insensitively. Rank first
+  by distinct terms in the name, then by distinct terms in the combined name and
+  description; ties retain catalog order. Matching uses complete descriptions.
+  Blank or unmatched host queries return an empty list.
+- Host `catalog.search()` returns all matching full metadata, including input schemas.
+  `catalog.describe()` and guest `describeTool` return complete metadata for one name.
+  Neither exposes implementations or extra definition fields, or invokes a tool.
+- Guest `searchTools({ query, limit?, offset? })` returns
+  `{ tools: [{ name, description }], total, nextOffset }`. It defaults to five results
+  at offset zero. Description previews collapse whitespace and use at most 200
+  UTF-16 code units, ending in `…` when shortened. Search pages omit input schemas.
+  Select the needed tools, then call `describeTool` for their full input contracts.
+- `limit` must be a positive safe integer; `offset` must be a non-negative safe
+  integer. Repeat the same query with `offset: nextOffset` to browse further;
+  `nextOffset: null` marks completion. Beyond the last match, `tools` is empty and
+  `total` still reports the match count. Pagination is a discovery preference, not
+  a new constructor-owned resource limit.
+- Migration: `searchTools` previously returned an array of full metadata. Read
+  `page.tools` instead, use `describeTool` for schemas, and follow `nextOffset` when
+  more matches are needed. The host `ToolCatalog.search` return shape is unchanged.
 - Discovery callbacks are ordinary tools. Invalid requests and missing names
   produce deliberately public tool failures.
 - The app chooses discovery names, so it can expose `findTools: discovery.searchTools`
@@ -663,9 +704,10 @@ the generic MCP server. In CMG, discovery runs with the same host-call budget:
 return await tools.searchTools({ query: "customer invoices" });
 ```
 
-This returns an array of catalog descriptions with exact names and input schemas.
-An unmatched query returns an empty array; invalid discovery arguments are catchable
-tool failures. `tools.describeTool({ name })` looks up one upstream tool. The catalog
+This returns a page of exact names and short descriptions, without input schemas.
+An unmatched query returns `{ tools: [], total: 0, nextOffset: null }`; invalid
+discovery arguments are catchable tool failures. `tools.describeTool({ name })`
+returns the complete description and input schema for one upstream tool. The catalog
 is a startup snapshot; the helper tools themselves are described in `execute`'s
 description rather than added to the upstream search index.
 
@@ -973,7 +1015,7 @@ ordinary argument and result conversion still observes native guest semantics.
   `unknown` and return explicit success/failure unions. Structured cloning carries
   envelopes, JSON text/derived result data, resolved limits, and the shared interrupt buffer;
   no VM handles or functions cross threads. The buffer must contain one 32-bit word.
-- Only the parent classifies caller cancellation and source admission; workers
+- Only the parent classifies caller cancellation and source/execution admission; workers
   cannot report either outcome.
 - JSON text is validated before dispatch or guest settlement. The main thread
   parses tool arguments once while decoding.
@@ -988,8 +1030,9 @@ ordinary argument and result conversion still observes native guest semantics.
 
 - This is thread separation, not an OS or process sandbox. The trusted worker has
   Bun privileges; guest code runs only inside QuickJS.
-- Guest limits do not bound total host/WASM memory, aggregate concurrent executions,
-  or the full report's size. See [resource limits](#resource-limits) for exact coverage.
+- Guest limits do not bound total host/WASM memory or the full report's size.
+  Execution concurrency is bounded per executor, not across the process or separate
+  gateway instances. See [resource limits](#resource-limits) for exact coverage.
 - There is no worker pool: each execution pays worker startup and QuickJS loading.
 - Worker startup is covered only when `totalTimeoutMs` is supplied. Without it,
   a stuck worker that neither reports nor exits can leave execution pending.

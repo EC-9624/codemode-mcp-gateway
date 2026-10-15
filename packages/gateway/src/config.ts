@@ -77,6 +77,7 @@ export const Configuration = z.strictObject({
       maxOutputBytes: defaultLimit(SandboxLimits.maxOutputBytes),
       maxToolCalls: defaultLimit(SandboxLimits.maxToolCalls),
       maxConcurrentToolCalls: defaultLimit(SandboxLimits.maxConcurrentToolCalls),
+      maxConcurrentExecutions: defaultLimit(SandboxLimits.maxConcurrentExecutions),
     })
     .prefault({}),
 });

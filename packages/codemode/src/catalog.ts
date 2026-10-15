@@ -47,9 +47,16 @@ export type ToolDescription = {
   readonly inputSchema?: ToolSchema;
 };
 
+/** Compact discovery page; use describeTool for complete descriptions and input schemas. */
+export type ToolSearchPage = {
+  readonly tools: readonly Pick<ToolDescription, "name" | "description">[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+};
+
 export type ToolCatalog = {
   readonly tools: Readonly<Record<string, SandboxTool>>;
-  /** Rank case-insensitive name/description matches by distinct query terms; ties keep catalog order. */
+  /** Rank distinct case-insensitive name matches first, then name/description matches; stable ties. */
   search(query: string): ToolDescription[];
   /** Exact-name lookup; unknown names return undefined without invoking a tool. */
   describe(name: string): ToolDescription | undefined;
@@ -94,12 +101,17 @@ export const ToolCatalog = {
 
         return [...descriptions.values()]
           .map((tool) => {
-            const text = `${tool.name} ${tool.description}`.toLowerCase();
+            const name = tool.name.toLowerCase();
+            const text = `${name} ${tool.description.toLowerCase()}`;
 
-            return { tool, score: terms.filter((term) => text.includes(term)).length };
+            return {
+              tool,
+              nameScore: terms.filter((term) => name.includes(term)).length,
+              score: terms.filter((term) => text.includes(term)).length,
+            };
           })
           .filter((match) => match.score > 0)
-          .sort((a, b) => b.score - a.score)
+          .sort((a, b) => b.nameScore - a.nameScore || b.score - a.score)
           .map((match) => match.tool);
       },
       describe(name) {
@@ -109,7 +121,7 @@ export const ToolCatalog = {
   },
 };
 
-/** The app chooses names when exposing these callbacks, so catalog tool names are never reserved. */
+/** Search returns five previews by default; offset/limit page all matches. The app chooses helper names. */
 export function createDiscoveryTools(catalog: ToolCatalog) {
   return {
     searchTools: (args) => {
@@ -123,7 +135,35 @@ export function createDiscoveryTools(catalog: ToolCatalog) {
         return ToolResult.failure("searchTools expects a non-empty query string in { query }.");
       }
 
-      return ToolResult.success(catalog.search(args.query));
+      const limit = "limit" in args && args.limit !== undefined ? args.limit : 5;
+      const offset = "offset" in args && args.offset !== undefined ? args.offset : 0;
+      if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) {
+        return ToolResult.failure("searchTools limit must be a positive safe integer.");
+      }
+
+      if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) {
+        return ToolResult.failure("searchTools offset must be a non-negative safe integer.");
+      }
+
+      const matches = catalog.search(args.query);
+
+      const tools = matches.slice(offset, offset + limit).map((tool) => {
+        const description = tool.description.replace(/\s+/gu, " ").trim();
+
+        return {
+          name: tool.name,
+          description:
+            description.length > 200 ? description.slice(0, 199).toWellFormed() + "…" : description,
+        };
+      });
+
+      const nextOffset = offset + tools.length;
+
+      return ToolResult.success({
+        tools,
+        total: matches.length,
+        nextOffset: nextOffset < matches.length ? nextOffset : null,
+      } satisfies ToolSearchPage);
     },
     describeTool: (args) => {
       if (

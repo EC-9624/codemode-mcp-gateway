@@ -24,5 +24,6 @@ export {
   ToolCatalog,
   type ToolDefinition,
   type ToolDescription,
+  type ToolSearchPage,
   type ToolInputSchema,
 } from "./catalog.ts";

@@ -14,7 +14,11 @@ export type SandboxResult =
   | { ok: false; error: ToolCallLimit }
   | { ok: false; error: { kind: "limit"; resource: "output"; maximum: number; message: string } }
   | { ok: false; error: { kind: "cancelled"; message: string } }
-  | { ok: false; error: { kind: "limit"; resource: "source"; maximum: number; message: string } };
+  | { ok: false; error: { kind: "limit"; resource: "source"; maximum: number; message: string } }
+  | {
+      ok: false;
+      error: { kind: "limit"; resource: "executions"; maximum: number; message: string };
+    };
 
 /** Why execution stopped observing a dispatched call, not the tool's external outcome. */
 export type InterruptionReason =
@@ -73,4 +77,6 @@ export type SandboxOptions = {
   maxToolCalls?: number;
   /** Outstanding calls. Exceeding this limit stops execution. Defaults to 10. */
   maxConcurrentToolCalls?: number;
+  /** Active executions per executor, including worker cleanup. Defaults to 4; excess calls are rejected. */
+  maxConcurrentExecutions?: number;
 };

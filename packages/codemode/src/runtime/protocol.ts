@@ -57,10 +57,10 @@ function invalidGuestCall(): DecodeResult<never> {
   return { ok: false, message: "Sandbox guest sent an invalid tool call." };
 }
 
-/** Cancellation and source admission limits are classified by the parent, never the worker. */
+/** Cancellation and source/execution admission limits belong to the parent, never the worker. */
 export type GuestResult = Exclude<
   SandboxResult,
-  { error: { kind: "cancelled" } } | { error: { resource: "source" } }
+  { error: { kind: "cancelled" } } | { error: { resource: "source" | "executions" } }
 >;
 
 export type WorkerStartupData = {

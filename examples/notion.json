@@ -5,5 +5,9 @@
     "url": "https://mcp.notion.com/mcp",
     "auth": { "type": "oauth" }
   },
-  "sandbox": { "timeoutMs": 30000, "totalTimeoutMs": 45000 }
+  "sandbox": {
+    "timeoutMs": 30000,
+    "totalTimeoutMs": 45000,
+    "maxConcurrentExecutions": 8
+  }
 }

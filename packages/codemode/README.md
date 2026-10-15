@@ -23,7 +23,7 @@ console.log(report.calls);
 Submit the body of an async function: top-level `await` and `return` work, but
 modules and TypeScript do not. Each execution has a fresh environment; reuse the
 sandbox without calling `close()`. Tools and limits are fixed at construction,
-and executions may overlap.
+and up to four executions may overlap by default, including their worker cleanup.
 
 Requires Bun **1.4.2**. Import the package root; runtime deep imports are unsupported.
 Run [the complete example](../../examples/basic.ts) with `bun run example` from
@@ -44,7 +44,7 @@ console.log(failed.result);
 | `script`            | Invalid JavaScript, an uncaught exception, or a value that cannot cross JSON |
 | `timeout`           | Guest or total deadline expired                                              |
 | `cancelled`         | The caller's signal was aborted                                              |
-| `limit`             | Source, final output, total calls, or outstanding calls exceeded policy      |
+| `limit`             | Execution capacity, source, final output, or tool-call policy was exceeded   |
 
 Infrastructure failures reject with `SandboxExecutionError`, carrying host-only
 diagnostics and the final call observations. Invalid constructor limits throw
@@ -83,21 +83,53 @@ the sandbox awaits worker cleanup, not cancelled callbacks. It cannot roll back 
 
 ## Limits and boundaries
 
-| Option                   | Default  | Bounds                                                                        |
-| ------------------------ | -------- | ----------------------------------------------------------------------------- |
-| `timeoutMs`              | 1,000 ms | Source parsing through completion, after VM/bridge setup; includes host waits |
-| `totalTimeoutMs`         | Unset    | Worker construction through acceptance of completion                          |
-| `memoryLimitBytes`       | 64 MiB   | QuickJS guest heap                                                            |
-| `maxStackSizeBytes`      | 1 MiB    | QuickJS stack guard; maximum 4 MiB                                            |
-| `maxSourceBytes`         | 256 KiB  | Submitted body's UTF-8 bytes                                                  |
-| `maxOutputBytes`         | 256 KiB  | Final JSON value or script-error message, not tool payloads                   |
-| `maxToolCalls`           | 100      | Total admitted tool calls                                                     |
-| `maxConcurrentToolCalls` | 10       | Outstanding tool calls; excess calls are rejected, not queued                 |
+| Option                    | Default  | Bounds                                                                                    |
+| ------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `timeoutMs`               | 1,000 ms | Source parsing through completion, after VM/bridge setup; includes host waits             |
+| `totalTimeoutMs`          | Unset    | Worker construction through acceptance of completion                                      |
+| `memoryLimitBytes`        | 64 MiB   | QuickJS guest heap                                                                        |
+| `maxStackSizeBytes`       | 1 MiB    | QuickJS stack guard; maximum 4 MiB                                                        |
+| `maxSourceBytes`          | 256 KiB  | Submitted body's UTF-8 bytes                                                              |
+| `maxOutputBytes`          | 256 KiB  | Final JSON value or script-error message, not tool payloads                               |
+| `maxToolCalls`            | 100      | Total admitted tool calls                                                                 |
+| `maxConcurrentToolCalls`  | 10       | Outstanding tool calls; excess calls are rejected, not queued                             |
+| `maxConcurrentExecutions` | 4        | Active executions per executor, including worker cleanup; excess submissions are rejected |
 
 Limits must be positive integers; zero and infinity do not disable them. A total
 deadline can cover startup, but is not a hard response-latency cap: synchronous
 host work can delay enforcement, and cleanup may finish after the deadline.
 See [exact boundaries](../../docs/reference.md#resource-limits).
+
+### Execution capacity
+
+`maxConcurrentExecutions` belongs to each `CodeExecutor`, not to individual agents
+or the entire process. Pre-aborted and oversized-source submissions are handled
+before admission. At capacity, `execute()` immediately resolves with:
+
+```ts
+{
+  result: {
+    ok: false,
+    error: {
+      kind: "limit",
+      resource: "executions",
+      maximum: 4,
+      message: "Executor reached the 4 concurrent-execution limit.",
+    },
+  },
+  calls: [],
+}
+```
+
+No worker or host tool is started for that submission, and it is not queued or
+retried. Capacity is reserved before worker construction and held until cleanup
+settles. Construction failures release the reservation. If termination fails while
+the worker is still alive, the infrastructure error rejects as usual, but the slot
+stays occupied until actual worker exit. Cancellation does not wait for uncooperative
+host callbacks; those may outlive the worker and its slot.
+
+This is separate from `maxConcurrentToolCalls`, which applies inside each execution.
+With both defaults, four admitted executions can each have ten outstanding tool calls.
 
 Workers provide thread separation, not OS/process isolation. Tool payloads, temporary
 serialization/transport allocations, and aggregate host/WASM memory are not bounded
@@ -114,6 +146,12 @@ This is a working MVP, not a production-hardened sandbox.
   supplied `inputSchema` is descriptive; it does not validate calls by itself.
 - `createDiscoveryTools` supplies ordinary `searchTools` and `describeTool`
   callbacks. The application chooses whether and under which names to expose them.
+  `searchTools({ query, limit?, offset? })` returns `{ tools, total, nextOffset }`:
+  five name/short-description previews by default, without schemas. Read `page.tools`
+  rather than the previous metadata array. Use `describeTool({ name })` for a selected
+  tool's complete description/schema; follow `nextOffset` for additional matches.
+  Host `catalog.search()` remains an unpaged list of full metadata. Name matches rank
+  ahead of description-only matches, with stable ties.
 - `SandboxLimits` exposes shared defaults and upper bounds.
 
 See [validated tools](../../docs/reference.md#validated-tool-contracts) and

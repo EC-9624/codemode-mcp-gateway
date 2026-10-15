@@ -26,8 +26,13 @@ The agent sees only `execute({ code })`. Submit this async function body to sear
 return await tools.searchTools({ query: "add numbers" });
 ```
 
-Search returns exact names, descriptions, and input schemas. Inspect one with
-`tools.describeTool({ name: "add" })`, then call it and return the value you need:
+Search returns `{ tools, total, nextOffset }`, with five ranked name/description
+previews by default and no schemas. `tools.describeTool({ name: "add" })` returns
+the full description and input schema. Further pages use the same query with
+`offset: nextOffset`; null marks completion, and `limit` changes the page size.
+Agents can compose calls, paginate, and transform results as needed.
+
+For example, after inspecting `add`:
 
 ```js
 const response = await tools.add({ a: 2, b: 3 });
@@ -87,18 +92,26 @@ variables fail startup. This static-header mode does not perform OAuth or store 
 Optional `sandbox` settings configure the fixed QuickJS policy; app defaults use
 a 5-second guest deadline and 10-second total deadline. Other defaults come from codemode.
 
-For example, cap total tool calls without allowing request overrides:
+For example, configure execution capacity and total tool calls without request overrides:
 
 ```json
 {
   "upstream": { "command": "bun", "args": ["upstream.ts"] },
-  "sandbox": { "maxToolCalls": 20 }
+  "sandbox": { "maxConcurrentExecutions": 4, "maxToolCalls": 20 }
 }
 ```
 
 Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
 Startup has separate budgets: 5 seconds for the upstream handshake and 15 seconds
 for discovery. Configuration and the catalog do not reload during a run.
+
+Each `createServer()` owns one reusable executor. Its `maxConcurrentExecutions`
+defaults to 4 across all overlapping requests to that server instance, including
+worker cleanup. Excess requests receive `isError: true` with `result.error.resource:
+"executions"` and empty calls; they are not queued or retried. Separate server
+instances and gateway processes have separate limits. Protocol negotiation can
+create another server instance, so this is not a process-wide capacity limit.
+The per-execution `maxConcurrentToolCalls` limit remains independent.
 
 ### Local OAuth
 

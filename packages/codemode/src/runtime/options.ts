@@ -6,11 +6,13 @@ import {
   type ExecutionLimits,
 } from "./limits.ts";
 import { type SandboxOptions } from "../types.ts";
+import { SandboxLimits } from "../limits.ts";
 
 /** Fixed, validated configuration. Cancellation belongs to each execution. */
 export type ResolvedOptions = {
   readonly limits: ExecutionLimits;
   readonly totalTimeoutMs: number | undefined;
+  readonly maxConcurrentExecutions: number;
 };
 
 /** Apply built-in defaults and validate once, before reading tool bindings. */
@@ -40,7 +42,16 @@ export function resolveOptions(options: SandboxOptions): ResolvedOptions {
     throw new RangeError(`totalTimeoutMs must be an integer from 1 to ${MAX_LIMIT}.`);
   }
 
-  return { limits, totalTimeoutMs };
+  const maxConcurrentExecutions = orDefault(
+    options.maxConcurrentExecutions,
+    SandboxLimits.maxConcurrentExecutions.default,
+  );
+
+  if (!isPositiveInt(maxConcurrentExecutions)) {
+    throw new RangeError(`maxConcurrentExecutions must be an integer from 1 to ${MAX_LIMIT}.`);
+  }
+
+  return { limits, totalTimeoutMs, maxConcurrentExecutions };
 }
 
 /** Unlike `??`, keeps a JavaScript caller's null so validation rejects it. */

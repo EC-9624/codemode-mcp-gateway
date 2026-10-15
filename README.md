@@ -34,6 +34,9 @@ console.log(report.result); // { ok: true, value: 42 }
 
 Each execution gets a fresh worker and VM. Policy stays constructor-owned; request
 options contain cancellation only. Tools run on the main thread and cross JSON.
+Each executor admits up to four executions by default, including cleanup; configure
+`maxConcurrentExecutions` to change that limit. Excess submissions fail immediately
+with `limit / executions`, without starting a worker, queuing, or retrying.
 Expected guest failures resolve in the report; infrastructure failures reject.
 See the [codemode README](packages/codemode/README.md) for the public API, defaults,
 ownership, cancellation, and limitations.
@@ -52,11 +55,17 @@ discovery-helper collisions, and supplies a fixed-policy QuickJS executor.
 return await tools.searchTools({ query: "add numbers" });
 ```
 
-Then inspect an exact name with `tools.describeTool({ name: "add" })` and call it:
+Search returns `{ tools, total, nextOffset }`: five ranked name/short-description
+previews by default, without schemas. Pick a relevant name from `tools`; inspect it
+with `tools.describeTool({ name: "add" })` for its full description and schema, then call it:
 
 ```js
 return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;
 ```
+
+For additional matches, repeat the query with `offset: nextOffset` until it is null.
+`limit` changes the page size. Scripts using the previous array-shaped search result
+must now read `page.tools`; see the [discovery contract](docs/reference.md#catalog-and-discovery).
 
 Library and gateway reports contain the final result and compact call summaries.
 Scripts receive complete tool results; call summaries store no response bodies or
@@ -116,6 +125,9 @@ Run the read-only Notion workflow after explicit login:
 bun run cmg login examples/notion.json
 bun run example:notion examples/notion.json "specific search phrase" \
   --page "<page-url-or-id>" --expect "<known text on the page>" --runs 3
+# Overlap independent read-only workflows through the same gateway connection:
+bun run example:notion examples/notion.json "specific search phrase" \
+  --page "<page-url-or-id>" --expect "<known text on the page>" --agents 4 --runs 3
 bun run baseline 200
 ```
 
@@ -125,8 +137,16 @@ results, and the fetched page ID and text marker. Use a sufficiently specific qu
 Omit `--page` for discovery/search only; omit `--expect` to check fetch identity and
 nonempty text without a content marker. The existing positional page argument also
 works. `--runs` defaults to 1 and accepts 1–20 sequential iterations on one connection.
-Failures stop the run, exit nonzero, and identify the step without printing provider
-bodies. Login remains interactive; serving uses saved credentials.
+`--agents` defaults to 1 and accepts 1–8 overlapping workflows per iteration, sharing
+one executor. These are scripted workflows, not LLM agents. A failed workflow stops;
+its peers finish before the runner exits nonzero, without starting another iteration.
+Records identify the agent, step, and execution failure resource without printing
+provider bodies. Capacity rejection is a smoke failure and is never retried. Login
+remains interactive; serving uses saved credentials.
+
+`examples/notion.json` sets `maxConcurrentExecutions` to 8 for multi-agent usage,
+with the default 64-MiB guest heap and its existing 30-second guest / 45-second total
+deadlines. The library and gateway defaults remain 4 concurrent executions.
 
 Both commands emit JSON lines. Live `elapsedMs` measures each client request through
 response validation; startup measures process launch through MCP initialization.
@@ -263,6 +283,266 @@ Report-body retention has since been removed independently of this runtime findi
 Runtime-level investigation can use the WASM-memory reproduction; metadata-only
 reports do not fix growth already observable with scalar executions.
 
+### Shared-gateway concurrency diagnostic
+
+```sh
+bun run baseline:concurrency 5
+```
+
+This runs repeatable **simulated agent workflows**, not LLM agents or live-provider
+traffic. Independent workflows multiplex requests over one in-memory MCP client
+connection to one gateway/executor. A local MCP upstream exercises real discovery,
+schema validation, tool dispatch, worker execution, and result serialization.
+
+Each workflow discovers tools, describes their schemas, searches, then fetches two
+64-KiB documents in parallel and returns only IDs and character counts. Search waits
+150 ms, fetch waits 300 ms, and the client pauses 100 ms between execution requests.
+Every successful result and call summary is validated; unexpected tool, execution,
+transport, or validation failures fail the diagnostic. Capacity rejections are
+measured, end that workflow, and are never retried.
+
+The matrix uses 1, 2, 4, and 8 workflows with the default capacity of 4, plus an
+8-workflow comparison at capacity 8. Burst waves start together; staggered waves
+space workflow starts by 150 ms. Each wave finishes before the next starts, so this
+is a finite-wave diagnostic, not a sustained arrival-rate or fairness benchmark.
+
+Each scenario runs in a fresh child process, warms one complete workflow, and uses
+automatic GC. JSONL output includes workflow/request rejection rates, successful
+workflow throughput, per-step p50/p95/max latency, and RSS sampled every 5 ms with a
+one-second idle reading. RSS includes the gateway, client, and local upstream in
+that process; it is neither isolated gateway memory nor a guaranteed peak. Timing
+excludes connection setup and warmup; workflow timing includes client pauses but
+not the initial stagger. The default five waves provide descriptive samples, not
+capacity guarantees or production percentile estimates.
+
+#### Observed concurrency results
+
+Measured on Apple M3 Pro, Darwin 25.6.0, Bun 1.4.2 (`744846f84437`), five waves
+per local scenario. All 230 attempted workflows produced validated results or
+explicit capacity rejections: 199 completed and 31 were rejected. At 1, 2, and 4
+workflows per wave, capacity 4 produced no rejections under either cadence.
+
+| Workflows per wave | Cadence   | Capacity | Completed | Workflow rejection rate | Successful workflow p95 | Sampled peak RSS |
+| ------------------ | --------- | -------- | --------- | ----------------------- | ----------------------- | ---------------- |
+| 4                  | Burst     | 4        | 20/20     | 0%                      | 968 ms                  | 312 MiB          |
+| 8                  | Burst     | 4        | 20/40     | 50%                     | 964 ms                  | 310 MiB          |
+| 8                  | Burst     | 8        | 40/40     | 0%                      | 1,001 ms                | 451 MiB          |
+| 8                  | Staggered | 4        | 29/40     | 27.5%                   | 906 ms                  | 340 MiB          |
+| 8                  | Staggered | 8        | 40/40     | 0%                      | 918 ms                  | 380 MiB          |
+
+At capacity 4, all burst rejections occurred at discovery. Staggered rejections
+occurred at discovery (6) or description (5), showing that a workflow can start
+successfully and later lose admission. Request rejection rates were 20% and 8.3%,
+respectively; workflow rejection rates are higher because rejection ends a workflow.
+Burst rejection p95 was 2 ms. Successful burst throughput increased from 4.17 to
+7.99 workflows/second at capacity 8.
+
+RSS after warmup was 125–130 MiB in these scenarios and rose across waves; the
+one-second idle did not materially reduce it. Capacity 8 also completed more total
+work, so its higher RSS combines overlap and cumulative worker/allocation effects.
+These measurements do not isolate a per-slot memory cost.
+
+Read-only live Notion workflows then exercised saved credentials, discovery,
+schemas, known-page search, and fetch identity/content checks through one stdio
+gateway connection:
+
+| Overlapping workflows                           | Capacity | Observation                                                                                                    |
+| ----------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| 4, three iterations                             | 4        | 12/12 completed; search p50 742 ms, fetch p50 388 ms                                                           |
+| 8, one iteration                                | 4        | 4/8 completed; four rejected at discovery in 6–7 ms                                                            |
+| 8, initially three requested iterations         | 8        | First iteration: seven completed; one search omitted the known page from its first ten results; runner stopped |
+| 8, three iterations with a specific-title query | 8        | 24/24 completed; search p50/p95 898/2,643 ms, fetch p50/p95 395/691 ms                                         |
+
+The initial capacity-8 run had a search-validation failure, not a capacity rejection;
+its cause is unknown. Narrowing the query passed all subsequent checks, but does
+not explain that earlier provider result. Queries differed, so these live timings
+are not a controlled capacity comparison. Every gateway process exited naturally
+with code zero; the smoke runner exited nonzero for capacity or validation failures.
+No live-provider memory measurement or actual LLM-agent session was performed.
+
+**Conclusion:** four slots work for these four-workflow runs but materially reject
+eight-workflow traffic, including staggered traffic. Eight slots handled the tested
+local and specific-query live workflows, with a higher local memory footprint.
+This supports considering a higher setting for eight-way usage, not an unconditional
+default increase. The default remains 4; no additional limits were introduced.
+
+### Actual agent sessions through one gateway
+
+OpenCode V2 can multiplex sessions at the same location over one local MCP
+connection. Launching separate standalone OpenCode servers or using different
+locations may instead create independent gateways. Verify sharing rather than
+inferring it from overlapping agent runs.
+
+For an integration run, configure an isolated OpenCode directory with this server
+entry (replace the absolute paths):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "cmg": {
+        "type": "local",
+        "cwd": "/absolute/path/to/mcm",
+        "command": [
+          "bun",
+          "scripts/observe-gateway.ts",
+          "examples/notion.json",
+          "/absolute/path/to/gateway-metadata.jsonl"
+        ],
+        "codemode": false,
+        "protocol": "legacy"
+      }
+    }
+  }
+}
+```
+
+`codemode: false` exposes CMG's `execute` directly as `cmg_execute`, avoiding another
+Code Mode wrapper around the executor being measured. `protocol: legacy` uses one
+initialize handshake without a discovery-probe process. Use two sessions from the
+same directory and shared OpenCode service, with read-only document tasks. The
+agents should discover tool schemas and choose their own JavaScript calls.
+
+[`scripts/observe-gateway.ts`](scripts/observe-gateway.ts) forwards the original
+stdio bytes to one real gateway child. Its append-only local JSONL records contain
+observer/gateway PIDs, request IDs, OpenCode session IDs, in-flight request counts,
+elapsed request times, execution outcome categories, and tool-call counts. It does
+not record submitted code, tool arguments, document bodies, or credentials. The
+session IDs are correlation values, not authentication. Start with a fresh log or
+separate runs by their `started` records and PIDs.
+
+Two distinct session IDs under one gateway PID establish process sharing;
+overlapping request/response intervals establish concurrent gateway requests.
+These counts include transport and cleanup time, not just active VM time. The
+observer parses frame copies and writes logs synchronously, so timings include
+diagnostic overhead. It is an opt-in integration probe, not production telemetry.
+
+#### Observed agent integration
+
+Two actual OpenCode sessions using the configured default
+`opencode-go/gemini-4-argon-contributor` independently researched different sections
+of the same known Notion page. Both discovered schemas, generated their own
+JavaScript, retrieved the document, and produced research summaries. The observer
+recorded two distinct session IDs under one gateway PID, using capacity 8 and the
+64-MiB guest heap from `examples/notion.json`.
+
+The initial research produced nine successful executions and thirteen tool calls,
+with no capacity, timeout, or infrastructure failures. Requests took 49–857 ms.
+Despite simultaneous agent launches, these execution intervals did not overlap:
+model reasoning and generation time dominated their scheduling. Separate six-pass
+search/fetch consistency checks also passed all twelve combined checks but did not
+overlap (8.37 and 6.49 seconds of gateway request time).
+
+Extending each session's check to twelve sequential passes produced two overlapping
+execution requests for **8.343 seconds** under that same gateway PID. Both returned
+twelve successful identity/marker checks, with 24 tool calls each and request times
+of 13.53 and 20.50 seconds. No delays or retry logic were added. The difference in
+duration is not isolated to concurrency; the slower run included several roughly
+2.5-second upstream searches.
+
+Across research and both follow-ups, all **13 executions** succeeded, with **85
+observed tool calls** and no capacity rejections. Disconnecting the temporary MCP
+connection produced gateway exit code 0, no signal, and zero pending requests. The
+temporary OpenCode configuration was removed. This establishes two-session sharing
+and live overlap, not saturation capacity, long-duration stability, or multi-process
+sharing. The session transcripts contain research results; the observer log contains
+only correlation and outcome metadata.
+
+Both agents initially returned broad discovery results that OpenCode replaced with
+a saved-output notice showing zero inline lines. Both recovered by projecting tool
+names and short descriptions before inspecting individual schemas. This was a
+client display limit, not a CMG execution failure. It identifies discovery-output
+usability as a concrete follow-up; raising guest memory would not address it.
+
+#### Four-session follow-up
+
+Four fresh OpenCode sessions using the same model independently researched
+ownership, design, testing, and migration sections of the known page. All four
+session IDs appeared under one gateway PID at capacity 8. Each agent completed its
+research, but the initial phase produced **19 successful executions and four
+explicit limit failures** across 23 requests and 174 observed tool calls:
+
+- Two scripts described the full catalog sequentially and returned both search
+  results and descriptions, exceeding the 256-KiB final-output limit.
+- Two scripts described many tools using `Promise.all`, exceeding ten outstanding
+  calls within their individual executions. Discovery helpers count as tool calls.
+- All four recovered with narrower calls. OpenCode also spilled five successful
+  responses to saved files instead of displaying their single large JSON lines.
+
+These were per-execution discovery-strategy failures, not rejection by the
+eight-execution admission limit. Natural research traffic reached two simultaneous
+sessions for only 107 ms; request latency across successes and failures was
+39–3,323 ms, with p50 78 ms and p95 1,452 ms. The timing includes local discovery
+and immediate failures, so it is not a live-provider latency percentile.
+
+Each session then generated a single execution containing twelve sequential
+search/fetch passes, without rediscovery, artificial delays, or retries. All four
+requests overlapped for **10.886 seconds**, and all **48 passes** verified the
+known page identity and marker. Each execution made 24 upstream calls; gateway
+request times were 13.10, 15.18, 15.50, and 17.55 seconds.
+
+The complete four-session run recorded **27 executions: 23 successes and the four
+discovery limit failures**, with **270 observed tool calls**. There were no
+execution-capacity rejections, timeouts, or infrastructure failures. Disconnecting
+the temporary MCP server produced exit code 0, no signal, and zero pending
+requests; both gateway and observer processes exited, and the temporary config was
+removed. This is a finite four-way integration check at capacity 8, not a capacity
+ceiling or a sustained-load measurement.
+
+These results motivated a discovery change addressing the broad-catalog workflow:
+agents duplicated schemas already returned by search, exceeded per-execution
+limits, and then needed extra calls to recover. These observations do not justify
+raising every limit together.
+
+### Compact discovery
+
+Guest `searchTools` now returns a page of short name/description previews, with no
+input schemas. Five results are returned by default; `total` and `nextOffset` expose
+remaining matches, and callers can change `limit` or browse by `offset`. Descriptions
+collapse whitespace and truncate at 200 UTF-16 code units. `describeTool` retains the
+complete description and input schema for a selected name.
+
+Ranking prioritizes query terms in tool names before terms in descriptions, so
+action queries such as `notion search fetch` favor the relevant tools over unrelated
+tools whose long descriptions mention those actions. Stable ties and all matching
+tools remain available. Host `ToolCatalog.search()` retains its full-metadata list;
+only the guest helper changes to the page shape.
+
+The gateway's tool description states the API and runtime contract, leaving tool
+selection and composition to the agent. Contract tests cover name ranking, complete
+pagination, malformed page arguments, and a large schema that stays accessible
+through `describeTool` while the search preview fits a small output budget.
+
+Four fresh OpenCode sessions then repeated the same ownership/design/testing/
+migration research prompts, with the same probe-agent instructions and gateway
+limits. This rerun compared compact discovery and its initial workflow guidance
+against the previous behavior. It preceded the later wording-only simplification
+of the tool description to the API contract.
+
+| Observation                         | Previous four-session research | Compact-discovery rerun |
+| ----------------------------------- | ------------------------------ | ----------------------- |
+| Completed research tasks            | 4/4                            | 4/4                     |
+| Execution requests                  | 23                             | 21                      |
+| Successful executions               | 19                             | 21                      |
+| Discovery limit failures            | 4                              | 0                       |
+| Observed tool calls                 | 174                            | 40                      |
+| Discovery-only client output spills | 2                              | 0                       |
+
+All four session IDs shared one gateway PID; peak overlapping requests reached
+three. Successful request times were 27–1,281 ms (p50 412 ms, p95 1,198 ms). The pure
+five-result search report was 1,365 characters in two sessions. Some agents still
+described several previews rather than selecting exactly two, but none described
+the whole catalog or exceeded the existing call/output limits.
+
+Five successful responses containing document data still spilled to client-managed
+files, and agents narrowed their subsequent returns. Compact discovery addresses
+catalog overhead, not arbitrary document-return size. These finite runs show an
+improvement for these tasks, not a deterministic agent-behavior guarantee or a
+controlled latency benchmark. The updated Notion smoke example and a focused local
+concurrency diagnostic also passed. The observed gateway exited with code 0, no
+signal, and zero pending requests; its temporary OpenCode configuration was removed.
+
 ## Development
 
 Each package owns its `tests/`, support helpers, fixtures, and test/check commands.
@@ -320,7 +600,16 @@ Completed slices:
     WebAssembly-memory reproduction and source/compiled, GC, and exit-mode comparisons.
 23. Metadata-only call reports across the library, infrastructure errors, and gateway;
     complete tool responses remain available to scripts, with no retention option.
+24. Per-executor concurrent execution admission (default 4), gateway configuration,
+    immediate excess-request rejection, and capacity held through worker cleanup.
+25. Shared-gateway concurrency diagnostics with burst/staggered local workloads,
+    configurable overlapping Notion smoke workflows, and measured capacity tradeoffs.
+26. Two actual OpenCode agent sessions sharing one stdio gateway, verified live
+    request overlap, and an opt-in metadata-only stdio observer.
+27. Compact paged discovery, name-prioritized search, selected-tool schema lookup,
+    and updated agent guidance based on observed broad-catalog failures.
 
-Next: bounded concurrent executions, tool-payload bounds, runtime-level follow-up on the WASM-memory reproduction,
-and longer soak/fault testing based on integration evidence. Current guest limits
-do not bound aggregate concurrent memory or temporary tool-response allocations.
+Next: continue ordinary multi-agent use and longer runs before revisiting
+defaults. Additional limits remain paused. Runtime-level follow-up on the
+WASM-memory reproduction remains open. Current guest limits do not bound aggregate
+concurrent memory or temporary tool-response allocations.

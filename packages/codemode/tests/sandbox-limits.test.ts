@@ -37,6 +37,7 @@ describe("CodeExecutor limit configuration", () => {
     ["maxOutputBytes", 2147483647],
     ["maxToolCalls", 2147483647],
     ["maxConcurrentToolCalls", 2147483647],
+    ["maxConcurrentExecutions", 2147483647],
   ] as const) {
     test(`accepts ${name} at the minimum of 1`, () => {
       const options = { [name]: 1 };
@@ -65,6 +66,28 @@ describe("CodeExecutor limit configuration", () => {
 
     expect(() => new CodeExecutor(options)).toThrow(RangeError);
   });
+
+  test.each([null, "1", 0, -1, 1.5, NaN, Infinity])(
+    "rejects execution capacity %s before reading tools",
+    (value) => {
+      let reads = 0;
+
+      const options: SandboxOptions = {
+        get tools() {
+          reads++;
+
+          return {};
+        },
+      };
+
+      Object.assign(options, { maxConcurrentExecutions: value });
+
+      expect(() => new CodeExecutor(options)).toThrow(
+        new RangeError("maxConcurrentExecutions must be an integer from 1 to 2147483647."),
+      );
+      expect(reads).toBe(0);
+    },
+  );
 });
 
 describe("source admission", () => {

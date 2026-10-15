@@ -10,6 +10,7 @@ event sequence its own test. Support code owns mechanics, not scenario decisions
 | ---------------------------------- | ------------------------------------------------------------------------------------------- |
 | `sandbox.test.ts`                  | Function bodies, JSON conversion, exceptions, promises/thenables, recovery                  |
 | `sandbox-options.test.ts`          | Construction snapshots, fixed options, fresh and overlapping executions                     |
+| `sandbox-capacity.test.ts`         | Per-executor execution admission, cleanup-held capacity, cancellation and failure recovery  |
 | `sandbox-tools.test.ts`            | Host invocation, public/private failures, draining, argument/result conversion              |
 | `sandbox-reports.test.ts`          | Invocation order, metadata-only summaries, complete guest responses, interruption snapshots |
 | `sandbox-boundary.test.ts`         | Host API exclusion, lexical isolation, wrapper validation, mutable built-ins, exact names   |

@@ -111,7 +111,7 @@ console.log(
   await sandbox.execute(
     `
   const matches = await tools.searchTools({ query: "answer" });
-  return await tools[matches[0].name]();
+  return await tools[matches.tools[0].name]();
 `,
   ),
 );

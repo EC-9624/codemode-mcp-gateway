@@ -30,6 +30,7 @@ const release = Promise.withResolvers<ToolResult>();
 const controller = new AbortController();
 
 const cancellable = new CodeExecutor({
+  maxConcurrentExecutions: 1,
   tools: {
     wait: () => {
       started.resolve();
@@ -42,6 +43,18 @@ const cancellable = new CodeExecutor({
 try {
   const pending = cancellable.execute("return await tools.wait();", { signal: controller.signal });
   await started.promise;
+  deepEqual(await cancellable.execute("return 7;"), {
+    result: {
+      ok: false,
+      error: {
+        kind: "limit",
+        resource: "executions",
+        maximum: 1,
+        message: "Executor reached the 1 concurrent-execution limit.",
+      },
+    },
+    calls: [],
+  });
   controller.abort();
   const cancelled = await pending;
 

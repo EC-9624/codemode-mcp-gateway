@@ -15,6 +15,7 @@ describe("application configuration", () => {
       maxOutputBytes: 256 * 1024,
       maxToolCalls: 100,
       maxConcurrentToolCalls: 10,
+      maxConcurrentExecutions: 4,
     });
   });
 
@@ -25,10 +26,14 @@ describe("application configuration", () => {
       headers: { Authorization: "Bearer {env:TOKEN}" },
     } satisfies Configuration["upstream"];
 
-    const config = Configuration.parse({ upstream, sandbox: { maxToolCalls: 2 } });
+    const config = Configuration.parse({
+      upstream,
+      sandbox: { maxToolCalls: 2, maxConcurrentExecutions: 8 },
+    });
 
     expect(config.upstream).toEqual(upstream);
     expect(config.sandbox.maxToolCalls).toBe(2);
+    expect(config.sandbox.maxConcurrentExecutions).toBe(8);
   });
 
   test("accepts explicitly named OAuth connections without static bearer headers", () => {
@@ -99,14 +104,17 @@ describe("application configuration", () => {
     expect(Configuration.safeParse({ upstream }).success).toBe(false);
   });
 
-  test("rejects an invalid sandbox policy at the configuration boundary", () => {
-    expect(
-      Configuration.safeParse({
-        upstream: { command: "bun" },
-        sandbox: { maxToolCalls: 0 },
-      }).success,
-    ).toBe(false);
-  });
+  test.each(["maxToolCalls", "maxConcurrentExecutions"])(
+    "rejects invalid %s at the configuration boundary",
+    (name) => {
+      expect(
+        Configuration.safeParse({
+          upstream: { command: "bun" },
+          sandbox: { [name]: 0 },
+        }).success,
+      ).toBe(false);
+    },
+  );
 
   test("accepts a loopback HTTP endpoint for local OAuth development", () => {
     const upstream = {

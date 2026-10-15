@@ -11,6 +11,7 @@ import { type WorkerStartupData } from "./runtime/protocol.ts";
 export class CodeExecutor {
   private readonly tools: ReadonlyMap<string, SandboxTool>;
   private readonly options: ResolvedOptions;
+  private activeExecutions = 0;
 
   /**
    * Validate fixed limits before reading and snapshotting tool bindings. No worker starts here.
@@ -27,7 +28,7 @@ export class CodeExecutor {
 
   /**
    * Run an async function body: top-level await and return work. Admitted runs get a fresh
-   * worker and VM; pre-aborted or oversized submissions return without creating either.
+   * worker and VM; pre-aborted, oversized, or over-capacity submissions create neither.
    * Expected guest failures resolve in report.result; infrastructure failures reject with
    * SandboxExecutionError. Settlement waits for worker cleanup, not cancelled host tools.
    */
@@ -51,40 +52,70 @@ export class CodeExecutor {
       };
     }
 
-    const totalTimeoutMs = this.options.totalTimeoutMs;
-
-    const control: WorkerControl = {
-      ...(totalTimeoutMs === undefined
-        ? {}
-        : {
-            deadline: { timeoutMs: totalTimeoutMs, expiresAt: performance.now() + totalTimeoutMs },
-          }),
-      ...(signal === undefined ? {} : { signal }),
-      // Shared flag: 0 = continue, 1 = request interruption.
-      interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
-    };
-
-    let worker: Worker;
-    try {
-      worker = new Worker(
-        new URL(
-          import.meta.url.endsWith(".ts") ? "./runtime/worker.ts" : "./runtime/worker.js",
-          import.meta.url,
-        ),
-        {
-          workerData: {
-            type: "execute",
-            code,
-            toolNames: [...this.tools.keys()],
-            limits,
-            interruptBuffer: control.interrupt.buffer,
-          } satisfies WorkerStartupData,
+    const maximum = this.options.maxConcurrentExecutions;
+    if (this.activeExecutions >= maximum) {
+      return {
+        result: {
+          ok: false,
+          error: {
+            kind: "limit",
+            resource: "executions",
+            maximum,
+            message: `Executor reached the ${maximum} concurrent-execution limit.`,
+          },
         },
-      );
-    } catch (cause) {
-      throw new SandboxExecutionError([], cause);
+        calls: [],
+      };
     }
 
-    return await new WorkerExecution(worker, this.tools, control, limits).run();
+    this.activeExecutions++;
+    let worker: Worker | undefined;
+    try {
+      const totalTimeoutMs = this.options.totalTimeoutMs;
+
+      const control: WorkerControl = {
+        ...(totalTimeoutMs === undefined
+          ? {}
+          : {
+              deadline: {
+                timeoutMs: totalTimeoutMs,
+                expiresAt: performance.now() + totalTimeoutMs,
+              },
+            }),
+        ...(signal === undefined ? {} : { signal }),
+        // Shared flag: 0 = continue, 1 = request interruption.
+        interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+      };
+
+      try {
+        worker = new Worker(
+          new URL(
+            import.meta.url.endsWith(".ts") ? "./runtime/worker.ts" : "./runtime/worker.js",
+            import.meta.url,
+          ),
+          {
+            workerData: {
+              type: "execute",
+              code,
+              toolNames: [...this.tools.keys()],
+              limits,
+              interruptBuffer: control.interrupt.buffer,
+            } satisfies WorkerStartupData,
+          },
+        );
+      } catch (cause) {
+        throw new SandboxExecutionError([], cause);
+      }
+
+      return await new WorkerExecution(worker, this.tools, control, limits).run();
+    } finally {
+      // Failed termination can leave a live worker. Releasing on rejection would admit
+      // another worker while that one still consumes capacity.
+      if (worker !== undefined && worker.threadId !== -1) {
+        worker.once("exit", () => this.activeExecutions--);
+      } else {
+        this.activeExecutions--;
+      }
+    }
   }
 }
