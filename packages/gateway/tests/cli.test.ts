@@ -75,6 +75,68 @@ describe("cmg executable", () => {
     expect(result.stdout + result.stderr).not.toContain("missing-cmg-private-command");
   });
 
+  test("doctor rejects an implicit default alias", async () => {
+    await using upstream = await oauthFixture();
+
+    await using file = await configurationDocument({
+      mcp: {
+        servers: {
+          notes: {
+            type: "remote",
+            url: upstream.url,
+            headers: { Authorization: "Bearer access-0" },
+          },
+        },
+      },
+    });
+
+    const result = await runProcess([
+      cli,
+      "doctor",
+      "--config",
+      file.path,
+      "--server",
+      "default",
+      "--json",
+    ]);
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      error: { message: 'Unknown server "default".' },
+    });
+    expect(upstream.requests).toHaveLength(0);
+    expect(result.stderr).toBe("");
+  });
+
+  test("doctor connects only the explicitly selected named server", async () => {
+    await using file = await configurationDocument({
+      mcp: {
+        servers: {
+          paused: { type: "local", command: ["unused-cmg-command"], disabled: true },
+          unavailable: { type: "local", command: ["missing-cmg-command"] },
+        },
+      },
+    });
+
+    const result = await runProcess([
+      cli,
+      "doctor",
+      "--config",
+      file.path,
+      "--server",
+      "paused",
+      "--json",
+    ]);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      servers: [{ name: "paused", state: "disabled", toolCount: 0 }],
+    });
+    expect(result.stderr).toBe("");
+  });
+
   test("reports an unreadable configuration without writing protocol output", async () => {
     const path = fileURLToPath(new URL("./fixtures/missing-configuration.json", import.meta.url));
 

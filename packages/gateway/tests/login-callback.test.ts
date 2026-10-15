@@ -12,10 +12,9 @@ describe("login callback", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();
@@ -53,10 +52,9 @@ describe("login callback", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();
@@ -88,10 +86,9 @@ describe("login callback", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();
@@ -122,10 +119,9 @@ describe("login callback", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();

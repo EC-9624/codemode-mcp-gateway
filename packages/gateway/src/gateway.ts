@@ -12,7 +12,7 @@ import { type McpServer } from "@modelcontextprotocol/server";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { type Configuration, type ServerConfiguration } from "./config.ts";
 import { connectUpstream, UpstreamError } from "./upstream.ts";
-import { executionDescription } from "./composition.ts";
+import { executionInstructions } from "./instructions.ts";
 import { GatewayError } from "./errors.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import {
@@ -55,7 +55,6 @@ export type GatewayOptions = CredentialOptions & {
 
 /** Owns upstream lifetimes and one executor, supplying a catalog snapshot for each execution. */
 export class Gateway implements AsyncDisposable {
-  private readonly config: Configuration;
   private readonly shutdown = new AbortController();
   private readonly entries: Entry[];
   private readonly executor: CodeExecutor;
@@ -76,16 +75,11 @@ export class Gateway implements AsyncDisposable {
     private readonly directory: string,
     private readonly options: GatewayOptions = {},
   ) {
-    this.config = structuredClone(config);
-    this.executor = new CodeExecutor(this.config.sandbox);
+    const snapshot = structuredClone(config);
+    this.executor = new CodeExecutor(snapshot.sandbox);
 
-    const configured =
-      this.config.upstream === undefined
-        ? this.config.mcp.servers
-        : { default: { upstream: this.config.upstream, disabled: false } };
-
-    this.entries = Object.entries(configured).map(([name, entry]) => {
-      const oauth = oauthConnection(entry.upstream);
+    this.entries = Object.entries(snapshot.mcp.servers).map(([name, entry]) => {
+      const oauth = oauthConnection(name, entry);
 
       return {
         name,
@@ -122,15 +116,13 @@ export class Gateway implements AsyncDisposable {
     return this.entries.map((entry) => this.describe(entry));
   }
 
-  /** All MCP instances from this gateway share connections and execution admission. */
+  /** All MCP instances share connections and execution admission. */
   createServer(): McpServer {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
     const server = createCodemodeServer({
       execute: (code, options) => this.execute(code, options),
-      description:
-        executionDescription +
-        "\nTool names are server-qualified (server.original-name). searchTools also accepts server to filter matches and returns a servers availability snapshot. Failed authentication reports the named login command; recovery updates subsequent executions.",
+      description: executionInstructions,
     });
 
     this.servers.add(server);
@@ -215,7 +207,8 @@ export class Gateway implements AsyncDisposable {
       this.shutdown.signal.throwIfAborted();
       const store = entry.store;
       connection = await connectUpstream(
-        entry.config.upstream,
+        entry.name,
+        entry.config,
         this.directory,
         this.shutdown.signal,
         {
@@ -237,20 +230,22 @@ export class Gateway implements AsyncDisposable {
                 "Upstream connection closed or session expired; reconnection will be attempted automatically.",
             });
           },
-          authentication: (error) => {
-            // A pre-exchange read/lock failure leaves this session usable. Keeping
-            // it also preserves any concurrent refresh's terminal-failure latch.
-            if (error.recovery === "retry") return error.message;
+          authorization: {
+            failed: (error) => {
+              // A pre-exchange read/lock failure leaves this session usable. Keeping
+              // it also preserves any concurrent refresh's terminal-failure latch.
+              if (error.recovery === "retry") return;
 
-            if (
-              !this.shutdown.signal.aborted &&
-              entry.attempt === attempt &&
-              entry.state.kind === "connected"
-            ) {
-              this.authorizationFailed(entry, error);
-            }
-
-            return this.authMessage(entry, error);
+              if (
+                !this.shutdown.signal.aborted &&
+                entry.attempt === attempt &&
+                entry.state.kind === "connected"
+              ) {
+                this.authorizationFailed(entry, error);
+              }
+            },
+            message: (error) =>
+              error.recovery === "retry" ? error.message : this.authMessage(entry, error),
           },
         },
       );
@@ -287,20 +282,6 @@ export class Gateway implements AsyncDisposable {
         });
 
       return;
-    }
-
-    if (this.config.upstream !== undefined) {
-      for (const name of Object.keys(createDiscoveryTools(connection.catalog))) {
-        if (!Object.hasOwn(connection.catalog.tools, name)) continue;
-
-        await connection[Symbol.asyncDispose]();
-        this.unavailable(entry, {
-          kind: "discovery",
-          message: `Upstream tool ${JSON.stringify(name)} conflicts with a CMG discovery helper.`,
-        });
-
-        return;
-      }
     }
 
     const lease: Lease = { connection, users: 0, retired: false };
@@ -417,7 +398,7 @@ export class Gateway implements AsyncDisposable {
           const metadata = lease.connection.catalog.describe(original);
           if (metadata === undefined) throw new Error("Missing upstream catalog metadata.");
 
-          const name = this.config.upstream === undefined ? `${entry.name}.${original}` : original;
+          const name = `${entry.name}.${original}`;
 
           const definition = {
             description: metadata.description,
@@ -462,11 +443,7 @@ export class Gateway implements AsyncDisposable {
         const result = selected.searchTools(args);
         if (!result.ok) return result;
 
-        // Discovery is an ordinary tool boundary; its successful page is validated by its owner.
-        const page = result.value;
-        if (typeof page !== "object" || page === null) throw new Error("Invalid discovery page.");
-
-        return ToolResult.success({ ...page, servers });
+        return ToolResult.success({ ...result.value, servers });
       },
     };
 

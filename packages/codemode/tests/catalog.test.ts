@@ -1,5 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult, createDiscoveryTools, ToolCatalog } from "@cmg/codemode";
+import { describe, expect, expectTypeOf, test } from "bun:test";
+import {
+  CodeExecutor,
+  ToolResult,
+  createDiscoveryTools,
+  ToolCatalog,
+  type ToolSearchPage,
+} from "@cmg/codemode";
 
 describe("ToolCatalog", () => {
   test("describes tools without invoking or exposing their implementations", () => {
@@ -420,6 +426,7 @@ describe("catalog discovery", () => {
 
     const result = discovery.searchTools({ query: "unmatched" });
 
+    expectTypeOf<Extract<typeof result, { ok: true }>["value"]>().toMatchTypeOf<ToolSearchPage>();
     expect(result).toEqual({ ok: true, value: { tools: [], total: 0, nextOffset: null } });
   });
 

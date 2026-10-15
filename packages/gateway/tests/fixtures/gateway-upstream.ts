@@ -35,10 +35,6 @@ serveStdio(() => {
     }));
   }
 
-  if (mode === "collision") {
-    server.registerTool("searchTools", {}, () => ({ content: [] }));
-  }
-
   server.registerTool("pending", {}, async ({ mcpReq }) => {
     await waitForCancellation(mcpReq.signal);
 

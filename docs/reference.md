@@ -704,8 +704,8 @@ resource-limit overrides, fail MCP input validation before execution. Input is
 JavaScript source interpreted by the injected executor. The CMG gateway
 selects our async-function-body contract; a final `return` selects its result.
 
-The CMG gateway combines catalog tools with local discovery helpers, rejecting
-upstream helper-name collisions before serving. These helpers are not supplied by
+The CMG gateway qualifies upstream names and combines them with local discovery helpers.
+An upstream tool named `searchTools` remains callable as `server.searchTools`. These helpers are not supplied by
 the generic MCP server. In CMG, discovery runs with the same host-call budget:
 
 ```js
@@ -713,12 +713,12 @@ return await tools.searchTools({ query: "customer invoices" });
 ```
 
 This returns a page of exact names and short descriptions, without input schemas.
-An unmatched query returns `{ tools: [], total: 0, nextOffset: null }`; invalid
+An unmatched query returns `{ tools: [], total: 0, nextOffset: null, servers }`; invalid
 discovery arguments are catchable tool failures. `tools.describeTool({ name })`
 returns the complete description and input schema for one upstream tool. The catalog
 is a fixed snapshot for each execution; the helper tools themselves are described
-in `execute`'s description rather than added to the upstream search index. Named
-gateway configurations also accept a `server` search filter and return a `servers`
+in `execute`'s description rather than added to the upstream search index. Gateway
+discovery accepts a `server` search filter and returns a `servers`
 availability snapshot, including failed/unauthenticated entries with no tools.
 
 ### Responses
@@ -749,9 +749,8 @@ See the [gateway guide](../packages/gateway/README.md) for commands, configurati
 authentication headers, and the complete client → gateway → upstream example.
 
 The application validates its configuration and connects stdio or Streamable HTTP
-upstreams using the SDK's default legacy handshake. Legacy `upstream` configuration
-waits for one startup catalog. Named `mcp.servers` configuration exposes discovery
-while independent upstreams connect, retaining partial availability. Its stdio entry
+upstreams using the SDK's default legacy handshake. `mcp.servers` configuration exposes
+discovery while independent upstreams connect, retaining partial availability. Its stdio entry
 supports both legacy and modern MCP negotiation through `serveStdio`. The input
 transport starts while upstream setup is pending, so EOF also cancels initialization
 and discovery. EOF, SIGINT, and SIGTERM request shutdown. Cleanup awaits every
@@ -783,7 +782,7 @@ An established HTTP session returning 404 is retired and reinitialized for later
 executions without replaying the failed call. Doctor emits its final report only
 after connection cleanup succeeds; cleanup errors produce a single failure result.
 See the [gateway guide](../packages/gateway/README.md#named-upstreams-and-hot-recovery)
-for recovery timing, status, and legacy compatibility.
+for recovery timing and status.
 
 ## Architecture
 

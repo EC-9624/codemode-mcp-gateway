@@ -3,8 +3,8 @@ import { cpus, release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
-import { createMcpCatalog } from "@cmg/mcp";
-import { Configuration, createServer } from "codemode-mcp-gateway";
+import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
 import { z } from "zod";
 
 const waves = Number(process.argv[2] ?? 5);
@@ -100,7 +100,7 @@ if (childScenario !== undefined) {
       staggerMs: 150,
       rssSampleIntervalMs: 5,
       topology:
-        "simulated agents multiplexed over one in-memory MCP connection to one gateway; local MCP upstream",
+        "simulated agents multiplexed over one in-memory MCP adapter and executor; local MCP upstream",
     }),
   );
   for (const cadence of ["burst", "staggered"] as const) {
@@ -177,12 +177,17 @@ async function measure(scenario: Scenario) {
   await using provider = await connect(upstream);
   const catalog = await createMcpCatalog(provider.client);
 
-  const config = Configuration.parse({
-    upstream: { command: "unused-in-memory" },
-    sandbox: { maxConcurrentExecutions: scenario.limit },
+  const executor = new CodeExecutor({
+    tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
+    timeoutMs: 5000,
+    totalTimeoutMs: 10000,
+    maxConcurrentExecutions: scenario.limit,
   });
 
-  await using gateway = await connect(createServer(catalog, config.sandbox));
+  await using gateway = await connect(
+    createCodemodeServer({ execute: (code, options) => executor.execute(code, options) }),
+  );
+
   const samples: Sample[] = [];
   const workflows: Sample[] = [];
 

@@ -49,31 +49,29 @@ bun run cmg examples/cmg.json
 
 The `cmg` executable speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`.
 It supports named stdio/HTTP upstreams with partial availability and automatic
-credential recovery, alongside the existing single-upstream configuration.
+credential recovery.
 
 Clients can launch installed `cmg` without arguments. Configuration defaults to
 `$XDG_CONFIG_HOME/cmg/config.json` or `~/.config/cmg/config.json`; `--config <path>`
-and the existing positional path override it. `cmg check`, `cmg doctor`, and
+and a positional path override it. `cmg check`, `cmg doctor`, and
 `cmg login --server <name>` provide validation, diagnostics, and authorization.
 See [named upstreams and hot recovery](packages/gateway/README.md#named-upstreams-and-hot-recovery)
-and [`examples/multi.json`](examples/multi.json). Named tools use `server.original-name`;
-the single-upstream example below retains unqualified names.
+and [`examples/multi.json`](examples/multi.json). All upstream tools use `server.original-name`.
 
 ```js
 return await tools.searchTools({ query: "add numbers" });
 ```
 
-Search returns `{ tools, total, nextOffset }`: five ranked name/short-description
+Search returns `{ tools, total, nextOffset, servers }`: five ranked name/short-description
 previews by default, without schemas. Pick a relevant name from `tools`; inspect it
-with `tools.describeTool({ name: "add" })` for its full description and schema, then call it:
+with `tools.describeTool({ name: "math.add" })` for its full description and schema, then call it once the server is connected:
 
 ```js
-return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;
+return (await tools["math.add"]({ a: 2, b: 3 })).structuredContent.sum;
 ```
 
 For additional matches, repeat the query with `offset: nextOffset` until it is null.
-`limit` changes the page size. Scripts using the previous array-shaped search result
-must now read `page.tools`; see the [discovery contract](docs/reference.md#catalog-and-discovery).
+`limit` changes the page size; see the [discovery contract](docs/reference.md#catalog-and-discovery).
 
 Library and gateway reports contain the final result and compact call summaries.
 Scripts receive complete tool results; call summaries store no response bodies or
@@ -121,6 +119,9 @@ No package is published by these commands.
 
 For saved-credential Notion checks and an optional OpenCode session through an
 installed executable, follow the [external-consumer workflow](docs/installed-validation.md).
+The installed-agent follow-up passed using a preflighted shared-service location,
+with one discovery-query clarification; the guide records both the readiness issue
+and the successful checks.
 
 Builds emit ESM JavaScript and declarations into each package's `dist/`, including
 the codemode worker. Dependencies are not bundled. Export maps expose only package
@@ -146,8 +147,7 @@ The Notion runner validates discovery, required search/fetch input schemas, the
 provider's JSON text-block response shape, the expected page in the first ten search
 results, and the fetched page ID and text marker. Use a sufficiently specific query.
 Omit `--page` for discovery/search only; omit `--expect` to check fetch identity and
-nonempty text without a content marker. The existing positional page argument also
-works. `--runs` defaults to 1 and accepts 1–20 sequential iterations on one connection.
+nonempty text without a content marker. `--runs` defaults to 1 and accepts 1–20 sequential iterations on one connection.
 `--agents` defaults to 1 and accepts 1–8 overlapping workflows per iteration, sharing
 one executor. These are scripted workflows, not LLM agents. A failed workflow stops;
 its peers finish before the runner exits nonzero, without starting another iteration.
@@ -160,7 +160,7 @@ with the default 64-MiB guest heap and its existing 30-second guest / 45-second 
 deadlines. The library and gateway defaults remain 4 concurrent executions.
 
 Both commands emit JSON lines. Live `elapsedMs` measures each client request through
-response validation; startup measures process launch through MCP initialization.
+response validation; startup measures process launch through MCP initialization and upstream readiness.
 Shutdown measures EOF through observed child close, requiring exit code zero and no
 signal. A 10-second shutdown watchdog makes forced termination a failure.
 `responseJsonBytes` counts UTF-8 serialized agent-facing MCP JSON, including its text

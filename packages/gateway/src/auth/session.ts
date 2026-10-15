@@ -185,7 +185,7 @@ export class OAuthSession implements AsyncDisposable {
     ) {
       return AuthResult.failure(
         "required",
-        "The upstream OAuth binding changed. Restart the gateway after cmg login.",
+        "The upstream OAuth binding changed. A new connection is required.",
       );
     }
 

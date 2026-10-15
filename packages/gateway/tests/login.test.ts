@@ -26,10 +26,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -69,10 +68,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -111,10 +109,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     using read = spyOn(secrets, "get").mockResolvedValue(stored(upstream.credentials()));
@@ -142,10 +139,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     using read = spyOn(secrets, "get").mockResolvedValue(null);
@@ -177,10 +173,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -214,10 +209,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -256,10 +250,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -296,10 +289,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const started = Promise.withResolvers<void>();
@@ -339,10 +331,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -375,10 +366,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -433,10 +423,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -466,10 +455,9 @@ describe("login", () => {
     await using upstream = await oauthFixture({ deny: true, challenge: false });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -496,10 +484,9 @@ describe("login", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -542,10 +529,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: new URL("/mcp", server.url).href,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -601,10 +587,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: new URL("/mcp", server.url).href,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();
@@ -633,10 +618,9 @@ describe("login", () => {
     });
 
     await using config = await configuration({
-      id: "notes",
-      transport: "http",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth", scope: "read" },
+      oauth: { scope: "read" },
     });
 
     const memory = memoryCredentials();

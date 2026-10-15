@@ -21,7 +21,7 @@ Stdout is exclusively MCP traffic; diagnostics and upstream stderr use stderr.
 ## CLI and default configuration
 
 Once installed, clients can launch `cmg` without arguments. Configuration resolves
-from `--config <path>` (or the existing positional path), then
+from `--config <path>` (or a positional path), then
 `$XDG_CONFIG_HOME/cmg/config.json`, otherwise `~/.config/cmg/config.json`.
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
@@ -46,7 +46,7 @@ local credentials, not the upstream grant.
 
 Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
 failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
-A named gateway can remain running with failed upstreams; a failed doctor check
+The gateway remains running with failed upstreams; a failed doctor check
 returns 1. `--json` is accepted only by check/doctor so it cannot pollute MCP stdout.
 
 ## Named upstreams and hot recovery
@@ -74,8 +74,7 @@ array, optional `cwd`, and optional `environment`. Remote entries use an HTTP(S)
 `url`, optional header templates, and explicit `oauth: {}` (or `{ "scope": "read" }`)
 to enable OAuth. Omitted/false `oauth` uses an unauthenticated or static-header
 connection. Each entry accepts `disabled: true`. Relative local paths resolve from
-the config directory. OAuth storage identity is the server name plus canonical URL;
-using the same name as a legacy connection's `id` preserves its stored credentials.
+the config directory. OAuth storage identity is the server name plus canonical URL.
 
 Invalid configuration fails before connecting. Enabled upstreams initialize
 independently; the agent-facing server is available while they connect. Expected
@@ -88,7 +87,7 @@ error messages. Status is last-observed connection state, not an active health c
 return await tools.searchTools({ query: "search documents", server: "notion" });
 ```
 
-Named-mode search returns `{ tools, total, nextOffset, servers }`. The optional
+Search returns `{ tools, total, nextOffset, servers }`. The optional
 `server` filter selects one configured upstream; `servers` reports availability
 even when no tools match. Calls use exact qualified names, such as
 `tools["notion.notion-search"](args)` or `tools["math.add"]({ a: 2, b: 3 })`.
@@ -127,6 +126,11 @@ gateway use that executor's budget, held through worker cleanup. Separate gatewa
 and CMG processes have independent budgets. Config edits are not
 watched; credential recovery does not require a config reload or whole-server restart.
 
+Model-facing guidance lives in `src/instructions.ts`: discovery, schema inspection,
+exact-name invocation, result handling, and runtime limits. One description covers
+the gateway's capabilities. Live tool and
+server availability stays in discovery results rather than the static description.
+
 Shutdown aborts setup/recovery and active executions, awaits their cleanup, and
 closes owned connections. Remote session deletion is best-effort only when the
 transport has already closed or authorization is known unusable; local cleanup
@@ -134,8 +138,7 @@ still completes. Unexpected infrastructure/cleanup failures remain host failures
 
 [`examples/multi.json`](../../examples/multi.json) combines the synthetic math server
 and Notion. Run `bun run cmg doctor examples/multi.json` or point an MCP client at
-`bun run cmg examples/multi.json`. The old `upstream` format below retains its
-unqualified names and fail-fast startup. Mixing it with `mcp.servers` is rejected.
+`bun run cmg examples/multi.json`. Configuration accepts only `mcp.servers`.
 
 ### Verified interoperability
 
@@ -168,16 +171,16 @@ The agent sees only `execute({ code })`. Submit this async function body to sear
 return await tools.searchTools({ query: "add numbers" });
 ```
 
-Search returns `{ tools, total, nextOffset }`, with five ranked name/description
-previews by default and no schemas. `tools.describeTool({ name: "add" })` returns
+Search returns `{ tools, total, nextOffset, servers }`, with five ranked name/description
+previews by default and no schemas. `tools.describeTool({ name: "math.add" })` returns
 the full description and input schema. Further pages use the same query with
 `offset: nextOffset`; null marks completion, and `limit` changes the page size.
 Agents can compose calls, paginate, and transform results as needed.
 
-For example, after inspecting `add`:
+Wait until the selected server is connected, then inspect `math.add` and call it:
 
 ```js
-const response = await tools.add({ a: 2, b: 3 });
+const response = await tools["math.add"]({ a: 2, b: 3 });
 if (response.isError) return response.content;
 return response.structuredContent.sum;
 ```
@@ -187,12 +190,11 @@ For the included upstream, the response contains:
 ```json
 {
   "result": { "ok": true, "value": 5 },
-  "calls": [{ "callId": 1, "name": "add", "status": "completed" }]
+  "calls": [{ "callId": 1, "name": "math.add", "status": "completed" }]
 }
 ```
 
-In legacy mode, tool names are preserved exactly; use `tools["billing.listInvoices"]` for names
-that are not JavaScript identifiers. Local discovery calls share the execution budget.
+Use bracket notation for exact qualified names. Local discovery calls share the execution budget.
 
 ## Results and failures
 
@@ -205,32 +207,24 @@ Infrastructure failures use a controlled `sandbox` error; private diagnostics st
 host-side. Cancellation cannot roll back upstream side effects, and a completed
 summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
 
-## Legacy single-upstream configuration
-
-Stdio upstream:
-
-```json
-{ "upstream": { "transport": "stdio", "command": "bun", "args": ["upstream.ts"] } }
-```
-
-`cwd` defaults to the configuration file's directory; a supplied relative `cwd`
-resolves from there. `args` pass unchanged. Optional `env` augments SDK defaults.
-Command-only configurations without `transport` still select stdio.
-
-HTTP upstream:
+## Headers and execution policy
 
 ```json
 {
-  "upstream": {
-    "transport": "http",
-    "url": "https://example.com/mcp",
-    "headers": { "Authorization": "Bearer {env:CMG_UPSTREAM_TOKEN}" }
+  "mcp": {
+    "servers": {
+      "api": {
+        "type": "remote",
+        "url": "https://example.com/mcp",
+        "headers": { "Authorization": "Bearer {env:CMG_UPSTREAM_TOKEN}" }
+      }
+    }
   }
 }
 ```
 
 Header templates expand host environment variables before connecting. Missing
-variables fail startup. This static-header mode does not perform OAuth or store credentials.
+variables mark that server failed before contacting it. Static headers do not enable OAuth or store credentials.
 Optional `sandbox` settings configure the fixed QuickJS policy; app defaults use
 a 5-second guest deadline and 10-second total deadline. Other defaults come from codemode.
 
@@ -238,21 +232,18 @@ For example, configure execution capacity and total tool calls without request o
 
 ```json
 {
-  "upstream": { "command": "bun", "args": ["upstream.ts"] },
+  "mcp": { "servers": { "math": { "type": "local", "command": ["bun", "upstream.ts"] } } },
   "sandbox": { "maxConcurrentExecutions": 4, "maxToolCalls": 20 }
 }
 ```
 
 Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
 Startup has separate budgets: 5 seconds for the upstream handshake and 15 seconds
-for discovery. Legacy configuration and its startup catalog do not reload during a run.
+for discovery. Configuration is loaded once; recovery republishes catalog snapshots.
 
-Each legacy `createServer()` owns one reusable executor. Its `maxConcurrentExecutions`
-defaults to 4 across all overlapping requests to that server instance, including
+Each gateway's `maxConcurrentExecutions` defaults to 4 across all its MCP instances, including
 worker cleanup. Excess requests receive `isError: true` with `result.error.resource:
-"executions"` and empty calls; they are not queued or retried. Separate server
-instances and gateway processes have separate limits. Protocol negotiation can
-create another server instance, so this is not a process-wide capacity limit.
+"executions"` and empty calls; they are not queued or retried. Separate gateways have separate budgets.
 The per-execution `maxConcurrentToolCalls` limit remains independent.
 
 ### Local OAuth
@@ -261,11 +252,14 @@ OAuth is opt-in for an explicitly named HTTP connection:
 
 ```json
 {
-  "upstream": {
-    "id": "notion",
-    "transport": "http",
-    "url": "https://mcp.notion.com/mcp",
-    "auth": { "type": "oauth" }
+  "mcp": {
+    "servers": {
+      "notion": {
+        "type": "remote",
+        "url": "https://mcp.notion.com/mcp",
+        "oauth": {}
+      }
+    }
   }
 }
 ```
@@ -274,7 +268,7 @@ From the repository root:
 
 ```sh
 bun run cmg login examples/notion.json
-bun run example:notion examples/notion.json "your test page" "optional-page-url-or-id"
+bun run example:notion examples/notion.json "your test page"
 bun run example:notion examples/notion.json "your test page" --page "<page-url-or-id>" --expect "<known text>" --runs 3
 bun run cmg examples/notion.json
 bun run cmg logout examples/notion.json
@@ -287,7 +281,7 @@ cannot be interrupted. PKCE, callback state, and issuer validation
 protect the code exchange. Login uses the SDK's metadata, registration, and token
 helpers, not a Notion-specific OAuth implementation. Discovery probes the upstream
 without credentials for a `WWW-Authenticate` metadata URL, falling back to well-known
-discovery when none is advertised. Optional `auth.scope` requests
+discovery when none is advertised. Optional `oauth.scope` requests
 an explicit space-delimited scope; CMG does not infer a request for every advertised scope.
 
 Serving is noninteractive: it loads the current OS user's saved credentials and
@@ -297,10 +291,10 @@ the grant. Your upstream account and granted authorization determine access.
 
 Credentials and registration details use Bun's experimental `secrets` API (macOS
 Keychain or Linux libsecret); there is no plaintext fallback. The OS service may
-require unlocking or an access prompt. Connection id and canonical upstream URL
+require unlocking or an access prompt. Server name and canonical upstream URL
 select the entry; stored issuer/resource bindings are checked before refreshing.
 Registration's loopback redirect URI is reused, so its port must be available during
-later logins. Changing the id or URL selects a new entry; use the original configuration
+later logins. Changing the name or URL selects a new entry; use the original configuration
 to log out of the old entry.
 
 Multiple gateway processes can share the same connection and credentials. Ordinary
@@ -314,8 +308,7 @@ eligible for recovery after 20 seconds. Acquisition waits up to 25 seconds and i
 cancellable during serving/login. Lost ownership aborts auth requests and blocks
 further credential writes. This is an advisory heartbeat lock, not transactional
 fencing against an arbitrarily suspended process. The OS credential service must
-still be available on the host. Restart all older gateways when upgrading from the
-previous native lifetime-lock implementation; the two lock protocols must not mix.
+still be available on the host.
 
 Login locks registration setup and final persistence, but releases the lock during
 browser consent. If credentials change meanwhile (another login, logout, or refresh),
@@ -368,22 +361,20 @@ owns token normalization and OS-backed persistence. All are internal modules.
 ## Programmatic API
 
 ```ts
-import { ToolCatalog, ToolResult } from "@cmg/codemode";
-import { createServer } from "codemode-mcp-gateway";
+import { Configuration, Gateway } from "codemode-mcp-gateway";
 
-const catalog = ToolCatalog.create({
-  answer: { description: "Return the answer", execute: () => ToolResult.success(42) },
-});
-const server = createServer(catalog, { timeoutMs: 5_000 });
-// Connect an application-owned transport and serve requests here, then close the server.
-await server.close();
+await using gateway = new Gateway(
+  Configuration.parse({
+    mcp: { servers: { math: { type: "local", command: ["bun", "mcp-server.ts"] } } },
+  }),
+  "/path/to/config-directory",
+);
+await gateway.start();
+const server = gateway.createServer();
+// Connect an application-owned transport and serve requests within this scope.
 ```
 
-`createServer` composes a catalog and fixed sandbox policy without loading files
-or installing process listeners. The caller owns the transport and any external
-connections used by its catalog.
-
-For named connections, construct `new Gateway(Configuration.parse(input), directory,
+Construct `new Gateway(Configuration.parse(input), directory,
 options?)`, call `await gateway.start()`, and attach `gateway.createServer()` to an
 application-owned transport. `start()` waits for initial attempts; expected upstream
 failures are available from `gateway.status()`. Creating an MCP server before that
@@ -392,10 +383,10 @@ promise settles exposes connecting statuses. `options.onStatus` receives updates
 are also surfaced by `close()`. Close/dispose the gateway to stop maintenance,
 abort executions, and release all connections. Importing the package starts none
 of these activities. `ConfigurationInput` describes the JSON input; `Configuration`
-is the parsed form with named entries normalized to transport configurations.
+is the validated form with defaults applied. Local and remote entries keep the same shape.
 
 The public entry also exports `Configuration`, `resolveHeaders`, and
-`serve(configurationPath)`. Unlike `createServer`, `serve` owns the complete stdio
+`serve(configurationPath)`. `serve` owns the complete stdio
 process lifetime, including configuration loading and shutdown listeners. Importing
 the package alone starts neither path. See the [public exports](src/index.ts).
 
@@ -411,8 +402,8 @@ the connection binding. All processes
 sharing credentials must use the same lock directory. Imports perform no credential reads, browser launches, or
 process-listener registration.
 
-Legacy `serve` rejects with exported `AuthorizationError` for recognized authorization
-failures; named serving reports those per upstream. Its `failure` carries a controlled kind/message and optional private cause;
+Serving reports expected authorization failures per upstream. `AuthorizationError.failure`
+carries a controlled kind/message and optional private cause;
 do not serialize causes into MCP responses or diagnostic logs.
 
 ## How it works
@@ -425,8 +416,8 @@ agent code -> worker/guest -> host tool adapter -> upstream MCP
            <- processed result and compact call summaries
 ```
 
-Legacy composition rejects upstream names `searchTools` and `describeTool` rather than
-overwriting them. The MCP adapter borrows an executor; this package selects QuickJS
+Qualified upstream names cannot overwrite `searchTools` or `describeTool`.
+The MCP adapter borrows an executor; this package selects QuickJS
 and describes its actual environment to the agent.
 
 EOF, SIGINT, and SIGTERM cancel active executions and await worker cleanup before
@@ -436,7 +427,7 @@ request timeout. The agent-facing transport opens during upstream setup, so EOF
 can also cancel a stalled handshake or discovery.
 
 [`cli.ts`](src/cli.ts) is the executable entry; [`main.ts`](src/main.ts) handles
-arguments and exit status. [`composition.ts`](src/composition.ts) selects policy;
+arguments and exit status. [`gateway.ts`](src/gateway.ts) owns connections and the executor;
 [`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
@@ -449,8 +440,7 @@ tarball installation, saved-credential reuse, and OpenCode V2 integration.
 
 ## Current scope
 
-Named upstreams with partial availability and hot credential recovery, plus the
-legacy single-upstream interface. Agent-facing transport is stdio; HTTP refers
+Named upstreams with partial availability and hot credential recovery. Agent-facing transport is stdio; HTTP refers
 to upstream connections. There is no model loop, remote agent hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
 are recorded; longer soak testing and aggregate/payload resource hardening remain

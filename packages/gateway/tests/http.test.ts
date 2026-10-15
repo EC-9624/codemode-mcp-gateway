@@ -15,7 +15,7 @@ describe("CMG HTTP upstream", () => {
 
     await using app = await gatewayProcess({
       upstream: {
-        transport: "http",
+        type: "remote",
         url: upstream.url,
         headers: { Authorization: "Bearer {env:CMG_TEST_TOKEN}" },
       },
@@ -23,15 +23,18 @@ describe("CMG HTTP upstream", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
 
     const response = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+      },
     });
 
     expect(response.structuredContent).toEqual({
       result: { ok: true, value: 5 },
-      calls: [{ callId: 1, name: "add", status: "completed" }],
+      calls: [{ callId: 1, name: "test.add", status: "completed" }],
     });
     expect(app.stderr).not.toContain("synthetic-token");
   }, 10_000);
@@ -60,7 +63,7 @@ describe("CMG HTTP upstream", () => {
 
     await using app = await gatewayProcess({
       upstream: {
-        transport: "http",
+        type: "remote",
         url: upstream.url,
         headers: { Authorization: "Bearer {env:CMG_TEST_TOKEN}" },
       },
@@ -71,6 +74,7 @@ describe("CMG HTTP upstream", () => {
     gates.defer(() => release.resolve());
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
 
     const session = upstream.transport.sessionId;
     expect(session).toBeDefined();
@@ -119,15 +123,16 @@ describe("CMG HTTP upstream", () => {
     );
 
     await using upstream = await httpMcp(server);
-    await using app = await gatewayProcess({ upstream: { transport: "http", url: upstream.url } });
+    await using app = await gatewayProcess({ upstream: { type: "remote", url: upstream.url } });
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
     const controller = new AbortController();
 
     const request = rejectionOf(
       app.client.callTool(
         {
           name: "execute",
-          arguments: { code: "return await tools.wait({ wait: true });" },
+          arguments: { code: 'return await tools["test.wait"]({ wait: true });' },
         },
         { signal: controller.signal },
       ),
@@ -140,7 +145,7 @@ describe("CMG HTTP upstream", () => {
 
     const response = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return (await tools.wait({})).structuredContent;" },
+      arguments: { code: 'return (await tools["test.wait"]({})).structuredContent;' },
     });
 
     expect(response.structuredContent).toMatchObject({
@@ -168,11 +173,15 @@ describe("CMG HTTP upstream", () => {
     });
 
     await using upstream = await httpMcp(server);
-    await using app = await gatewayProcess({ upstream: { transport: "http", url: upstream.url } });
+    await using app = await gatewayProcess({ upstream: { type: "remote", url: upstream.url } });
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
 
     const request = rejectionOf(
-      app.client.callTool({ name: "execute", arguments: { code: "return await tools.wait();" } }),
+      app.client.callTool({
+        name: "execute",
+        arguments: { code: 'return await tools["test.wait"]({});' },
+      }),
     );
 
     await started.promise;
@@ -192,15 +201,17 @@ describe("CMG HTTP upstream", () => {
 
     await using app = await gatewayProcess({
       upstream: {
-        transport: "http",
+        type: "remote",
         url: upstream.url,
         headers: { Authorization: "Bearer synthetic-token" },
       },
     });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-
-    expect(await app.closed).toEqual({ code: 1, signal: null });
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"failed"');
+    expect(await app.client.ping()).toEqual({});
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
     expect(app.stderr).toContain("authentication");
     expect(app.stderr).not.toContain("Private upstream challenge");
     expect(app.stderr).not.toContain("synthetic-token");
@@ -211,16 +222,17 @@ describe("CMG HTTP upstream", () => {
 
     await using app = await gatewayProcess({
       upstream: {
-        transport: "http",
+        type: "remote",
         url: upstream.url,
         headers: { Authorization: "Bearer {env:CMG_TEST_MISSING_TOKEN}" },
       },
       environment: { CMG_TEST_MISSING_TOKEN: undefined },
     });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-
-    expect(await app.closed).toEqual({ code: 1, signal: null });
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"failed"');
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
     expect(app.stderr).toContain("Missing environment variable CMG_TEST_MISSING_TOKEN");
     expect(upstream.requests).toHaveLength(0);
   }, 10_000);
@@ -233,11 +245,12 @@ describe("CMG HTTP upstream", () => {
     }));
 
     await using upstream = await httpMcp(server);
-    await using app = await gatewayProcess({ upstream: { transport: "http", url: upstream.url } });
+    await using app = await gatewayProcess({ upstream: { type: "remote", url: upstream.url } });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-
-    expect(await app.closed).toEqual({ code: 1, signal: null });
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"failed"');
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
     expect(app.stderr).toContain("Upstream tool discovery failed");
     expect(upstream.requests.some((request) => request.method === "DELETE")).toBe(true);
   }, 10_000);

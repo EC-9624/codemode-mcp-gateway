@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Client, type ClientOptions } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { type SandboxOptions } from "@cmg/codemode";
-import { type Configuration } from "codemode-mcp-gateway";
+import { type ConfigurationInput } from "codemode-mcp-gateway";
 
 /** Owns a real CLI process; the watchdog makes shutdown regressions fail instead of hanging. */
 export async function gatewayProcess(
@@ -15,7 +15,7 @@ export async function gatewayProcess(
     mode?: string;
     sandbox?: Omit<SandboxOptions, "tools">;
     client?: ClientOptions;
-    upstream?: Configuration["upstream"];
+    upstream?: ConfigurationInput["mcp"]["servers"][string];
     environment?: NodeJS.ProcessEnv;
     entry?: string;
     configuration?: unknown;
@@ -31,12 +31,17 @@ export async function gatewayProcess(
     config,
     JSON.stringify(
       options.configuration ?? {
-        upstream: options.upstream ?? {
-          command: process.execPath,
-          args: [
-            fileURLToPath(new URL("../fixtures/gateway-upstream.ts", import.meta.url)),
-            options.mode ?? "invoke",
-          ],
+        mcp: {
+          servers: {
+            test: options.upstream ?? {
+              type: "local",
+              command: [
+                process.execPath,
+                fileURLToPath(new URL("../fixtures/gateway-upstream.ts", import.meta.url)),
+                options.mode ?? "invoke",
+              ],
+            },
+          },
         },
         sandbox: options.sandbox ?? {},
       },
@@ -108,6 +113,11 @@ export async function gatewayProcess(
     async waitFor(marker: string) {
       const signal = AbortSignal.timeout(4_000);
       while (!stderr.includes(marker)) await once(child.stderr, "data", { signal });
+    },
+    async waitForConnections(count: number) {
+      const signal = AbortSignal.timeout(4_000);
+      while (stderr.split('"state":"connected"').length - 1 < count)
+        await once(child.stderr, "data", { signal });
     },
     [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
   };

@@ -23,6 +23,12 @@ for (const [workspace, file, required] of [
   const entries = (await run(["tar", "-tf", archive], directory)).trim().split("\n");
   ok(entries.includes(required), `Missing built asset ${required}`);
   ok(entries.includes("package/README.md"), "Package documentation must be included");
+  if (workspace === "packages/gateway")
+    ok(
+      !entries.some((entry) => entry.startsWith("package/dist/composition.")),
+      "Removed gateway composition must not ship",
+    );
+
   ok(
     entries.every((entry) => !/^package\/(src|tests|node_modules)\//.test(entry)),
     "Development files must not ship",
@@ -118,7 +124,11 @@ for (const [source, target] of [
 await Bun.write(
   join(consumer, "config/cmg.json"),
   JSON.stringify({
-    upstream: { command: process.execPath, args: ["mcp-server.ts"], cwd: "../upstream" },
+    mcp: {
+      servers: {
+        math: { type: "local", command: [process.execPath, "mcp-server.ts"], cwd: "../upstream" },
+      },
+    },
     sandbox: { timeoutMs: 5_000, totalTimeoutMs: 10_000 },
   }),
 );

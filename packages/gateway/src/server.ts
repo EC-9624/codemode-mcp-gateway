@@ -1,20 +1,15 @@
 /**
- * Process lifetime of the stdio gateway. Legacy mode owns one upstream directly;
- * named mode delegates connections and catalog revisions to Gateway.
+ * Process lifetime of the stdio gateway. Gateway owns connections and MCP instances.
  *
- * Named mode exposes discovery/status while upstreams initialize independently.
- * Legacy mode waits for its initial catalog. EOF can cancel either startup path.
+ * Discovery/status is available while upstreams initialize independently. EOF cancels setup.
  *
  * EOF, SIGINT, and SIGTERM abort setup and active executions. Cleanup closes the MCP
  * servers before releasing upstream resources, including on partial startup. Stdio
  * waits for the child's actual close; HTTP requests session deletion before closing.
  */
 import { dirname } from "node:path";
-import { type McpServer } from "@modelcontextprotocol/server";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { readConfiguration } from "./config.ts";
-import { createServer } from "./composition.ts";
-import { connectUpstream } from "./upstream.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 import { Gateway } from "./gateway.ts";
 
@@ -41,68 +36,30 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
     });
   }
 
-  const upstreamCleanup = cleanup.use(new AsyncDisposableStack());
-  const servers = new Set<McpServer>();
-  cleanup.defer(async () => {
-    for (const server of servers) await server.close();
-  });
-
-  const gateway =
-    config.upstream === undefined
-      ? cleanup.use(
-          new Gateway(config, dirname(path), {
-            ...options,
-            signal: shutdown.signal,
-            onStatus: (status) =>
-              console.error(
-                JSON.stringify({
-                  server: status.name,
-                  state: status.state,
-                  toolCount: status.toolCount,
-                  ...("error" in status ? { error: status.error } : {}),
-                }),
-              ),
+  const gateway = cleanup.use(
+    new Gateway(config, dirname(path), {
+      ...options,
+      signal: shutdown.signal,
+      onStatus: (status) => {
+        console.error(
+          JSON.stringify({
+            server: status.name,
+            state: status.state,
+            toolCount: status.toolCount,
+            ...("error" in status ? { error: status.error } : {}),
           }),
-        )
-      : undefined;
-
-  const ready =
-    gateway !== undefined
-      ? gateway.start().then(() => () => gateway.createServer())
-      : connectUpstream(legacyUpstream(config), dirname(path), shutdown.signal, options).then(
-          (upstream) => {
-            upstreamCleanup.use(upstream);
-
-            const create = () => {
-              const server = createServer(upstream.catalog, config.sandbox);
-              servers.add(server);
-
-              return server;
-            };
-
-            // Validate helper-name collisions before announcing a ready server. The SDK
-            // can request another instance when switching from a discovery probe to legacy.
-            const initial = create();
-            let unused = true;
-
-            return () => {
-              shutdown.signal.throwIfAborted();
-              if (unused) {
-                unused = false;
-
-                return initial;
-              }
-
-              return create();
-            };
-          },
         );
+      },
+    }),
+  );
+
+  const ready = gateway.start();
 
   const wire = new StdioServerTransport();
 
   const entry = serveStdio(
-    async () => {
-      const server = gateway === undefined ? (await ready)() : gateway.createServer();
+    () => {
+      const server = gateway.createServer();
       server.server.onerror = () => console.error("CMG sandbox execution failed.");
 
       return server;
@@ -123,23 +80,15 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
 
   try {
     await ready;
-    if (gateway === undefined) await stopped.promise;
-    else
-      await Promise.race([
-        stopped.promise,
-        gateway.failure.then((cause) => {
-          throw cause;
-        }),
-      ]);
+    await Promise.race([
+      stopped.promise,
+      gateway.failure.then((cause) => {
+        throw cause;
+      }),
+    ]);
   } catch (error) {
     if (!shutdown.signal.aborted) throw error;
   } finally {
     stop();
   }
-}
-
-function legacyUpstream(config: Awaited<ReturnType<typeof readConfiguration>>) {
-  if (config.upstream === undefined) throw new Error("Expected a legacy upstream.");
-
-  return config.upstream;
 }

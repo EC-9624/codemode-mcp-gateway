@@ -13,11 +13,11 @@ credentials, forced GC, or model calls are involved.
 
 ## Workload and ownership
 
-One `createServer` gateway/executor and one agent MCP client remain alive for the
+One `CodeExecutor` exposed through `createCodemodeServer` and one agent MCP client remain alive for the
 entire run. A local controllable MCP upstream is connected with the SDK's
 `InMemoryTransport`; both sides exercise real MCP initialization, discovery,
 validation, dispatch, cancellation, and response handling. This is simulated
-read-oriented traffic, not a stdio/HTTP network or live-provider soak.
+read-oriented library-composition traffic, not a managed `Gateway`, stdio/HTTP network, or live-provider soak.
 
 Warmup searches the tool catalog, describes `fetch`, and executes a document
 workflow. Each workflow searches for two known documents, fetches both in

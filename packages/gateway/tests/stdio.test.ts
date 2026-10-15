@@ -98,17 +98,22 @@ describe("CMG stdio application", () => {
       });
 
       await app.client.connect(app.transport, { timeout: 4_000 });
+      await app.waitForConnections(1);
       const listing = await app.client.listTools();
       expect(listing.tools.map((tool) => tool.name)).toEqual(["execute"]);
+      expect(listing.tools[0]?.description).toContain("## Workflow");
+      expect(listing.tools[0]?.description).toContain("## Availability");
 
       const execution = await app.client.callTool({
         name: "execute",
-        arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+        arguments: {
+          code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+        },
       });
 
       expect(execution.structuredContent).toEqual({
         result: { ok: true, value: 5 },
-        calls: [{ callId: 1, name: "add", status: "completed" }],
+        calls: [{ callId: 1, name: "test.add", status: "completed" }],
       });
       const upstream = app.upstreamPid();
       app.child.stdin.end();
@@ -125,11 +130,12 @@ describe("CMG stdio application", () => {
     async (signal) => {
       await using app = await gatewayProcess();
       await app.client.connect(app.transport, { timeout: 4_000 });
+      await app.waitForConnections(1);
 
       const request = rejectionOf(
         app.client.callTool({
           name: "execute",
-          arguments: { code: "return await tools.pending();" },
+          arguments: { code: 'return await tools["test.pending"]({});' },
         }),
       );
 
@@ -149,11 +155,12 @@ describe("CMG stdio application", () => {
   test("cancels an active upstream call and awaits child exit after EOF", async () => {
     await using app = await gatewayProcess();
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
 
     const request = rejectionOf(
       app.client.callTool({
         name: "execute",
-        arguments: { code: "return await tools.pending();" },
+        arguments: { code: 'return await tools["test.pending"]({});' },
       }),
     );
 
@@ -171,11 +178,12 @@ describe("CMG stdio application", () => {
   test("interrupts busy guest computation and awaits child exit after EOF", async () => {
     await using app = await gatewayProcess();
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
 
     const request = rejectionOf(
       app.client.callTool({
         name: "execute",
-        arguments: { code: "tools.started(); while (true) {}" },
+        arguments: { code: 'tools["test.started"]({}); while (true) {}' },
       }),
     );
 
@@ -194,36 +202,29 @@ describe("CMG stdio application", () => {
     "cancels startup on EOF during %s",
     async (mode) => {
       await using app = await gatewayProcess({ mode });
-      const connection = rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
+      await app.client.connect(app.transport, { timeout: 4_000 });
       await app.waitFor("request-started");
       const upstream = app.upstreamPid();
       app.child.stdin.end();
 
-      await connection;
       expect(await app.closed).toEqual({ code: 0, signal: null });
       expect(() => process.kill(upstream, 0)).toThrow();
     },
     10_000,
   );
 
-  test.each([
-    ["invalid-schema", "Upstream tool discovery failed."],
-    ["collision", 'Upstream tool "searchTools" conflicts with a CMG discovery helper.'],
-  ])(
-    "releases the upstream after %s startup failure",
-    async (mode, message) => {
-      await using app = await gatewayProcess({ mode });
-      const connection = rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-      await app.waitFor("upstream-pid:");
-      const upstream = app.upstreamPid();
+  test("releases an upstream with an invalid catalog while keeping the gateway available", async () => {
+    await using app = await gatewayProcess({ mode: "invalid-schema" });
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"failed"');
+    const upstream = app.upstreamPid();
 
-      await connection;
-      expect(await app.closed).toEqual({ code: 1, signal: null });
-      expect(() => process.kill(upstream, 0)).toThrow();
-      expect(app.stderr).toContain(message);
-    },
-    10_000,
-  );
+    expect(() => process.kill(upstream, 0)).toThrow();
+    expect(app.stderr).toContain("Upstream tool discovery failed.");
+    expect(await app.client.ping()).toEqual({});
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+  }, 10_000);
 
   test("rejects invalid configuration before spawning the upstream", async () => {
     await using app = await gatewayProcess({ sandbox: { timeoutMs: 0 } });

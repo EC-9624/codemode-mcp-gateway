@@ -4,40 +4,26 @@ import { GatewayError } from "./errors.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-const stdio = z.strictObject({
-  transport: z.literal("stdio").default("stdio"),
-  command: z.string().min(1),
-  args: z.array(z.string()).optional(),
+const local = z.strictObject({
+  type: z.literal("local"),
+  command: z.tuple([z.string().min(1)]).rest(z.string()),
   cwd: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  environment: z.record(z.string(), z.string()).optional(),
+  disabled: z.boolean().default(false),
 });
 
-const http = z
+const remote = z
   .strictObject({
-    id: z
-      .string()
-      .regex(/^[a-zA-Z0-9_-]+$/)
-      .optional(),
-    transport: z.literal("http"),
+    type: z.literal("remote"),
     url: z.url({ protocol: /^https?$/ }),
     headers: z.record(z.string(), z.string()).optional(),
-    auth: z
-      .strictObject({
-        type: z.literal("oauth"),
-        scope: z.string().trim().min(1).optional(),
-      })
+    oauth: z
+      .union([z.literal(false), z.strictObject({ scope: z.string().trim().min(1).optional() })])
       .optional(),
+    disabled: z.boolean().default(false),
   })
   .superRefine((upstream, context) => {
-    if (upstream.auth === undefined) return;
-
-    if (upstream.id === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["id"],
-        message: "OAuth requires a connection id.",
-      });
-    }
+    if (!upstream.oauth) return;
 
     if (
       Object.keys(upstream.headers ?? {}).some((name) => name.toLowerCase() === "authorization")
@@ -66,72 +52,12 @@ const http = z
     }
   });
 
-export const UpstreamConfiguration = z.union([stdio, http]);
-export type UpstreamConfiguration = z.infer<typeof UpstreamConfiguration>;
-export type ServerConfiguration = { upstream: UpstreamConfiguration; disabled: boolean };
-
-const name = z.string().regex(/^[a-zA-Z0-9_-]+$/);
-
-const local = z.strictObject({
-  type: z.literal("local"),
-  command: z.tuple([z.string().min(1)]).rest(z.string()),
-  cwd: z.string().optional(),
-  environment: z.record(z.string(), z.string()).optional(),
-  disabled: z.boolean().optional(),
-});
-
-const remote = z.strictObject({
-  type: z.literal("remote"),
-  url: z.string(),
-  headers: z.record(z.string(), z.string()).optional(),
-  oauth: z
-    .union([z.literal(false), z.strictObject({ scope: z.string().trim().min(1).optional() })])
-    .optional(),
-  disabled: z.boolean().optional(),
-});
+export const ServerConfiguration = z.discriminatedUnion("type", [local, remote]);
+export type ServerConfiguration = z.infer<typeof ServerConfiguration>;
 
 const servers = z
-  .record(name, z.union([local, remote]))
-  .refine((value) => Object.keys(value).length > 0, "Configure at least one MCP server.")
-  .transform((value, context) => {
-    const normalized = new Map<string, ServerConfiguration>();
-    for (const [name, server] of Object.entries(value)) {
-      const upstream =
-        server.type === "local"
-          ? {
-              transport: "stdio",
-              command: server.command[0],
-              args: server.command.slice(1),
-              ...(server.cwd === undefined ? {} : { cwd: server.cwd }),
-              ...(server.environment === undefined ? {} : { env: server.environment }),
-            }
-          : {
-              transport: "http",
-              url: server.url,
-              ...(server.headers === undefined ? {} : { headers: server.headers }),
-              ...(server.oauth === undefined || server.oauth === false
-                ? {}
-                : {
-                    id: name,
-                    auth: { type: "oauth", ...server.oauth },
-                  }),
-            };
-
-      const parsed = UpstreamConfiguration.safeParse(upstream);
-      if (!parsed.success) {
-        context.addIssue({
-          code: "custom",
-          path: [name],
-          message: parsed.error.issues.map((issue) => issue.message).join(" "),
-        });
-        continue;
-      }
-
-      normalized.set(name, { upstream: parsed.data, disabled: server.disabled ?? false });
-    }
-
-    return Object.fromEntries(normalized);
-  });
+  .record(z.string().regex(/^[a-zA-Z0-9_-]+$/), ServerConfiguration)
+  .refine((value) => Object.keys(value).length > 0, "Configure at least one MCP server.");
 
 const sandbox = z
   .strictObject({
@@ -147,11 +73,7 @@ const sandbox = z
   })
   .prefault({});
 
-/** Both input formats normalize to typed connections; legacy names remain unqualified. */
-export const Configuration = z.union([
-  z.strictObject({ upstream: UpstreamConfiguration, mcp: z.undefined().optional(), sandbox }),
-  z.strictObject({ upstream: z.undefined().optional(), mcp: z.strictObject({ servers }), sandbox }),
-]);
+export const Configuration = z.strictObject({ mcp: z.strictObject({ servers }), sandbox });
 
 export type Configuration = z.infer<typeof Configuration>;
 export type ConfigurationInput = z.input<typeof Configuration>;
@@ -176,38 +98,26 @@ export function configurationPath(
 export function authenticationTarget(
   config: Configuration,
   server?: string,
-): UpstreamConfiguration {
-  if (config.upstream !== undefined) {
-    if (
-      server !== undefined &&
-      server !== "default" &&
-      !("id" in config.upstream && config.upstream.id === server)
-    ) {
-      throw new GatewayError(`Unknown server ${JSON.stringify(server)}.`);
-    }
+): { name: string; config: ServerConfiguration } {
+  if (server !== undefined) return { name: server, config: configuredServer(config, server) };
 
-    return config.upstream;
-  }
-
-  if (server !== undefined) {
-    const selected = Object.hasOwn(config.mcp.servers, server)
-      ? config.mcp.servers[server]
-      : undefined;
-
-    if (selected === undefined) throw new GatewayError(`Unknown server ${JSON.stringify(server)}.`);
-
-    return selected.upstream;
-  }
-
-  const candidates = Object.values(config.mcp.servers).filter(
-    (entry) => entry.upstream.transport === "http" && entry.upstream.auth !== undefined,
+  const candidates = Object.entries(config.mcp.servers).filter(
+    (entry) => entry[1].type === "remote" && entry[1].oauth,
   );
 
   if (candidates.length !== 1 || candidates[0] === undefined) {
     throw new GatewayError("Select an OAuth server with --server <name>.");
   }
 
-  return candidates[0].upstream;
+  return { name: candidates[0][0], config: candidates[0][1] };
+}
+
+/** Explicit lookup shared by diagnostics and credential commands. */
+export function configuredServer(config: Configuration, name: string): ServerConfiguration {
+  const selected = Object.hasOwn(config.mcp.servers, name) ? config.mcp.servers[name] : undefined;
+  if (selected !== undefined) return selected;
+
+  throw new GatewayError(`Unknown server ${JSON.stringify(name)}.`);
 }
 
 /** File parsing is shared by serving and the explicit credential commands. */

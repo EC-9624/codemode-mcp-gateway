@@ -1,11 +1,14 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Configuration } from "codemode-mcp-gateway";
+import { type ConfigurationInput } from "codemode-mcp-gateway";
 
 /** Write only the supplied configuration; the scenario owns its policy and connection. */
-export async function configuration(upstream: Configuration["upstream"]) {
-  return configurationDocument({ upstream });
+export async function configuration(
+  server: ConfigurationInput["mcp"]["servers"][string],
+  name = "notes",
+) {
+  return configurationDocument({ mcp: { servers: { [name]: server } } });
 }
 
 export async function configurationDocument(value: unknown) {

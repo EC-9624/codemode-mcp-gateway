@@ -114,7 +114,7 @@ describe("OAuth-backed stdio gateway", () => {
     const options = {
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     } as const;
 
     await using first = await gatewayProcess(options);
@@ -124,12 +124,15 @@ describe("OAuth-backed stdio gateway", () => {
       first.client.connect(first.transport, { timeout: 4_000 }),
       second.client.connect(second.transport, { timeout: 4_000 }),
     ]);
+    await Promise.all([first.waitForConnections(1), second.waitForConnections(1)]);
     connected = true;
     upstream.rejectAccess();
 
     const input = {
       name: "execute",
-      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+      },
     };
 
     const requests = Promise.all([first.client.callTool(input), second.client.callTool(input)]);
@@ -175,15 +178,16 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     upstream.rejectAccess();
 
     const pending = app.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+      arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
     await refreshing.promise;
@@ -222,7 +226,7 @@ describe("OAuth-backed stdio gateway", () => {
 
     const response = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+      arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
     expect(response.structuredContent).toMatchObject({
@@ -261,14 +265,15 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
 
     const result = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+      arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
     expect(result.structuredContent).toMatchObject({
@@ -290,11 +295,10 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-
+    // Named serving may complete its agent handshake before setup fails.
     expect(await app.closed).toEqual({ code: 1, signal: null });
     expect(app.stderr).toContain("Private diagnostics were not displayed");
     expect(app.stderr).not.toContain("private-malformed-credential-data");
@@ -307,10 +311,11 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     await Bun.write(files.path, JSON.stringify(upstream.credentials(Date.now() - 4_000_000)));
     app.child.stdin.end();
 
@@ -339,16 +344,17 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     upstream.rejectAccess();
 
     const request = rejectionOf(
       app.client.callTool({
         name: "execute",
-        arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+        arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
       }),
     );
 
@@ -367,7 +373,7 @@ describe("OAuth-backed stdio gateway", () => {
     }
   }, 10_000);
 
-  test("missing authorization fails startup without dispatching to upstream", async () => {
+  test("missing authorization leaves discovery available without dispatching to upstream", async () => {
     await using upstream = await oauthFixture();
 
     await using files = await credentialFiles({
@@ -378,14 +384,24 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"needs-auth"');
 
-    expect(await app.closed).toEqual({ code: 1, signal: null });
+    const status = await app.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools.searchTools({ query: "add" });' },
+    });
+
+    expect(status.structuredContent).toMatchObject({
+      result: { ok: true, value: { tools: [], servers: [{ name: "test", state: "needs-auth" }] } },
+    });
     expect(app.stderr).toContain("cmg login");
     expect(upstream.requests).toEqual([]);
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
   }, 10_000);
 
   test("a revoked grant stays private, stops retries, and recovers in the same gateway after a new login", async () => {
@@ -402,15 +418,16 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     upstream.rejectAccess();
 
     const result = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+      arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
     expect(result.structuredContent).toMatchObject({
@@ -427,7 +444,9 @@ describe("OAuth-backed stdio gateway", () => {
 
     const input = {
       name: "execute",
-      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+      },
     };
 
     expect((await app.client.callTool(input)).isError).toBe(true);
@@ -443,6 +462,9 @@ describe("OAuth-backed stdio gateway", () => {
         },
       }),
     ).toMatchObject({ ok: true });
+    await app.waitFor('"state":"needs-auth"');
+    // A new session adopts the login; wait for its second connection report.
+    await app.waitForConnections(2);
     expect((await app.client.callTool(input)).structuredContent).toMatchObject({
       result: { ok: true, value: 5 },
     });
@@ -468,20 +490,21 @@ describe("OAuth-backed stdio gateway", () => {
       await using app = await gatewayProcess({
         entry,
         environment: { ...files.environment, CMG_TEST_SAVE_FAILURE: "true" },
-        upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+        upstream: { type: "remote", url: upstream.url, oauth: {} },
       });
 
       await app.client.connect(app.transport, { timeout: 4_000 });
+      await app.waitFor('"state":"connected"');
       upstream.rejectAccess();
 
       const input = {
         name: "execute",
-        arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+        arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
       };
 
       const first = await app.client.callTool(input);
       expect(first.isError).toBe(true);
-      expect(JSON.stringify(first.structuredContent)).toContain("Synthetic store failure");
+      expect(JSON.stringify(first.structuredContent)).toContain("authorization storage");
       expect((await app.client.callTool(input)).isError).toBe(true);
       expect(upstream.refreshes).toBe(1);
       expect(await Bun.file(files.path).json()).toEqual(original);
@@ -500,15 +523,16 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
-    await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));
-
-    expect(await app.closed).toEqual({ code: 1, signal: null });
-    expect(app.stderr).toContain("issuer or resource changed");
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"needs-auth"');
+    expect(app.stderr).toContain("authorization required");
     expect(upstream.refreshes).toBe(0);
     expect(upstream.requests.every((request) => !request.headers.has("authorization"))).toBe(true);
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
   }, 10_000);
 
   test("a late challenge for an old token reuses the already rotated grant", async () => {
@@ -531,16 +555,19 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     connected = true;
     upstream.rejectAccess();
 
     const input = {
       name: "execute",
-      arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+      },
     };
 
     const delayed = app.client.callTool(input);
@@ -578,15 +605,16 @@ describe("OAuth-backed stdio gateway", () => {
     await using app = await gatewayProcess({
       entry,
       environment: files.environment,
-      upstream: { id: "test", transport: "http", url: upstream.url, auth: { type: "oauth" } },
+      upstream: { type: "remote", url: upstream.url, oauth: {} },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"connected"');
     upstream.rejectAccess();
 
     const input = {
       name: "execute",
-      arguments: { code: "return await tools.add({ a: 2, b: 3 });" },
+      arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     };
 
     const pending = app.client.callTool(input);
@@ -601,7 +629,7 @@ describe("OAuth-backed stdio gateway", () => {
       await rm(join(files.environment.CMG_TEST_LOCKS, lock), { recursive: true });
       const failed = await pending;
       expect(failed.isError).toBe(true);
-      expect(JSON.stringify(failed.structuredContent)).toContain("lock was lost");
+      expect(JSON.stringify(failed.structuredContent)).toContain("authorization busy");
       expect((await app.client.callTool(input)).isError).toBe(true);
       expect(await Bun.file(files.path).json()).toEqual(original);
       expect(upstream.refreshes).toBe(1);

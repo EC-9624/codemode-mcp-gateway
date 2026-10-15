@@ -9,26 +9,32 @@ describe("logout", () => {
     await using notes = await oauthFixture();
     await using calendar = await oauthFixture();
 
-    await using personal = await configuration({
-      transport: "http",
-      id: "personal",
-      url: notes.url,
-      auth: { type: "oauth" },
-    });
+    await using personal = await configuration(
+      {
+        type: "remote",
+        url: notes.url,
+        oauth: {},
+      },
+      "personal",
+    );
 
-    await using work = await configuration({
-      transport: "http",
-      id: "work",
-      url: notes.url,
-      auth: { type: "oauth" },
-    });
+    await using work = await configuration(
+      {
+        type: "remote",
+        url: notes.url,
+        oauth: {},
+      },
+      "work",
+    );
 
-    await using other = await configuration({
-      transport: "http",
-      id: "personal",
-      url: calendar.url,
-      auth: { type: "oauth" },
-    });
+    await using other = await configuration(
+      {
+        type: "remote",
+        url: calendar.url,
+        oauth: {},
+      },
+      "personal",
+    );
 
     const entries = new Map<string, string>();
 
@@ -78,10 +84,9 @@ describe("logout", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();
@@ -100,10 +105,9 @@ describe("logout", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials(upstream.credentials());
@@ -120,10 +124,9 @@ describe("logout", () => {
 
   test("returns a controlled storage failure when the OS service cannot delete credentials", async () => {
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: "https://example.com/mcp",
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     using read = spyOn(secrets, "get").mockResolvedValue(null);
@@ -148,10 +151,9 @@ describe("logout", () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: upstream.url,
-      auth: { type: "oauth" },
+      oauth: {},
     });
 
     const memory = memoryCredentials();

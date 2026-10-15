@@ -36,7 +36,8 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
   }
 
   const config = await readConfiguration(path);
-  const connection = oauthConnection(authenticationTarget(config, options.server));
+  const target = authenticationTarget(config, options.server);
+  const connection = oauthConnection(target.name, target.config);
   if (!connection.ok) return connection;
 
   using deadlineCleanup = new DisposableStack();
@@ -123,7 +124,8 @@ export async function logout(
   options: CredentialOptions & { server?: string } = {},
 ): Promise<AuthResult<void>> {
   const config = await readConfiguration(path);
-  const connection = oauthConnection(authenticationTarget(config, options.server));
+  const target = authenticationTarget(config, options.server);
+  const connection = oauthConnection(target.name, target.config);
   if (!connection.ok) return connection;
 
   const lease = await acquireLease(connection.value, options.lockDirectory);

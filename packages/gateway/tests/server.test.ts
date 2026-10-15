@@ -1,116 +1,112 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { McpServer } from "@modelcontextprotocol/server";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { ToolCatalog, ToolResult } from "@cmg/codemode";
+import {
+  type McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { Configuration, Gateway, type ConfigurationInput } from "codemode-mcp-gateway";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
-import { createMcpCatalog } from "@cmg/mcp";
-import { Configuration, createServer } from "codemode-mcp-gateway";
 import { rejectionOf } from "./support/rejection.ts";
 
-describe("MCP client through codemode to upstream MCP", () => {
-  test.each(["searchTools", "describeTool"])("rejects a tool that would replace %s", (name) => {
-    const catalog = ToolCatalog.create({
-      [name]: { description: "Conflicting upstream", execute: () => ToolResult.success() },
+describe("gateway execution", () => {
+  test("the advertised discovery example runs and exact discovered names remain callable", async () => {
+    await using app = await connectGateway(createMcpServer());
+    const listing = await app.client.listTools();
+    const description = listing.tools[0]?.description;
+    const example = description?.match(/`(return await tools\.searchTools\([^`]+)`/)?.[1];
+    if (example === undefined) throw new Error("Missing runnable discovery example.");
+
+    const sample = await app.client.callTool({ name: "execute", arguments: { code: example } });
+
+    const result = await app.client.callTool({
+      name: "execute",
+      arguments: {
+        code: `
+      const page = await tools.searchTools({ query: "Add numbers" });
+      const name = page.tools[0].name;
+      const description = await tools.describeTool({ name });
+      const response = await tools[name]({ a: 2, b: 3 });
+      return { name, required: description.inputSchema.required, sum: response.structuredContent.sum };
+    `,
+      },
     });
 
-    expect(() => createServer(catalog)).toThrow(
-      `Upstream tool ${JSON.stringify(name)} conflicts with a CMG discovery helper.`,
-    );
-  });
-
-  test("rejects invalid fixed policy before returning a server", () => {
-    const catalog = ToolCatalog.create({});
-
-    expect(() => createServer(catalog, { maxToolCalls: 0 })).toThrow(RangeError);
+    expect(listing.tools.map((tool) => tool.name)).toEqual(["execute"]);
+    expect(description).toContain("check isError");
+    expect(description).toContain("## Availability");
+    expect(sample.structuredContent).toMatchObject({
+      result: {
+        ok: true,
+        value: { tools: [], total: 0, servers: [{ name: "test", state: "connected" }] },
+      },
+    });
+    expect(result.structuredContent).toEqual({
+      result: { ok: true, value: { name: "test.add", required: ["a", "b"], sum: 5 } },
+      calls: [
+        { callId: 1, name: "searchTools", status: "completed" },
+        { callId: 2, name: "describeTool", status: "completed" },
+        { callId: 3, name: "test.add", status: "completed" },
+      ],
+    });
   });
 
   test("charges discovery calls to the supplied execution budget", async () => {
-    const catalog = ToolCatalog.create({
-      read: { description: "Read records", execute: () => ToolResult.success(42) },
-    });
+    await using app = await connectGateway(createMcpServer(), { maxToolCalls: 1 });
 
-    await using agent = await connectMcp(createServer(catalog, { maxToolCalls: 1 }));
-
-    const response = await agent.client.callTool({
+    const response = await app.client.callTool({
       name: "execute",
       arguments: {
-        code: 'await tools.searchTools({ query: "records" }); return await tools.read();',
+        code: 'await tools.searchTools({ query: "add" }); return await tools["test.add"]({ a: 1, b: 2 });',
       },
     });
 
-    expect(response.structuredContent).toEqual({
-      result: {
-        ok: false,
-        error: {
-          kind: "limit",
-          resource: "tool-calls",
-          maximum: 1,
-          message: "Execution exceeded the 1 tool-call limit.",
-        },
-      },
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      result: { ok: false, error: { kind: "limit", resource: "tool-calls", maximum: 1 } },
       calls: [{ callId: 1, name: "searchTools", status: "completed" }],
     });
   });
 
-  test("applies configured execution capacity across requests and admits a later request after completion", async () => {
+  test("shares capacity across MCP instances and admits a later request after completion", async () => {
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     let calls = 0;
+    const upstream = createMcpServer();
+    upstream.registerTool("wait", {}, async () => {
+      calls++;
+      started.resolve();
+      await release.promise;
 
-    const catalog = ToolCatalog.create({
-      wait: {
-        description: "Wait",
-        execute: async () => {
-          calls++;
-          started.resolve();
-          await release.promise;
-
-          return ToolResult.success(42);
-        },
-      },
+      return { content: [], structuredContent: { value: 42 } };
     });
+    await using app = await connectGateway(upstream, { maxConcurrentExecutions: 1 });
+    await using second = await connectMcp(app.gateway.createServer());
+    using gates = new DisposableStack();
+    gates.defer(() => release.resolve());
 
-    const config = Configuration.parse({
-      upstream: { command: "unused" },
-      sandbox: { maxConcurrentExecutions: 1 },
-    });
-
-    await using agent = await connectMcp(createServer(catalog, config.sandbox));
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => release.resolve());
-
-    const first = agent.client.callTool({
+    const running = app.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.wait();" },
+      arguments: { code: 'return await tools["test.wait"]({});' },
     });
 
     await started.promise;
 
-    const rejected = await agent.client.callTool({
+    const rejected = await second.client.callTool({
       name: "execute",
-      arguments: { code: "return await tools.wait();" },
+      arguments: { code: 'return await tools["test.wait"]({});' },
     });
 
-    expect(rejected.isError).toBe(true);
-    expect(rejected.structuredContent).toEqual({
-      result: {
-        ok: false,
-        error: {
-          kind: "limit",
-          resource: "executions",
-          maximum: 1,
-          message: "Executor reached the 1 concurrent-execution limit.",
-        },
-      },
+    expect(rejected.structuredContent).toMatchObject({
+      result: { ok: false, error: { kind: "limit", resource: "executions", maximum: 1 } },
       calls: [],
     });
     expect(calls).toBe(1);
     release.resolve();
-    expect((await first).isError).toBe(false);
+    expect((await running).isError).toBe(false);
 
-    const recovered = await agent.client.callTool({
+    const recovered = await second.client.callTool({
       name: "execute",
       arguments: { code: "return 7;" },
     });
@@ -118,46 +114,42 @@ describe("MCP client through codemode to upstream MCP", () => {
     expect(recovered.structuredContent).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 
-  test("closing the composed server leaves its caller-owned upstream connection usable", async () => {
-    await using upstream = await connectMcp(createMcpServer());
-    const catalog = await createMcpCatalog(upstream.client);
-    const server = createServer(catalog);
-    await using agent = await connectMcp(server);
-    expect(await agent.client.ping()).toEqual({});
+  test("closing one MCP instance leaves the gateway's upstream usable by another", async () => {
+    await using app = await connectGateway(createMcpServer());
+    await using other = await connectMcp(app.gateway.createServer());
+    await app.server.close();
 
-    await server.close();
-    const response = await upstream.client.callTool({ name: "add", arguments: { a: 2, b: 3 } });
+    const response = await other.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+      },
+    });
 
-    expect(response.structuredContent).toEqual({ sum: 5 });
+    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 5 } });
+    expect(app.gateway.status()).toMatchObject([{ state: "connected" }]);
   });
 
-  test("close cancels active tools and waits for actual worker termination", async () => {
+  test("gateway close cancels active tools and waits for actual worker termination", async () => {
     const started = Promise.withResolvers<void>();
     const aborted = Promise.withResolvers<void>();
     const terminating = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const upstream = createMcpServer();
+    upstream.registerTool("wait", {}, async ({ mcpReq }) => {
+      using listeners = new DisposableStack();
+      const abort = () => aborted.resolve();
+      mcpReq.signal.addEventListener("abort", abort, { once: true });
+      listeners.defer(() => mcpReq.signal.removeEventListener("abort", abort));
+      started.resolve();
+      await aborted.promise;
 
-    const catalog = ToolCatalog.create({
-      wait: {
-        description: "Wait for cancellation",
-        execute: async (_args, { signal }) => {
-          using listeners = new DisposableStack();
-          const onAbort = () => aborted.resolve();
-          signal.addEventListener("abort", onAbort, { once: true });
-          listeners.defer(() => signal.removeEventListener("abort", onAbort));
-          started.resolve();
-          await aborted.promise;
-
-          return ToolResult.failure("Stopped");
-        },
-      },
+      return { content: [], isError: true };
     });
-
-    const server = createServer(catalog, { timeoutMs: 5000 });
-    await using agent = await connectMcp(server);
-    await using gates = new AsyncDisposableStack();
+    await using app = await connectGateway(upstream);
+    using gates = new DisposableStack();
     gates.defer(() => release.resolve());
-    // Real worker termination needs a narrow gate to distinguish awaiting cleanup from requesting it.
+    // Real worker termination needs a gate to distinguish awaiting exit from requesting it.
     using termination = spyOn(Worker.prototype, "terminate");
     const terminate = termination.getMockImplementation();
     if (terminate === undefined) throw new Error("Expected native terminate");
@@ -170,13 +162,16 @@ describe("MCP client through codemode to upstream MCP", () => {
     });
 
     const request = rejectionOf(
-      agent.client.callTool({ name: "execute", arguments: { code: "return await tools.wait();" } }),
+      app.client.callTool({
+        name: "execute",
+        arguments: { code: 'return await tools["test.wait"]({});' },
+      }),
     );
 
     await started.promise;
     let closed = false;
 
-    const closing = server.close().then(() => {
+    const closing = app.gateway.close().then(() => {
       closed = true;
     });
 
@@ -190,92 +185,26 @@ describe("MCP client through codemode to upstream MCP", () => {
     expect(termination).toHaveBeenCalledTimes(1);
   });
 
-  test("discovers a tool, describes its schema, and calls its exact name through JavaScript", async () => {
-    await using upstream = await connectMcp(createMcpServer());
-    const catalog = await createMcpCatalog(upstream.client);
-    await using agent = await connectMcp(createServer(catalog));
-
-    const listing = await agent.client.listTools();
-    expect(listing.tools.map((tool) => tool.name)).toEqual(["execute"]);
-    expect(listing.tools[0]?.description).toContain("tools.searchTools");
-    expect(listing.tools[0]?.description).toContain("tools.describeTool");
-
-    const search = await agent.client.callTool({
-      name: "execute",
-      arguments: { code: 'return await tools.searchTools({ query: "Add numbers" });' },
-    });
-
-    const discovered = z
-      .object({
-        result: z.object({
-          ok: z.literal(true),
-          value: z.object({ tools: z.array(z.object({ name: z.string() })).min(1) }),
-        }),
-      })
-      .parse(search.structuredContent);
-
-    expect(search.structuredContent).toEqual({
-      result: {
-        ok: true,
-        value: {
-          tools: [{ name: "add", description: "Add two numbers" }],
-          total: 1,
-          nextOffset: null,
-        },
-      },
-      calls: [{ callId: 1, name: "searchTools", status: "completed" }],
-    });
-    const name = discovered.result.value.tools[0]?.name;
-    if (name === undefined) throw new Error("Expected a discovered tool");
-
-    const description = await agent.client.callTool({
-      name: "execute",
-      arguments: { code: `return await tools.describeTool({ name: ${JSON.stringify(name)} });` },
-    });
-
-    expect(description.structuredContent).toMatchObject({
-      result: { ok: true, value: { name: "add", inputSchema: { required: ["a", "b"] } } },
-    });
-
-    const result = await agent.client.callTool({
-      name: "execute",
-      arguments: {
-        code: `return (await tools[${JSON.stringify(name)}]({ a: 2, b: 3 })).structuredContent.sum;`,
-      },
-    });
-
-    expect(result.isError).toBe(false);
-    expect(result.structuredContent).toEqual({
-      result: { ok: true, value: 5 },
-      calls: [{ callId: 1, name: "add", status: "completed" }],
-    });
-    expect(result.content).toEqual([
-      { type: "text", text: JSON.stringify(result.structuredContent) },
-    ]);
-  });
-
-  test("processes an upstream dataset in QuickJS and returns only the selected output and call summary", async () => {
-    const upstreamServer = new McpServer({ name: "dataset-upstream", version: "1" });
-    upstreamServer.registerTool("dataset", {}, () => ({
+  test("processes a large upstream dataset and exposes only selected output and call summaries", async () => {
+    const upstream = createMcpServer();
+    upstream.registerTool("dataset", {}, () => ({
       content: [],
       structuredContent: {
         records: Array.from({ length: 3000 }, (_, id) => ({ id, text: "private payload" })),
       },
     }));
+    await using app = await connectGateway(upstream, { maxOutputBytes: 4 });
 
-    await using upstream = await connectMcp(upstreamServer);
-    const catalog = await createMcpCatalog(upstream.client);
-    await using agent = await connectMcp(createServer(catalog, { maxOutputBytes: 4 }));
-
-    const response = await agent.client.callTool({
+    const response = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return (await tools.dataset()).structuredContent.records.length;" },
+      arguments: {
+        code: 'return (await tools["test.dataset"]({})).structuredContent.records.length;',
+      },
     });
 
-    expect(response.isError).toBe(false);
     expect(response.structuredContent).toEqual({
       result: { ok: true, value: 3000 },
-      calls: [{ callId: 1, name: "dataset", status: "completed" }],
+      calls: [{ callId: 1, name: "test.dataset", status: "completed" }],
     });
     expect(response.content).toEqual([
       { type: "text", text: JSON.stringify(response.structuredContent) },
@@ -283,44 +212,37 @@ describe("MCP client through codemode to upstream MCP", () => {
     expect(JSON.stringify(response)).not.toContain("private payload");
   });
 
-  test("recovers from a guest script failure and calls upstream through the same server", async () => {
-    await using upstream = await connectMcp(createMcpServer());
-    const catalog = await createMcpCatalog(upstream.client);
-    await using agent = await connectMcp(createServer(catalog));
+  test("recovers from a guest script failure through the same gateway", async () => {
+    await using app = await connectGateway(createMcpServer());
 
-    const failed = await agent.client.callTool({
+    const failed = await app.client.callTool({
       name: "execute",
-      arguments: { code: 'await tools.add({ a: 2, b: 3 }); throw new Error("Script failed");' },
+      arguments: {
+        code: 'await tools["test.add"]({ a: 2, b: 3 }); throw new Error("Script failed");',
+      },
     });
 
-    const recovered = await agent.client.callTool({
+    const recovered = await app.client.callTool({
       name: "execute",
-      arguments: { code: "return (await tools.add({ a: 4, b: 5 })).structuredContent.sum;" },
+      arguments: {
+        code: 'return (await tools["test.add"]({ a: 4, b: 5 })).structuredContent.sum;',
+      },
     });
 
-    expect(failed.isError).toBe(true);
     expect(failed.structuredContent).toEqual({
       result: { ok: false, error: { kind: "script", message: "Script failed" } },
-      calls: [{ callId: 1, name: "add", status: "completed" }],
+      calls: [{ callId: 1, name: "test.add", status: "completed" }],
     });
-    expect(recovered.isError).toBe(false);
-    expect(recovered.structuredContent).toEqual({
-      result: { ok: true, value: 9 },
-      calls: [{ callId: 1, name: "add", status: "completed" }],
-    });
+    expect(recovered.structuredContent).toMatchObject({ result: { ok: true, value: 9 } });
   });
 
   test("request cancellation reaches upstream without cancelling another execution", async () => {
-    const upstreamServer = new McpServer({ name: "cancellation-upstream", version: "1" });
     const started = Promise.withResolvers<void>();
     const cancelled = Promise.withResolvers<void>();
     const survivorStarted = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => release.resolve());
-    cleanup.defer(() => cancelled.resolve());
-
-    upstreamServer.registerTool(
+    const upstream = createMcpServer();
+    upstream.registerTool(
       "wait",
       { inputSchema: z.object({ cancel: z.boolean().optional() }) },
       async ({ cancel }, { mcpReq }) => {
@@ -341,27 +263,25 @@ describe("MCP client through codemode to upstream MCP", () => {
         return { content: [], structuredContent: { cancelled: mcpReq.signal.aborted } };
       },
     );
-
-    await using upstream = await connectMcp(upstreamServer);
-    const catalog = await createMcpCatalog(upstream.client);
-
-    await using agent = await connectMcp(createServer(catalog, { timeoutMs: 5000 }));
-
+    await using app = await connectGateway(upstream);
+    using gates = new DisposableStack();
+    gates.defer(() => release.resolve());
+    gates.defer(() => cancelled.resolve());
     const controller = new AbortController();
 
     const first = rejectionOf(
-      agent.client.callTool(
+      app.client.callTool(
         {
           name: "execute",
-          arguments: { code: "return await tools.wait({ cancel: true });" },
+          arguments: { code: 'return await tools["test.wait"]({ cancel: true });' },
         },
         { signal: controller.signal },
       ),
     );
 
-    const second = agent.client.callTool({
+    const second = app.client.callTool({
       name: "execute",
-      arguments: { code: "return (await tools.wait({})).structuredContent;" },
+      arguments: { code: 'return (await tools["test.wait"]({})).structuredContent;' },
     });
 
     await Promise.all([started.promise, survivorStarted.promise]);
@@ -373,20 +293,62 @@ describe("MCP client through codemode to upstream MCP", () => {
     expect((await second).structuredContent).toMatchObject({
       result: { ok: true, value: { cancelled: false } },
     });
-    expect(await upstream.client.ping()).toEqual({});
+    expect(app.gateway.status()).toMatchObject([{ state: "connected" }]);
   });
 });
 
-/** Own both ends, including partially completed setup; handlers remain in each test. */
-async function connectMcp(server: McpServer) {
-  await using cleanup = new AsyncDisposableStack();
-  cleanup.defer(() => server.close());
-  const client = new Client({ name: "cmg-test", version: "0.0.0" });
-  cleanup.defer(() => client.close());
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport, { timeout: 1_000 });
-  const owned = cleanup.move();
+/** Own a real HTTP upstream and gateway; scenarios supply handlers and policy. */
+async function connectGateway(upstream: McpServer, sandbox: ConfigurationInput["sandbox"] = {}) {
+  await using setup = new AsyncDisposableStack();
+  setup.defer(() => upstream.close());
 
-  return { client, [Symbol.asyncDispose]: () => owned.disposeAsync() };
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableJsonResponse: true,
+  });
+
+  await upstream.connect(transport);
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => transport.handleRequest(request),
+  });
+
+  setup.defer(() => listener.stop(true));
+
+  const gateway = setup.use(
+    new Gateway(
+      Configuration.parse({
+        mcp: { servers: { test: { type: "remote", url: listener.url.href } } },
+        sandbox,
+      }),
+      ".",
+    ),
+  );
+
+  await gateway.start();
+  const server = gateway.createServer();
+  const agent = setup.use(await connectMcp(server));
+  const cleanup = setup.move();
+
+  return {
+    gateway,
+    server,
+    client: agent.client,
+    [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
+  };
+}
+
+async function connectMcp(server: McpServer) {
+  await using setup = new AsyncDisposableStack();
+  setup.defer(() => server.close());
+  const client = new Client({ name: "gateway-test", version: "0" });
+  setup.defer(() => client.close());
+  const [local, remote] = InMemoryTransport.createLinkedPair();
+  await server.connect(remote);
+  await client.connect(local);
+  const cleanup = setup.move();
+
+  return { client, [Symbol.asyncDispose]: () => cleanup.disposeAsync() };
 }

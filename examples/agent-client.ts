@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { waitForServer } from "./readiness.ts";
 
 const client = new Client({ name: "cmg-agent-example", version: "0.0.0" });
 
@@ -24,12 +25,13 @@ cleanup.defer(async () => {
 cleanup.defer(() => transport.close());
 cleanup.defer(() => client.close());
 await connecting;
+await waitForServer(client, "math");
 
 console.log((await client.listTools()).tools.map((tool) => tool.name));
 for (const code of [
   'return await tools.searchTools({ query: "Add numbers" });',
-  'return await tools.describeTool({ name: "add" });',
-  "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;",
+  'return await tools.describeTool({ name: "math.add" });',
+  'return (await tools["math.add"]({ a: 2, b: 3 })).structuredContent.sum;',
 ]) {
   console.log((await client.callTool({ name: "execute", arguments: { code } })).structuredContent);
 }

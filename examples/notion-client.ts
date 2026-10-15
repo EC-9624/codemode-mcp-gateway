@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
+import { waitForServer } from "./readiness.ts";
 
 const options = argumentsOf(process.argv.slice(2));
 if (!options.ok) {
@@ -60,16 +61,16 @@ const steps = [
   {
     name: "discover",
     code: `const toolsFound = await tools.searchTools({ query: "notion search" });
-      if (!Array.isArray(toolsFound.tools) || !toolsFound.tools.some(tool => tool.name === "notion-search")) {
+      if (!Array.isArray(toolsFound.tools) || !toolsFound.tools.some(tool => tool.name === "notion.notion-search")) {
         return { status: "failed", kind: "validation", message: "Discovery did not include notion-search." };
       }
       return { status: "passed", summary: { toolsFound: toolsFound.tools.length, totalMatches: toolsFound.total } };`,
   },
   ...["notion-search", ...(page === undefined ? [] : ["notion-fetch"])].map((name) => ({
     name: `describe:${name}`,
-    code: `const description = await tools.describeTool({ name: ${JSON.stringify(name)} });
+    code: `const description = await tools.describeTool({ name: ${JSON.stringify(`notion.${name}`)} });
       const field = ${JSON.stringify(name === "notion-search" ? "query" : "id")};
-      if (description?.name !== ${JSON.stringify(name)} || description.inputSchema?.type !== "object"
+      if (description?.name !== ${JSON.stringify(`notion.${name}`)} || description.inputSchema?.type !== "object"
         || description.inputSchema.properties?.[field]?.type !== "string"
         || !description.inputSchema.required?.includes(field)) {
         return { status: "failed", kind: "validation", message: "Required Notion input schema changed." };
@@ -79,7 +80,7 @@ const steps = [
   {
     name: "search",
     code: `${decoder}
-      const response = await tools["notion-search"]({ query: ${JSON.stringify(query)}, page_size: 10, max_highlight_length: 0 });
+      const response = await tools["notion.notion-search"]({ query: ${JSON.stringify(query)}, page_size: 10, max_highlight_length: 0 });
       const decoded = decode(response);
       if (decoded.status === "failed") return decoded;
       const value = decoded.value;
@@ -100,7 +101,7 @@ if (page !== undefined) {
   steps.push({
     name: "fetch",
     code: `${decoder}
-      const response = await tools["notion-fetch"]({ id: ${JSON.stringify(page)} });
+      const response = await tools["notion.notion-fetch"]({ id: ${JSON.stringify(page)} });
       const decoded = decode(response);
       if (decoded.status === "failed") return decoded;
       const value = decoded.value;
@@ -173,6 +174,7 @@ cleanup.defer(async () => {
 
 try {
   await client.connect(transport, { timeout: 30_000 });
+  await waitForServer(client, "notion");
 } catch {
   console.log(
     JSON.stringify({
@@ -278,7 +280,7 @@ async function runStep(step: string, code: string, iteration: number, agent: num
 
 function argumentsOf(args: string[]) {
   const usage =
-    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>] [--gateway <installed-cmg-path>]";
+    "Usage: bun run example:notion <config> <query> [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>] [--gateway <installed-cmg-path>]";
 
   let parsed;
   try {
@@ -297,8 +299,8 @@ function argumentsOf(args: string[]) {
     return { ok: false, message: usage } as const;
   }
 
-  const [configuration, query, legacyPage] = parsed.positionals;
-  const page = parsed.values.page ?? legacyPage;
+  const [configuration, query] = parsed.positionals;
+  const page = parsed.values.page;
   const marker = parsed.values.expect;
   const runs = Number(parsed.values.runs);
   const agents = Number(parsed.values.agents);
@@ -307,8 +309,7 @@ function argumentsOf(args: string[]) {
     !configuration ||
     !query?.trim() ||
     (gateway !== undefined && !gateway.trim()) ||
-    parsed.positionals.length > 3 ||
-    (legacyPage !== undefined && parsed.values.page !== undefined) ||
+    parsed.positionals.length > 2 ||
     (page !== undefined && !page.replace(/-/g, "").match(/[a-f0-9]{32}/i)) ||
     (marker !== undefined && (!marker.trim() || page === undefined)) ||
     !Number.isInteger(runs) ||

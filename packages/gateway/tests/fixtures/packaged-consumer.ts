@@ -2,7 +2,7 @@ import { ok, deepEqual } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
-import { Configuration, Gateway, createServer } from "codemode-mcp-gateway";
+import { Configuration, Gateway } from "codemode-mcp-gateway";
 import { dirname } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -62,24 +62,6 @@ deepEqual(sum.structuredContent, {
   calls: [{ callId: 1, name: "add", status: "completed" }],
 });
 
-const gateway = createServer(catalog);
-const gatewayAgent = new Client({ name: "packed-gateway", version: "1" });
-const [gatewayAgentWire, gatewayWire] = InMemoryTransport.createLinkedPair();
-cleanup.defer(() => gateway.close());
-cleanup.defer(() => gatewayAgent.close());
-await gateway.connect(gatewayWire);
-await gatewayAgent.connect(gatewayAgentWire);
-
-const composed = await gatewayAgent.callTool({
-  name: "execute",
-  arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
-});
-
-deepEqual(composed.structuredContent, {
-  result: { ok: true, value: 42 },
-  calls: [{ callId: 1, name: "add", status: "completed" }],
-});
-
 const binary = process.argv[2];
 const config = process.argv[3];
 if (binary === undefined || config === undefined)
@@ -98,14 +80,38 @@ cleanup.defer(() => transport.close());
 cleanup.defer(() => cli.close());
 await connecting;
 
+const readySignal = AbortSignal.timeout(5000);
+while (true) {
+  readySignal.throwIfAborted();
+
+  const ready = await cli.callTool(
+    {
+      name: "execute",
+      arguments: {
+        code: 'return (await tools.searchTools({ query: "add", server: "math" })).servers[0].state;',
+      },
+    },
+    { signal: readySignal },
+  );
+
+  const state = z
+    .object({ result: z.object({ ok: z.literal(true), value: z.string() }) })
+    .parse(ready.structuredContent).result.value;
+
+  if (state === "connected") break;
+
+  deepEqual(state, "connecting");
+  await Bun.sleep(50);
+}
+
 const response = await cli.callTool({
   name: "execute",
-  arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
+  arguments: { code: 'return (await tools["math.add"]({ a: 20, b: 22 })).structuredContent.sum;' },
 });
 
 deepEqual(response.structuredContent, {
   result: { ok: true, value: 42 },
-  calls: [{ callId: 1, name: "add", status: "completed" }],
+  calls: [{ callId: 1, name: "math.add", status: "completed" }],
 });
 
 // Catalog revisions and worker startup must also work through compiled package exports.

@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { Configuration, configurationPath, resolveHeaders } from "codemode-mcp-gateway";
+import {
+  Configuration,
+  configurationPath,
+  resolveHeaders,
+  type ConfigurationInput,
+} from "codemode-mcp-gateway";
 
 describe("application configuration", () => {
-  test("normalizes named local and remote entries and derives OAuth identity from the name", () => {
+  test("validates named local and remote entries without changing their transport shape", () => {
     const config = Configuration.parse({
       mcp: {
         servers: {
@@ -18,31 +23,26 @@ describe("application configuration", () => {
       },
     });
 
-    expect(config.mcp?.servers).toEqual({
+    expect(config.mcp.servers).toEqual({
       local: {
         disabled: false,
-        upstream: {
-          transport: "stdio",
-          command: "bun",
-          args: ["server.ts"],
-          env: { MODE: "read" },
-          cwd: "tools",
-        },
+        type: "local",
+        command: ["bun", "server.ts"],
+        environment: { MODE: "read" },
+        cwd: "tools",
       },
       notes: {
         disabled: false,
-        upstream: {
-          transport: "http",
-          id: "notes",
-          url: "https://example.com/mcp",
-          auth: { type: "oauth", scope: "read" },
-        },
+        type: "remote",
+        url: "https://example.com/mcp",
+        oauth: { scope: "read" },
       },
-      paused: { disabled: true, upstream: { transport: "stdio", command: "unused", args: [] } },
+      paused: { disabled: true, type: "local", command: ["unused"] },
     });
   });
 
   test.each([
+    { name: "unnamed upstream", input: { upstream: { command: "bun" } } },
     {
       name: "mixed formats",
       input: {
@@ -77,10 +77,11 @@ describe("application configuration", () => {
   ])("rejects $name", ({ input }) => {
     expect(Configuration.safeParse(input).success).toBe(false);
   });
-  test("keeps command-only configurations as stdio upstreams", () => {
-    const config = Configuration.parse({ upstream: { command: "bun", args: ["server.ts"] } });
+  test("supplies bounded default sandbox policy", () => {
+    const config = Configuration.parse({
+      mcp: { servers: { local: { type: "local", command: ["bun", "server.ts"] } } },
+    });
 
-    expect(config.upstream).toEqual({ transport: "stdio", command: "bun", args: ["server.ts"] });
     expect(config.sandbox).toEqual({
       timeoutMs: 5000,
       totalTimeoutMs: 10000,
@@ -96,87 +97,82 @@ describe("application configuration", () => {
 
   test("accepts HTTP upstream configuration and host-owned header templates", () => {
     const upstream = {
-      transport: "http",
+      type: "remote",
       url: "https://example.com/mcp",
       headers: { Authorization: "Bearer {env:TOKEN}" },
-    } satisfies Configuration["upstream"];
+    } satisfies ConfigurationInput["mcp"]["servers"][string];
 
     const config = Configuration.parse({
-      upstream,
+      mcp: { servers: { notes: upstream } },
       sandbox: { maxToolCalls: 2, maxConcurrentExecutions: 8 },
     });
 
-    expect(config.upstream).toEqual(upstream);
+    expect(config.mcp.servers.notes).toEqual({ ...upstream, disabled: false });
     expect(config.sandbox.maxToolCalls).toBe(2);
     expect(config.sandbox.maxConcurrentExecutions).toBe(8);
   });
 
   test("accepts explicitly named OAuth connections without static bearer headers", () => {
     const upstream = {
-      id: "notion",
-      transport: "http",
+      type: "remote",
       url: "https://mcp.notion.com/mcp",
-      auth: { type: "oauth", scope: "read" },
-    } satisfies Configuration["upstream"];
+      oauth: { scope: "read" },
+    } satisfies ConfigurationInput["mcp"]["servers"][string];
 
-    expect(Configuration.parse({ upstream }).upstream).toEqual(upstream);
+    expect(
+      Configuration.parse({ mcp: { servers: { notion: upstream } } }).mcp.servers.notion,
+    ).toEqual({ ...upstream, disabled: false });
   });
 
   test.each([
     [
-      "missing connection id",
-      { transport: "http", url: "https://example.com/mcp", auth: { type: "oauth" } },
+      "explicit connection id",
+      { type: "remote", id: "other", url: "https://example.com/mcp", oauth: {} },
     ],
     [
       "competing bearer header",
       {
-        id: "test",
-        transport: "http",
+        type: "remote",
         url: "https://example.com/mcp",
         headers: { aUtHoRiZaTiOn: "private-token" },
-        auth: { type: "oauth" },
+        oauth: {},
       },
     ],
-    [
-      "cleartext remote endpoint",
-      { id: "test", transport: "http", url: "http://example.com/mcp", auth: { type: "oauth" } },
-    ],
+    ["cleartext remote endpoint", { type: "remote", url: "http://example.com/mcp", oauth: {} }],
     [
       "embedded credentials",
       {
-        id: "test",
-        transport: "http",
+        type: "remote",
         url: "https://user:private@example.com/mcp",
-        auth: { type: "oauth" },
+        oauth: {},
       },
     ],
   ])("rejects OAuth %s", (_name, upstream) => {
-    expect(Configuration.safeParse({ upstream }).success).toBe(false);
+    expect(Configuration.safeParse({ mcp: { servers: { notes: upstream } } }).success).toBe(false);
   });
 
   test("returns a validation failure rather than throwing for malformed OAuth URLs", () => {
     expect(
       Configuration.safeParse({
-        upstream: { id: "test", transport: "http", url: "invalid", auth: { type: "oauth" } },
+        mcp: { servers: { notes: { type: "remote", url: "invalid", oauth: {} } } },
       }).success,
     ).toBe(false);
   });
 
   test.each([
-    ["unsupported transport", { transport: "sse", url: "https://example.com/mcp" }],
-    ["non-HTTP URL", { transport: "http", url: "file:///etc/hosts" }],
-    ["unknown upstream field", { command: "bun", unexpected: true }],
+    ["unsupported transport", { type: "sse", url: "https://example.com/mcp" }],
+    ["non-HTTP URL", { type: "remote", url: "file:///etc/hosts" }],
+    ["unknown upstream field", { type: "local", command: ["bun"], unexpected: true }],
     [
       "OAuth fragment",
       {
-        transport: "http",
-        id: "notes",
+        type: "remote",
         url: "https://example.com/mcp#fragment",
-        auth: { type: "oauth" },
+        oauth: {},
       },
     ],
   ])("rejects %s", (_name, upstream) => {
-    expect(Configuration.safeParse({ upstream }).success).toBe(false);
+    expect(Configuration.safeParse({ mcp: { servers: { notes: upstream } } }).success).toBe(false);
   });
 
   test.each(["maxToolCalls", "maxConcurrentExecutions"])(
@@ -184,7 +180,7 @@ describe("application configuration", () => {
     (name) => {
       expect(
         Configuration.safeParse({
-          upstream: { command: "bun" },
+          mcp: { servers: { local: { type: "local", command: ["bun"] } } },
           sandbox: { [name]: 0 },
         }).success,
       ).toBe(false);
@@ -193,22 +189,24 @@ describe("application configuration", () => {
 
   test("accepts a loopback HTTP endpoint for local OAuth development", () => {
     const upstream = {
-      transport: "http",
-      id: "notes",
+      type: "remote",
       url: "http://127.0.0.1:12345/mcp",
-      auth: { type: "oauth" },
-    } satisfies Configuration["upstream"];
+      oauth: {},
+    } satisfies ConfigurationInput["mcp"]["servers"][string];
 
-    const result = Configuration.safeParse({ upstream });
+    const result = Configuration.safeParse({ mcp: { servers: { notes: upstream } } });
 
     expect(result.success).toBe(true);
     if (!result.success) throw result.error;
 
-    expect(result.data.upstream).toEqual(upstream);
+    expect(result.data.mcp.servers.notes).toEqual({ ...upstream, disabled: false });
   });
 
   test("rejects unknown top-level configuration fields", () => {
-    const input = { upstream: { command: "bun" }, unexpected: true };
+    const input = {
+      mcp: { servers: { local: { type: "local", command: ["bun"] } } },
+      unexpected: true,
+    };
 
     const result = Configuration.safeParse(input);
 

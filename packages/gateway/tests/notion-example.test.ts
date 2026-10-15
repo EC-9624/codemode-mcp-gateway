@@ -48,7 +48,7 @@ describe("Notion validation example", () => {
       };
     });
     await using upstream = await httpServer(server);
-    await using config = await configuration({ transport: "http", url: upstream.url });
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
     const result = await runExample([
       config.path,
@@ -92,7 +92,7 @@ describe("Notion validation example", () => {
       content: [{ type: "text", text: JSON.stringify({ type: "workspace_search", results: [] }) }],
     }));
     await using upstream = await httpServer(server);
-    await using config = await configuration({ transport: "http", url: upstream.url });
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
     const result = await runExample([config.path, "no matches"]);
 
@@ -139,7 +139,7 @@ describe("Notion validation example", () => {
         return { isError: response.isError, content: [...response.content] };
       });
       await using upstream = await httpServer(server);
-      await using config = await configuration({ transport: "http", url: upstream.url });
+      await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
       const result = await runExample([config.path, "design", "--runs", "2"]);
 
@@ -201,9 +201,16 @@ describe("Notion validation example", () => {
       ],
     }));
     await using upstream = await httpServer(server);
-    await using config = await configuration({ transport: "http", url: upstream.url });
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
-    const result = await runExample([config.path, "design", page, "--expect", "expected marker"]);
+    const result = await runExample([
+      config.path,
+      "design",
+      "--page",
+      page,
+      "--expect",
+      "expected marker",
+    ]);
 
     expect(result.code).toBe(1);
     expect(result.records.find((record) => record.step === "fetch")).toMatchObject({
@@ -226,7 +233,7 @@ describe("Notion validation example", () => {
       return { content: [] };
     });
     await using upstream = await httpServer(server);
-    await using config = await configuration({ transport: "http", url: upstream.url });
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
     const result = await runExample([config.path, "design", "--page", page]);
 
@@ -256,7 +263,7 @@ describe("Notion validation example", () => {
       return { content: [] };
     });
     await using upstream = await httpServer(server);
-    await using config = await configuration({ transport: "http", url: upstream.url });
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
 
     const result = await runExample([config.path, "design"]);
 

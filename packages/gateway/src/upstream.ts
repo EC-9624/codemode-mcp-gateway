@@ -7,7 +7,7 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ToolCatalog, ToolResult } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
-import { resolveHeaders, type UpstreamConfiguration } from "./config.ts";
+import { resolveHeaders, type ServerConfiguration } from "./config.ts";
 import { credentialStore, oauthConnection } from "./auth/credentials.ts";
 import { OAuthSession } from "./auth/session.ts";
 import { AuthorizationError } from "./auth/result.ts";
@@ -25,24 +25,29 @@ export class UpstreamError extends GatewayError {
 }
 
 type ConnectionEvents = {
-  closed?: () => void;
-  authentication?: (error: AuthorizationError) => string;
+  closed: () => void;
+  authorization: {
+    failed: (error: AuthorizationError) => void;
+    message: (error: AuthorizationError) => string;
+  };
 };
 
 /** Owns one upstream connection, its catalog, and its OAuth session. */
 export async function connectUpstream(
-  upstream: UpstreamConfiguration,
+  name: string,
+  upstream: ServerConfiguration,
   directory: string,
   signal: AbortSignal,
-  options: CredentialOptions = {},
-  events: ConnectionEvents = {},
+  options: CredentialOptions,
+  events: ConnectionEvents,
 ) {
   // Partial setup failures await registered cleanup in reverse order before rejecting.
   await using setup = new AsyncDisposableStack();
+  const recovery = events.authorization;
   let session: OAuthSession | undefined;
   let authorizationUnavailable = false;
-  if (upstream.transport === "http" && upstream.auth !== undefined) {
-    const connection = oauthConnection(upstream);
+  if (upstream.type === "remote" && upstream.oauth) {
+    const connection = oauthConnection(name, upstream);
     if (!connection.ok) throw new AuthorizationError(connection.error);
 
     const opened = await OAuthSession.open(
@@ -65,13 +70,13 @@ export async function connectUpstream(
     if (disconnected) return;
 
     disconnected = true;
-    events.closed?.();
+    events.closed();
   });
 
   transport.onclose = () => {
     disconnected = true;
     closed.resolve();
-    events.closed?.();
+    events.closed();
   };
 
   const client = new Client({ name: "codemode-mcp-gateway", version: "0.0.0" });
@@ -138,19 +143,12 @@ export async function connectUpstream(
   if (session !== undefined)
     catalog = publicAuthFailures(
       catalog,
-      {
-        ...events,
-        authentication: (error) => {
-          if (error.recovery !== "retry") authorizationUnavailable = true;
+      (error) => {
+        if (error.recovery !== "retry") authorizationUnavailable = true;
 
-          return events.authentication?.(error) ?? error.message;
-        },
+        recovery.failed(error);
       },
-      () => {
-        // Managed connections retire on auth failure; an older concurrent success must
-        // not revive their grant. Legacy connections can recover in place after login.
-        if (events.authentication === undefined) authorizationUnavailable = false;
-      },
+      recovery.message,
     );
 
   // `move()` empties setup and transfers cleanup to the returned connection; otherwise
@@ -167,16 +165,16 @@ export async function connectUpstream(
 }
 
 function createTransport(
-  upstream: UpstreamConfiguration,
+  upstream: ServerConfiguration,
   directory: string,
   session: OAuthSession | undefined,
   invalidated: () => void,
 ) {
-  if (upstream.transport === "stdio") {
+  if (upstream.type === "local") {
     return new StdioClientTransport({
-      command: upstream.command,
-      ...(upstream.args === undefined ? {} : { args: upstream.args }),
-      ...(upstream.env === undefined ? {} : { env: upstream.env }),
+      command: upstream.command[0],
+      args: upstream.command.slice(1),
+      ...(upstream.environment === undefined ? {} : { env: upstream.environment }),
       cwd: resolve(directory, upstream.cwd ?? "."),
       stderr: "inherit",
     });
@@ -215,8 +213,8 @@ function createTransport(
 
 function publicAuthFailures(
   catalog: ToolCatalog,
-  events: ConnectionEvents,
-  authenticated: () => void,
+  failed: (error: AuthorizationError) => void,
+  message: (error: AuthorizationError) => string,
 ): ToolCatalog {
   return ToolCatalog.create(
     Object.fromEntries(
@@ -231,13 +229,12 @@ function publicAuthFailures(
             ...description,
             async execute(args, context) {
               try {
-                const result = await tool(args, context);
-                if (result.ok) authenticated();
-
-                return result;
+                return await tool(args, context);
               } catch (cause) {
                 if (cause instanceof AuthorizationError) {
-                  return ToolResult.failure(events.authentication?.(cause) ?? cause.message);
+                  failed(cause);
+
+                  return ToolResult.failure(message(cause));
                 }
 
                 if (cause instanceof InsufficientScopeError) {

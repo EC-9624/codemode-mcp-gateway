@@ -1,7 +1,7 @@
 import { secrets } from "bun";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { type UpstreamConfiguration } from "../config.ts";
+import { type ServerConfiguration } from "../config.ts";
 import { AuthResult } from "./result.ts";
 
 const client = z.object({
@@ -79,18 +79,21 @@ type SecretService = {
   delete(key: { service: string; name: string }): Promise<boolean>;
 };
 
-export function oauthConnection(upstream: UpstreamConfiguration): AuthResult<OAuthConnection> {
-  if (upstream.transport !== "http" || upstream.auth === undefined || upstream.id === undefined) {
+export function oauthConnection(
+  name: string,
+  upstream: ServerConfiguration,
+): AuthResult<OAuthConnection> {
+  if (upstream.type !== "remote" || !upstream.oauth) {
     return AuthResult.failure(
       "invalid",
-      "This command requires an HTTP upstream with an id and OAuth authentication.",
+      "This command requires a remote server with OAuth authentication.",
     );
   }
 
   return AuthResult.success({
-    id: upstream.id,
+    id: name,
     url: new URL(upstream.url).href,
-    ...(upstream.auth.scope === undefined ? {} : { scope: upstream.auth.scope }),
+    ...(upstream.oauth.scope === undefined ? {} : { scope: upstream.oauth.scope }),
   });
 }
 

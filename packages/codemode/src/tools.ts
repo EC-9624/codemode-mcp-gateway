@@ -8,14 +8,18 @@ export type ToolResult = { ok: true; value: unknown } | { ok: false; error: { me
 /** Only explicit failure messages cross into the guest; thrown errors stay private. */
 export const ToolResult = {
   /** The guest receives the JSON-round-tripped value; an omitted value remains undefined. */
-  success(value?: unknown) {
-    return { ok: true, value } satisfies ToolResult;
-  },
+  success,
   /** Reject the guest's tool promise with this deliberately public message. */
   failure(message: string) {
     return { ok: false, error: { message } } satisfies ToolResult;
   },
 } as const;
+
+function success(): { ok: true; value: undefined };
+function success<T>(value: T): { ok: true; value: T };
+function success(value?: unknown) {
+  return { ok: true, value } satisfies ToolResult;
+}
 
 /** Host-only execution context shared by all tool calls in one execution. */
 export type ToolContext = {

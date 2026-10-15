@@ -5,7 +5,12 @@ import { serve } from "./server.ts";
 import { login, logout, type CredentialOptions } from "./auth/login.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import { GatewayError } from "./errors.ts";
-import { configurationPath, readConfiguration, type Configuration } from "./config.ts";
+import {
+  configurationPath,
+  configuredServer,
+  readConfiguration,
+  type Configuration,
+} from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
 
 const help = `Usage: cmg [serve|check|doctor|login|logout] [configuration.json] [options]
@@ -133,7 +138,7 @@ export async function main(
 
     if (command === "check") {
       const config = await readConfiguration(path);
-      const names = config.upstream === undefined ? Object.keys(config.mcp.servers) : ["default"];
+      const names = Object.keys(config.mcp.servers);
       if (parsed.values.json)
         console.log(JSON.stringify({ ok: true, configuration: path, servers: names }));
       else
@@ -195,14 +200,7 @@ export async function main(
 function selectServer(config: Configuration, name: string | undefined): Configuration {
   if (name === undefined) return config;
 
-  if (config.upstream !== undefined) {
-    if (name === "default" || ("id" in config.upstream && config.upstream.id === name))
-      return config;
-  } else {
-    const selected = Object.hasOwn(config.mcp.servers, name) ? config.mcp.servers[name] : undefined;
-    if (selected !== undefined)
-      return { sandbox: config.sandbox, mcp: { servers: { [name]: selected } } };
-  }
+  const selected = configuredServer(config, name);
 
-  throw new GatewayError(`Unknown server ${JSON.stringify(name)}.`);
+  return { sandbox: config.sandbox, mcp: { servers: { [name]: selected } } };
 }

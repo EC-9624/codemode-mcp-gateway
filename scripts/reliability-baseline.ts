@@ -3,8 +3,8 @@ import { cpus, release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
-import { createMcpCatalog } from "@cmg/mcp";
-import { createServer } from "codemode-mcp-gateway";
+import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
 import { z } from "zod";
 import { observeWorkers } from "./reliability-workers.ts";
 
@@ -217,7 +217,17 @@ async function measure() {
   });
   await attach();
   const catalog = await createMcpCatalog(provider);
-  const server = createServer(catalog, { timeoutMs: 2000, totalTimeoutMs: 4000 });
+
+  const executor = new CodeExecutor({
+    tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
+    timeoutMs: 2000,
+    totalTimeoutMs: 4000,
+  });
+
+  const server = createCodemodeServer({
+    execute: (code, options) => executor.execute(code, options),
+  });
+
   const agent = new Client({ name: "reliability-agent", version: "0" });
   cleanup.defer(() => agent.close());
   cleanup.defer(() => server.close());
@@ -265,7 +275,7 @@ async function measure() {
       totalTimeoutMs: 4000,
       documentCharacters: 65_536,
       topology:
-        "one reusable gateway/executor; in-memory MCP on both sides; explicit upstream reconnect using the same Client",
+        "one reusable MCP adapter and executor; in-memory MCP on both sides; explicit upstream reconnect using the same Client",
     }),
   );
   snapshot("before");

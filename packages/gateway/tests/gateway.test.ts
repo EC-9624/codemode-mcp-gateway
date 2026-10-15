@@ -13,6 +13,39 @@ const localCommand = [
 ];
 
 describe("multi-upstream gateway", () => {
+  test("the description matches server-filtered discovery capabilities", async () => {
+    await using gateway = new Gateway(
+      Configuration.parse({ mcp: { servers: { math: { type: "local", command: localCommand } } } }),
+      ".",
+    );
+
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const listing = await agent.client.listTools();
+    const description = listing.tools[0]?.description;
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'return await tools.searchTools({ query: "add", server: "math" });',
+      },
+    });
+
+    expect(description).toContain("## Availability");
+    expect(description).toContain('Tool names are qualified as "server.original-name".');
+    expect(description).toContain("use a new execution");
+    expect(response.structuredContent).toMatchObject({
+      result: {
+        ok: true,
+        value: {
+          tools: [{ name: "math.add" }],
+          servers: [{ name: "math", state: "connected" }],
+        },
+      },
+    });
+  });
+
   test("close cancels initialization queued by start without opening an upstream", async () => {
     await using upstream = await oauthFixture();
 
@@ -419,7 +452,7 @@ describe("multi-upstream gateway", () => {
   });
 
   test.each(["searchTools", "describeTool"])(
-    "legacy Gateway rejects the reserved upstream tool %s before publishing its catalog",
+    "qualifies an upstream %s tool without replacing the discovery helper",
     async (name) => {
       await using upstream = await oauthFixture({
         mcp: async (request) => {
@@ -438,15 +471,32 @@ describe("multi-upstream gateway", () => {
               id: body.id,
               result: { tools: [{ name, inputSchema: { type: "object" } }] },
             });
+
+          if (
+            typeof body === "object" &&
+            body !== null &&
+            "method" in body &&
+            body.method === "tools/call" &&
+            "id" in body
+          )
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: { content: [], structuredContent: { invoked: name } },
+            });
         },
       });
 
       await using gateway = new Gateway(
         Configuration.parse({
-          upstream: {
-            transport: "http",
-            url: upstream.url,
-            headers: { Authorization: "Bearer access-0" },
+          mcp: {
+            servers: {
+              notes: {
+                type: "remote",
+                url: upstream.url,
+                headers: { Authorization: "Bearer access-0" },
+              },
+            },
           },
         }),
         ".",
@@ -457,23 +507,22 @@ describe("multi-upstream gateway", () => {
 
       const discovery = await agent.client.callTool({
         name: "execute",
-        arguments: { code: 'return await tools.searchTools({ query: "reserved" });' },
+        arguments: {
+          code: `const page = await tools.searchTools({ query: ${JSON.stringify(name)} });
+          const result = await tools[${JSON.stringify(`notes.${name}`)}]({});
+          return { names: page.tools.map(tool => tool.name), invoked: result.structuredContent.invoked };`,
+        },
       });
 
       expect(gateway.status()).toMatchObject([
         {
-          state: "failed",
-          toolCount: 0,
-          error: {
-            kind: "discovery",
-            message: `Upstream tool ${JSON.stringify(name)} conflicts with a CMG discovery helper.`,
-          },
+          state: "connected",
+          toolCount: 1,
         },
       ]);
       expect(discovery.structuredContent).toMatchObject({
-        result: { ok: true, value: { tools: [], total: 0 } },
+        result: { ok: true, value: { names: [`notes.${name}`], invoked: name } },
       });
-      expect(upstream.requests.filter((request) => request.method === "DELETE")).toHaveLength(1);
     },
   );
 
