@@ -50,13 +50,15 @@ export type ExecutionReport = {
   readonly calls: readonly CallOutcome[];
 };
 export type ExecuteOptions = {
+  /** Host-supplied bindings, snapshotted at admission. Replace constructor defaults; {} exposes no tools. */
+  tools?: Readonly<Record<string, SandboxTool>>;
   /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
   signal?: AbortSignal;
 };
 
-/** Fixed configuration and tool bindings, snapshotted at construction. */
+/** Fixed configuration and default tool bindings, snapshotted at construction. */
 export type SandboxOptions = {
-  /** Snapshotted callback bindings. The application retains ownership of their external resources. */
+  /** Default bindings when execute omits tools. The application owns their external resources. */
   tools?: Readonly<Record<string, SandboxTool>>;
   /** Guest deadline after VM and bridge setup, including source parsing and host waits. Default: 1000 ms. */
   timeoutMs?: number;

@@ -2,7 +2,8 @@ import { ok, deepEqual } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
-import { createServer } from "codemode-mcp-gateway";
+import { Configuration, Gateway, createServer } from "codemode-mcp-gateway";
+import { dirname } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -33,12 +34,11 @@ await upstream.connect(upstreamWire);
 await upstreamClient.connect(clientWire);
 const catalog = await createMcpCatalog(upstreamClient);
 
-const executor = new CodeExecutor({
-  tools: { ...catalog.tools, ...createDiscoveryTools(catalog) },
-});
+const executor = new CodeExecutor();
+const tools = { ...catalog.tools, ...createDiscoveryTools(catalog) };
 
 const server = createCodemodeServer({
-  execute: (code, options) => executor.execute(code, options),
+  execute: (code, options) => executor.execute(code, { ...options, tools }),
 });
 
 const agent = new Client({ name: "packed-agent", version: "1" });
@@ -106,4 +106,43 @@ const response = await cli.callTool({
 deepEqual(response.structuredContent, {
   result: { ok: true, value: 42 },
   calls: [{ callId: 1, name: "add", status: "completed" }],
+});
+
+// Catalog revisions and worker startup must also work through compiled package exports.
+await using named = new Gateway(
+  Configuration.parse({
+    mcp: {
+      servers: {
+        one: { type: "local", command: [process.execPath, "mcp-server.ts"], cwd: "../upstream" },
+        two: { type: "local", command: [process.execPath, "mcp-server.ts"], cwd: "../upstream" },
+      },
+    },
+  }),
+  dirname(config),
+);
+
+await named.start();
+const namedServer = named.createServer();
+const namedClient = new Client({ name: "packed-named", version: "1" });
+const [namedLocal, namedRemote] = InMemoryTransport.createLinkedPair();
+cleanup.defer(() => namedClient.close());
+await namedServer.connect(namedRemote);
+await namedClient.connect(namedLocal);
+
+const combined = await namedClient.callTool({
+  name: "execute",
+  arguments: {
+    code: `return await Promise.all([
+  tools["one.add"]({ a: 1, b: 2 }).then(r => r.structuredContent.sum),
+  tools["two.add"]({ a: 3, b: 4 }).then(r => r.structuredContent.sum),
+]);`,
+  },
+});
+
+deepEqual(combined.structuredContent, {
+  result: { ok: true, value: [3, 7] },
+  calls: [
+    { callId: 1, name: "one.add", status: "completed" },
+    { callId: 2, name: "two.add", status: "completed" },
+  ],
 });

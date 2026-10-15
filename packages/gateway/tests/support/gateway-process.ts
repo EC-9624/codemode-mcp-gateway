@@ -18,6 +18,8 @@ export async function gatewayProcess(
     upstream?: Configuration["upstream"];
     environment?: NodeJS.ProcessEnv;
     entry?: string;
+    configuration?: unknown;
+    args?: string[];
   } = {},
 ) {
   await using setup = new AsyncDisposableStack();
@@ -27,16 +29,18 @@ export async function gatewayProcess(
 
   await Bun.write(
     config,
-    JSON.stringify({
-      upstream: options.upstream ?? {
-        command: process.execPath,
-        args: [
-          fileURLToPath(new URL("../fixtures/gateway-upstream.ts", import.meta.url)),
-          options.mode ?? "invoke",
-        ],
+    JSON.stringify(
+      options.configuration ?? {
+        upstream: options.upstream ?? {
+          command: process.execPath,
+          args: [
+            fileURLToPath(new URL("../fixtures/gateway-upstream.ts", import.meta.url)),
+            options.mode ?? "invoke",
+          ],
+        },
+        sandbox: options.sandbox ?? {},
       },
-      sandbox: options.sandbox ?? {},
-    }),
+    ),
   );
 
   const child = spawn(
@@ -44,7 +48,7 @@ export async function gatewayProcess(
     [
       "--conditions=development",
       options.entry ?? fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
-      config,
+      ...(options.args ?? [config]),
     ],
     {
       stdio: ["pipe", "pipe", "pipe"],

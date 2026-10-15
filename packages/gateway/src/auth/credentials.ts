@@ -1,7 +1,7 @@
 import { secrets } from "bun";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { type Configuration } from "../config.ts";
+import { type UpstreamConfiguration } from "../config.ts";
 import { AuthResult } from "./result.ts";
 
 const client = z.object({
@@ -36,6 +36,13 @@ export const Credentials = z.strictObject({
 });
 
 export type Credentials = z.infer<typeof Credentials>;
+
+/** Private change marker for observing login/logout without logging or retaining token values. */
+export function credentialVersion(record: Credentials | undefined): string {
+  return createHash("sha256")
+    .update(JSON.stringify(record ?? null))
+    .digest("hex");
+}
 
 /** Normalize both exchanged and refreshed tokens before persistence. */
 export function withTokens(record: Credentials, input: unknown) {
@@ -72,7 +79,7 @@ type SecretService = {
   delete(key: { service: string; name: string }): Promise<boolean>;
 };
 
-export function oauthConnection(upstream: Configuration["upstream"]): AuthResult<OAuthConnection> {
+export function oauthConnection(upstream: UpstreamConfiguration): AuthResult<OAuthConnection> {
   if (upstream.transport !== "http" || upstream.auth === undefined || upstream.id === undefined) {
     return AuthResult.failure(
       "invalid",

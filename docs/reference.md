@@ -19,19 +19,25 @@ Import package roots; runtime deep imports are unsupported. Exact signatures and
 field contracts live in the public exports of [codemode](../packages/codemode/src/index.ts),
 [MCP](../packages/mcp/src/index.ts), and [gateway](../packages/gateway/src/index.ts).
 
-`new CodeExecutor({ tools, ...configuration })` validates limits and snapshots tool
+`new CodeExecutor({ tools, ...configuration })` validates limits and snapshots default tool
 bindings synchronously, before any worker starts. Constructor registry failures
 throw `SandboxExecutionError` with no calls; invalid configuration throws `RangeError`.
-Tools and limits stay fixed for that instance. `sandbox.execute(code, { signal }?)`
-accepts only per-request cancellation; it does not read resource-limit overrides.
+Defaults and limits stay fixed for that instance. `sandbox.execute(code, { tools, signal }?)`
+accepts host-supplied tool bindings and cancellation, never resource-limit overrides.
+Supplied tools replace defaults for that run without mutating them; `{}` exposes no
+tools, while omission/`undefined` uses the defaults. Each admitted execution copies
+supplied bindings synchronously into a private map before worker creation, using the
+same map for guest tool names and host dispatch. Registry read failures reject with
+host-only `SandboxExecutionError` diagnostics and release admission without a worker.
 Each admitted run owns its resources and can overlap other runs up to the instance's
 `maxConcurrentExecutions` (default 4); caller signals belong to individual runs.
 The sandbox holds configuration rather than live workers between runs, so it needs
 no `close()` call. Every execution awaits its own worker cleanup.
 
 An agent-facing MCP handler accepts `{ code }` and supplies request cancellation
-separately. Migration from `execute(code, tools, options)`: move tools and limits
-into the constructor and call the instance method. See [the runnable example](../examples/basic.ts).
+separately; tool selection remains host-owned. Migration from `execute(code, tools, options)`:
+move limits into the constructor and supply tools as constructor defaults or per-run
+options. See [the runnable example](../examples/basic.ts).
 
 Input is the body of an async function, not an expression or a module. Each call
 runs in a fresh worker with a fresh QuickJS runtime and context. Only explicitly
@@ -92,10 +98,11 @@ string length for non-ASCII text. Byte measurement does not allocate an encoded
 copy of the source.
 
 ```text
-construction: apply defaults -> validate configuration -> snapshot tools
+construction: apply defaults -> validate configuration -> snapshot default tools
 execution: check pre-aborted cancellation -> measure source bytes
   -> reject oversized source with no calls
   -> reserve execution capacity, or reject with limit/executions and no calls
+  -> snapshot supplied tools, or use constructor defaults
   -> start worker with stored limits
   -> worker validates startup data -> configure VM -> execute
 ```
@@ -116,7 +123,8 @@ guest parsing remains covered by `timeoutMs` and the optional parent deadline.
 `maxConcurrentExecutions` is a fixed positive integer from 1 to 2147483647, default
 4, counted independently by each executor. It is parent-owned policy and is not sent
 to or enforced by the guest. Reusing an executor shares capacity across requests;
-constructing another executor creates a separate budget.
+constructing another executor creates a separate budget. Per-execution tool snapshots
+use the same instance budget, released only after cleanup/actual exit.
 
 Admission happens synchronously after pre-aborted cancellation and source-size
 checks, before worker creation. An excess submission resolves to
@@ -708,8 +716,10 @@ This returns a page of exact names and short descriptions, without input schemas
 An unmatched query returns `{ tools: [], total: 0, nextOffset: null }`; invalid
 discovery arguments are catchable tool failures. `tools.describeTool({ name })`
 returns the complete description and input schema for one upstream tool. The catalog
-is a startup snapshot; the helper tools themselves are described in `execute`'s
-description rather than added to the upstream search index.
+is a fixed snapshot for each execution; the helper tools themselves are described
+in `execute`'s description rather than added to the upstream search index. Named
+gateway configurations also accept a `server` search filter and return a `servers`
+availability snapshot, including failed/unauthenticated entries with no tools.
 
 ### Responses
 
@@ -738,8 +748,10 @@ delivery of its final response even though worker cleanup still completes.
 See the [gateway guide](../packages/gateway/README.md) for commands, configuration,
 authentication headers, and the complete client → gateway → upstream example.
 
-The application validates its configuration, connects one stdio or Streamable HTTP upstream using the SDK's
-default legacy handshake, and discovers its catalog. Its agent-facing stdio entry
+The application validates its configuration and connects stdio or Streamable HTTP
+upstreams using the SDK's default legacy handshake. Legacy `upstream` configuration
+waits for one startup catalog. Named `mcp.servers` configuration exposes discovery
+while independent upstreams connect, retaining partial availability. Its stdio entry
 supports both legacy and modern MCP negotiation through `serveStdio`. The input
 transport starts while upstream setup is pending, so EOF also cancels initialization
 and discovery. EOF, SIGINT, and SIGTERM request shutdown. Cleanup awaits every
@@ -751,7 +763,27 @@ termination with HTTP 405 is handled by the SDK.
 
 Startup budgets are separate from execution budgets. The gateway uses the same
 `SandboxLimits` upper bounds as constructor and worker-boundary validation, with
-different default execution deadlines. Configuration and catalogs do not reload.
+different default execution deadlines. Configuration files are read once; named
+catalogs are republished after connection/authentication recovery. Each execution
+retains its catalog and connection leases through settlement. One long-lived
+`CodeExecutor` serves all catalog snapshots and MCP instances created by a `Gateway`.
+Its admission budget includes actual worker exit after failed termination.
+Separate gateways/processes remain independent.
+
+The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/cmg/config.json`,
+otherwise `~/.config/cmg/config.json`) and never implicitly loads cwd configuration.
+`check` validates offline, `doctor` opens fresh diagnostic connections, and named
+`login`/`logout` manage OS credentials. A running named gateway detects newly saved
+authorized credentials and recreates affected upstream sessions without restarting
+the agent-facing connection. Unchanged failed grants are not refreshed repeatedly.
+Pre-exchange setup failures retry with backoff; transient credential-read failures
+on active sessions leave those sessions usable by subsequent executions. Failed
+token exchanges or persistence after rotation are not retried with unchanged grants.
+An established HTTP session returning 404 is retired and reinitialized for later
+executions without replaying the failed call. Doctor emits its final report only
+after connection cleanup succeeds; cleanup errors produce a single failure result.
+See the [gateway guide](../packages/gateway/README.md#named-upstreams-and-hot-recovery)
+for recovery timing, status, and legacy compatibility.
 
 ## Architecture
 
@@ -760,7 +792,7 @@ the separate Bun thread running QuickJS. **Guest** is submitted JavaScript insid
 that VM, not the privileged worker code.
 
 ```text
-Host: fixed tools/policy -> worker supervision -> callback dispatch and reports
+Host: fixed policy + execution-local tools -> worker supervision -> callback dispatch and reports
   ↕ worker messages: call IDs, names, JSON payloads; shared interrupt flag
 Worker: startup validation -> VM/bridge setup -> guest job pump and deadline
   ↕ private functions: serialized call and reply envelopes
@@ -907,14 +939,15 @@ executable methods are never shared between host and guest.
 
 ### Parent-supervised deadline
 
-`totalTimeoutMs` records a fresh monotonic deadline after source admission and before
-worker construction. Registry snapshotting belongs to sandbox construction, outside
-execution deadlines. Every execution has a parent-owned one-word shared interrupt
+`totalTimeoutMs` records a fresh monotonic deadline after admission and tool snapshotting,
+before worker construction. Default bindings are copied at construction; supplied
+execution bindings are copied at admission. Both are outside execution deadlines.
+Every execution has a parent-owned one-word shared interrupt
 flag; the total budget adds a parent timer. The flag is supplied only to trusted worker
 code; it is never exposed to the guest.
 
 ```text
-admit source -> record parent deadline -> construct worker -> supervise
+admit source/execution -> snapshot tools -> record parent deadline -> construct worker -> supervise
   -> on messages and callback settlements: check the clock before continuing
   -> on expiry: select total-timeout result, close dispatch/call snapshot, set shared flag
   -> clear parent timer, remove normal listeners, request worker termination
@@ -945,8 +978,8 @@ caller abort -> check total deadline, choose timeout or cancelled outcome
   -> await termination -> remove worker error listener -> return report
 ```
 
-- A pre-aborted execution skips source admission and worker creation; tool bindings
-  were already snapshotted during construction.
+- A pre-aborted execution skips source admission, reading supplied tools, and worker
+  creation. Default tool bindings were already snapshotted during construction.
 - The first accepted outcome wins. If the total deadline has already elapsed when
   cancellation is observed, the result is `timeout`; otherwise it is `cancelled`.
   Later cancellation cannot replace a completed result or infrastructure failure.

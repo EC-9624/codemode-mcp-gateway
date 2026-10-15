@@ -22,8 +22,28 @@ console.log(report.calls);
 
 Submit the body of an async function: top-level `await` and `return` work, but
 modules and TypeScript do not. Each execution has a fresh environment; reuse the
-sandbox without calling `close()`. Tools and limits are fixed at construction,
+sandbox without calling `close()`. Default tools and limits are fixed at construction,
 and up to four executions may overlap by default, including their worker cleanup.
+
+### Per-execution tools
+
+Hosts with changing catalogs can reuse one executor and supply tools for each run:
+
+```ts
+const sandbox = new CodeExecutor({ maxConcurrentExecutions: 4 });
+const report = await sandbox.execute(code, { tools: currentCatalog.tools, signal });
+```
+
+Supplied tools replace constructor defaults for that execution; they are not merged.
+An empty `{}` exposes no tools. Omitting `tools` (or passing `undefined`) uses the
+constructor snapshot. Bindings are copied synchronously after admission, before any
+worker starts, so later registry mutations cannot change an active execution. This
+copies callbacks, not their external resources or closure state; the host owns those.
+All runs use the same executor budget regardless of their tool snapshots.
+
+Pre-aborted, oversized, and over-capacity submissions do not read execution tools.
+Registry access failures reject with host-only `SandboxExecutionError` diagnostics,
+start no worker, and release admission. Tool snapshotting is outside execution deadlines.
 
 Requires Bun **1.4.2**. Import the package root; runtime deep imports are unsupported.
 Run [the complete example](../../examples/basic.ts) with `bun run example` from

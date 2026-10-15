@@ -11,7 +11,7 @@ import { rejectionOf } from "./support/rejection.ts";
 async function credentialFiles(value: unknown) {
   const directory = await mkdtemp(join(tmpdir(), "cmg-auth-process-"));
   const path = join(directory, "credentials.json");
-  await Bun.write(path, JSON.stringify(value));
+  if (value !== undefined) await Bun.write(path, JSON.stringify(value));
 
   const store = {
     async load() {
@@ -46,6 +46,50 @@ async function credentialFiles(value: unknown) {
 const entry = fileURLToPath(new URL("./fixtures/oauth-gateway.ts", import.meta.url));
 
 describe("OAuth-backed stdio gateway", () => {
+  test("a running named gateway adopts credentials saved by login in another process", async () => {
+    await using upstream = await oauthFixture();
+    await using files = await credentialFiles(undefined);
+
+    await using app = await gatewayProcess({
+      entry,
+      environment: files.environment,
+      configuration: {
+        mcp: { servers: { notes: { type: "remote", url: upstream.url, oauth: {} } } },
+      },
+    });
+
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitFor('"state":"needs-auth"');
+    const pid = app.child.pid;
+
+    expect(
+      await login(app.config, {
+        server: "notes",
+        store: () => files.store,
+        lockDirectory: files.environment.CMG_TEST_LOCKS,
+        authorize: async (url) => {
+          await fetch(await upstream.authorize(url));
+        },
+      }),
+    ).toEqual({ ok: true, value: undefined });
+    await app.waitFor('"state":"connected"');
+
+    const response = await app.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'return (await tools["notes.add"]({ a: 20, b: 22 })).structuredContent.sum;',
+      },
+    });
+
+    app.child.stdin.end();
+
+    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(app.child.pid).toBe(pid);
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+    expect(app.stderr).not.toContain("access-");
+    expect(app.stderr).not.toContain("refresh-");
+  }, 10_000);
+
   test("two gateway processes stay connected and share one rotating-token refresh", async () => {
     const refreshing = Promise.withResolvers<void>();
     const challenged = Promise.withResolvers<void>();
@@ -403,6 +447,9 @@ describe("OAuth-backed stdio gateway", () => {
       result: { ok: true, value: 5 },
     });
     expect(upstream.refreshes).toBe(1);
+    app.child.stdin.end();
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+    expect(upstream.requests.filter((request) => request.method === "DELETE")).toHaveLength(1);
   }, 10_000);
 
   test.each(["rotation", "grant invalidation"])(

@@ -1,7 +1,7 @@
 # codemode-mcp-gateway
 
-A Bun stdio gateway that lets coding agents discover and compose one upstream
-MCP server's tools through JavaScript. This product package provides both a
+A Bun stdio gateway that lets coding agents discover and compose multiple upstream
+MCP servers' tools through JavaScript. This product package provides both a
 programmatic API and the `cmg` executable, composing `@cmg/codemode` and `@cmg/mcp`.
 The package remains private while its API matures.
 
@@ -17,6 +17,148 @@ Requires Bun **1.4.2**. `cmg` speaks MCP on stdin/stdout, so it waits for a clie
 it is not a JavaScript REPL. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 Stdout is exclusively MCP traffic; diagnostics and upstream stderr use stderr.
+
+## CLI and default configuration
+
+Once installed, clients can launch `cmg` without arguments. Configuration resolves
+from `--config <path>` (or the existing positional path), then
+`$XDG_CONFIG_HOME/cmg/config.json`, otherwise `~/.config/cmg/config.json`.
+An empty XDG variable uses the home fallback; a relative XDG path is rejected.
+The working directory is not searched implicitly.
+
+```sh
+cmg                         # Same as cmg serve
+cmg --config ./cmg.json
+cmg check --json
+cmg doctor --server notion --json
+cmg login --server notion
+cmg logout --server notion
+cmg --help
+cmg --version
+```
+
+All commands accept `--config` or an optional positional configuration path.
+`check` validates without connecting. `doctor` opens fresh diagnostic connections,
+closes them, then reports each selected server; it does not query another running
+CMG process. Both support JSON output. Login/logout select a named server; the name
+can be omitted when exactly one OAuth connection is configured. Logout removes
+local credentials, not the upstream grant.
+
+Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
+failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
+A named gateway can remain running with failed upstreams; a failed doctor check
+returns 1. `--json` is accepted only by check/doctor so it cannot pollute MCP stdout.
+
+## Named upstreams and hot recovery
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "notion": {
+        "type": "remote",
+        "url": "https://mcp.notion.com/mcp",
+        "oauth": {}
+      },
+      "math": {
+        "type": "local",
+        "command": ["bun", "./mcp-server.ts"]
+      }
+    }
+  }
+}
+```
+
+Server names contain letters, digits, `_`, or `-`. Local entries use a command
+array, optional `cwd`, and optional `environment`. Remote entries use an HTTP(S)
+`url`, optional header templates, and explicit `oauth: {}` (or `{ "scope": "read" }`)
+to enable OAuth. Omitted/false `oauth` uses an unauthenticated or static-header
+connection. Each entry accepts `disabled: true`. Relative local paths resolve from
+the config directory. OAuth storage identity is the server name plus canonical URL;
+using the same name as a legacy connection's `id` preserves its stored credentials.
+
+Invalid configuration fails before connecting. Enabled upstreams initialize
+independently; the agent-facing server is available while they connect. Expected
+failures leave other upstreams usable, including when no upstream is ready yet.
+State changes are reported as JSON lines on stderr. States are `disabled`,
+`connecting`, `connected`, `needs-auth`, and `failed`, with tool counts and controlled
+error messages. Status is last-observed connection state, not an active health check.
+
+```js
+return await tools.searchTools({ query: "search documents", server: "notion" });
+```
+
+Named-mode search returns `{ tools, total, nextOffset, servers }`. The optional
+`server` filter selects one configured upstream; `servers` reports availability
+even when no tools match. Calls use exact qualified names, such as
+`tools["notion.notion-search"](args)` or `tools["math.add"]({ a: 2, b: 3 })`.
+`describeTool` returns the selected tool's full schema. Names are never guessed or
+silently aliased across upstreams; even an upstream tool named `searchTools` is
+qualified and cannot overwrite the local helper.
+
+Access-token refresh remains automatic. A missing/revoked grant or uncertain refresh
+failure moves the affected server to `needs-auth`. Run `cmg login --server notion`
+using the same configuration; the gateway checks waiting credential records on a
+one-second maintenance cadence and reconnects after an authorized snapshot changes.
+Unchanged failed grants are not refreshed repeatedly. Transient OAuth metadata and
+credential-read failures during setup retry with connection backoff. On an already
+connected session, a pre-exchange credential-read/lock failure fails the current call;
+subsequent executions can use the same session when storage becomes available.
+Uncertain refresh responses and failed persistence after rotation still require
+changed credentials. A changed issuer/resource binding, including one observed
+during startup, triggers rebuilding that upstream's session.
+An in-flight request that encounters the old binding may fail; subsequent executions
+see the recovered connection. No failed script is automatically replayed.
+
+Connection/discovery failures use automatic 5/10/20/40/60-second backoff, capped at
+60 seconds. Attempts are single-flight per server. Maintenance can wait for an
+ongoing bounded setup attempt, so the cadence is not a strict recovery deadline.
+HTTP 404 responses for an established MCP session invalidate that connection and
+schedule a fresh handshake. The failed call is not replayed. Ordinary upstream
+tool/domain errors do not imply that a connection has failed.
+
+Each `Gateway` owns one long-lived `CodeExecutor`. The gateway supplies combined
+tool bindings, discovery helpers, and server-status snapshots for each execution;
+the executor owns fixed limits and concurrency admission. Successful recovery
+publishes a new catalog for subsequent executions without replacing the executor.
+Running scripts retain their original discovery and tool bindings. Old connections
+are retired after executions borrowing them settle. All MCP instances owned by the
+gateway use that executor's budget, held through worker cleanup. Separate gateways
+and CMG processes have independent budgets. Config edits are not
+watched; credential recovery does not require a config reload or whole-server restart.
+
+Shutdown aborts setup/recovery and active executions, awaits their cleanup, and
+closes owned connections. Remote session deletion is best-effort only when the
+transport has already closed or authorization is known unusable; local cleanup
+still completes. Unexpected infrastructure/cleanup failures remain host failures.
+
+[`examples/multi.json`](../../examples/multi.json) combines the synthetic math server
+and Notion. Run `bun run cmg doctor examples/multi.json` or point an MCP client at
+`bun run cmg examples/multi.json`. The old `upstream` format below retains its
+unqualified names and fail-fast startup. Mixing it with `mcp.servers` is rejected.
+
+### Verified interoperability
+
+The named gateway was exercised on Bun 1.4.2 with a real Notion HTTP connection
+and the local math stdio server. `doctor --json` reported both connected, and one
+compiled-CLI execution discovered Notion tools, returned `42` from `math.add`, and
+verified a known page in the upstream search response. EOF shutdown exited with
+code 0 and no signal.
+
+OpenCode 2.0.29 and Claude Code 2.1.299 reported the compiled stdio gateway connected
+from isolated temporary configuration. Codex CLI 0.162.1's native app-server MCP
+client listed `execute`, inspected the math server's availability, and invoked
+`math.add` through `execute` to return `42`. No model calls were used. A first Codex
+probe called the known tool before its upstream was ready and received a script
+error; the corrected probe used discovery's status before invocation. MCP readiness
+does not mean every upstream is already connected.
+
+Automated checks cover mixed transports, partial startup, cancellation, shared
+capacity across catalog revisions/clients, initial missing credentials, revoked
+grants, OAuth binding changes, and cross-process login adoption. Packed-consumer
+checks exercise named upstreams through compiled exports. Live revocation/consent
+recovery and native-client model reasoning were not exercised by this interoperability
+check; those recovery scenarios use controlled OAuth fixtures.
 
 ## Agent workflow
 
@@ -49,7 +191,7 @@ For the included upstream, the response contains:
 }
 ```
 
-Tool names are preserved exactly; use `tools["billing.listInvoices"]` for names
+In legacy mode, tool names are preserved exactly; use `tools["billing.listInvoices"]` for names
 that are not JavaScript identifiers. Local discovery calls share the execution budget.
 
 ## Results and failures
@@ -63,7 +205,7 @@ Infrastructure failures use a controlled `sandbox` error; private diagnostics st
 host-side. Cancellation cannot roll back upstream side effects, and a completed
 summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
 
-## Configuration
+## Legacy single-upstream configuration
 
 Stdio upstream:
 
@@ -103,9 +245,9 @@ For example, configure execution capacity and total tool calls without request o
 
 Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
 Startup has separate budgets: 5 seconds for the upstream handshake and 15 seconds
-for discovery. Configuration and the catalog do not reload during a run.
+for discovery. Legacy configuration and its startup catalog do not reload during a run.
 
-Each `createServer()` owns one reusable executor. Its `maxConcurrentExecutions`
+Each legacy `createServer()` owns one reusable executor. Its `maxConcurrentExecutions`
 defaults to 4 across all overlapping requests to that server instance, including
 worker cleanup. Excess requests receive `isError: true` with `result.error.resource:
 "executions"` and empty calls; they are not queued or retried. Separate server
@@ -241,6 +383,17 @@ await server.close();
 or installing process listeners. The caller owns the transport and any external
 connections used by its catalog.
 
+For named connections, construct `new Gateway(Configuration.parse(input), directory,
+options?)`, call `await gateway.start()`, and attach `gateway.createServer()` to an
+application-owned transport. `start()` waits for initial attempts; expected upstream
+failures are available from `gateway.status()`. Creating an MCP server before that
+promise settles exposes connecting statuses. `options.onStatus` receives updates;
+`gateway.failure` resolves with unexpected background infrastructure failures, which
+are also surfaced by `close()`. Close/dispose the gateway to stop maintenance,
+abort executions, and release all connections. Importing the package starts none
+of these activities. `ConfigurationInput` describes the JSON input; `Configuration`
+is the parsed form with named entries normalized to transport configurations.
+
 The public entry also exports `Configuration`, `resolveHeaders`, and
 `serve(configurationPath)`. Unlike `createServer`, `serve` owns the complete stdio
 process lifetime, including configuration loading and shutdown listeners. Importing
@@ -258,21 +411,21 @@ the connection binding. All processes
 sharing credentials must use the same lock directory. Imports perform no credential reads, browser launches, or
 process-listener registration.
 
-`serve` rejects with exported `AuthorizationError` for recognized authorization
-failures. Its `failure` carries a controlled kind/message and optional private cause;
+Legacy `serve` rejects with exported `AuthorizationError` for recognized authorization
+failures; named serving reports those per upstream. Its `failure` carries a controlled kind/message and optional private cause;
 do not serialize causes into MCP responses or diagnostic logs.
 
 ## How it works
 
 ```text
-configuration -> connect upstream -> snapshot tools and compile schemas
-  -> add local discovery -> fixed-policy QuickJS executor -> MCP execute server
+configuration -> independent upstreams -> catalog/status revisions
+  -> combined tool/discovery snapshots -> one fixed-policy CodeExecutor -> MCP execute server
 
 agent code -> worker/guest -> host tool adapter -> upstream MCP
            <- processed result and compact call summaries
 ```
 
-Composition rejects upstream names `searchTools` and `describeTool` rather than
+Legacy composition rejects upstream names `searchTools` and `describeTool` rather than
 overwriting them. The MCP adapter borrows an executor; this package selects QuickJS
 and describes its actual environment to the agent.
 
@@ -296,9 +449,9 @@ tarball installation, saved-credential reuse, and OpenCode V2 integration.
 
 ## Current scope
 
-One upstream, a startup catalog snapshot, and agent-facing stdio only. HTTP refers
-to the upstream connection, not remote agent hosting. There is no model loop,
-multi-upstream routing, persistence, or Node support. Cancellation cannot roll back
+Named upstreams with partial availability and hot credential recovery, plus the
+legacy single-upstream interface. Agent-facing transport is stdio; HTTP refers
+to upstream connections. There is no model loop, remote agent hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
 are recorded; longer soak testing and aggregate/payload resource hardening remain
 future work. Local OAuth serves one

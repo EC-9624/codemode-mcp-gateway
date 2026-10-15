@@ -7,23 +7,40 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ToolCatalog, ToolResult } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
-import { resolveHeaders, type Configuration } from "./config.ts";
+import { resolveHeaders, type UpstreamConfiguration } from "./config.ts";
 import { credentialStore, oauthConnection } from "./auth/credentials.ts";
 import { OAuthSession } from "./auth/session.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 
+export class UpstreamError extends GatewayError {
+  constructor(
+    readonly stage: "connect" | "discovery",
+    message: string,
+    cause: unknown,
+  ) {
+    super(message, { cause });
+  }
+}
+
+type ConnectionEvents = {
+  closed?: () => void;
+  authentication?: (error: AuthorizationError) => string;
+};
+
 /** Owns one upstream connection, its catalog, and its OAuth session. */
 export async function connectUpstream(
-  upstream: Configuration["upstream"],
+  upstream: UpstreamConfiguration,
   directory: string,
   signal: AbortSignal,
   options: CredentialOptions = {},
+  events: ConnectionEvents = {},
 ) {
   // Partial setup failures await registered cleanup in reverse order before rejecting.
   await using setup = new AsyncDisposableStack();
   let session: OAuthSession | undefined;
+  let authorizationUnavailable = false;
   if (upstream.transport === "http" && upstream.auth !== undefined) {
     const connection = oauthConnection(upstream);
     if (!connection.ok) throw new AuthorizationError(connection.error);
@@ -35,15 +52,28 @@ export async function connectUpstream(
       options.lockDirectory,
     );
 
-    if (!opened.ok) throw new AuthorizationError(opened.error);
+    if (!opened.ok) throw AuthorizationError.beforeExchange(opened.error);
 
     session = opened.value;
     setup.use(session);
   }
 
-  const transport = createTransport(upstream, directory, session);
   const closed = Promise.withResolvers<void>();
-  transport.onclose = () => closed.resolve();
+  let disconnected = false;
+
+  const transport = createTransport(upstream, directory, session, () => {
+    if (disconnected) return;
+
+    disconnected = true;
+    events.closed?.();
+  });
+
+  transport.onclose = () => {
+    disconnected = true;
+    closed.resolve();
+    events.closed?.();
+  };
+
   const client = new Client({ name: "codemode-mcp-gateway", version: "0.0.0" });
   const connecting = client.connect(transport, { signal, timeout: 5_000 });
   const spawned = transport instanceof StdioClientTransport && transport.pid !== null;
@@ -54,6 +84,10 @@ export async function connectUpstream(
   setup.defer(() => client.close());
   if (transport instanceof StreamableHTTPClientTransport) {
     setup.defer(async () => {
+      // A known unusable grant cannot authenticate session deletion. Local transport
+      // cleanup must still finish without attempting an uncertain refresh again.
+      if (authorizationUnavailable || disconnected) return;
+
       try {
         await transport.terminateSession();
       } catch (cause) {
@@ -73,11 +107,15 @@ export async function connectUpstream(
   try {
     await connecting;
   } catch (cause) {
-    if (cause instanceof AuthorizationError) throw cause;
+    if (cause instanceof AuthorizationError) {
+      authorizationUnavailable = true;
+      throw cause;
+    }
 
-    throw new GatewayError(
+    throw new UpstreamError(
+      "connect",
       "Could not connect to the upstream MCP server. Check its transport configuration and authentication.",
-      { cause },
+      cause,
     );
   }
 
@@ -85,29 +123,54 @@ export async function connectUpstream(
   try {
     catalog = await createMcpCatalog(client, { signal });
   } catch (cause) {
-    if (cause instanceof AuthorizationError) throw cause;
+    if (cause instanceof AuthorizationError) {
+      authorizationUnavailable = true;
+      throw cause;
+    }
 
-    throw new GatewayError(
+    throw new UpstreamError(
+      "discovery",
       "Upstream tool discovery failed. Check the upstream server's diagnostics.",
-      {
-        cause,
-      },
+      cause,
     );
   }
 
-  if (session !== undefined) catalog = publicAuthFailures(catalog);
+  if (session !== undefined)
+    catalog = publicAuthFailures(
+      catalog,
+      {
+        ...events,
+        authentication: (error) => {
+          if (error.recovery !== "retry") authorizationUnavailable = true;
+
+          return events.authentication?.(error) ?? error.message;
+        },
+      },
+      () => {
+        // Managed connections retire on auth failure; an older concurrent success must
+        // not revive their grant. Legacy connections can recover in place after login.
+        if (events.authentication === undefined) authorizationUnavailable = false;
+      },
+    );
 
   // `move()` empties setup and transfers cleanup to the returned connection; otherwise
   // leaving this function would close the resources before the caller could use them.
   const cleanup = setup.move();
 
-  return { catalog, [Symbol.asyncDispose]: () => cleanup.disposeAsync() };
+  return {
+    catalog,
+    get connected() {
+      return !disconnected;
+    },
+    [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
+  };
 }
 
 function createTransport(
-  upstream: Configuration["upstream"],
+  upstream: UpstreamConfiguration,
   directory: string,
   session: OAuthSession | undefined,
+  invalidated: () => void,
 ) {
   if (upstream.transport === "stdio") {
     return new StdioClientTransport({
@@ -136,13 +199,25 @@ function createTransport(
 
       const response = await fetch(url, { ...init, ...(signal === undefined ? {} : { signal }) });
       session?.observe(response, init?.headers);
+      // The SDK reports expired sessions as request failures without closing the
+      // transport. Reinitialize on a later execution; never replay this request.
+      if (
+        response.status === 404 &&
+        init?.method !== "DELETE" &&
+        new Headers(init?.headers).has("mcp-session-id")
+      )
+        invalidated();
 
       return response;
     },
   });
 }
 
-function publicAuthFailures(catalog: ToolCatalog): ToolCatalog {
+function publicAuthFailures(
+  catalog: ToolCatalog,
+  events: ConnectionEvents,
+  authenticated: () => void,
+): ToolCatalog {
   return ToolCatalog.create(
     Object.fromEntries(
       Object.entries(catalog.tools).map(([name, tool]) => {
@@ -156,9 +231,14 @@ function publicAuthFailures(catalog: ToolCatalog): ToolCatalog {
             ...description,
             async execute(args, context) {
               try {
-                return await tool(args, context);
+                const result = await tool(args, context);
+                if (result.ok) authenticated();
+
+                return result;
               } catch (cause) {
-                if (cause instanceof AuthorizationError) return ToolResult.failure(cause.message);
+                if (cause instanceof AuthorizationError) {
+                  return ToolResult.failure(events.authentication?.(cause) ?? cause.message);
+                }
 
                 if (cause instanceof InsufficientScopeError) {
                   return ToolResult.failure(

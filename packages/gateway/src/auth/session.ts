@@ -8,8 +8,9 @@ import {
   withTokens,
   type CredentialStore,
   type OAuthConnection,
+  credentialVersion,
 } from "./credentials.ts";
-import { AuthResult, AuthorizationError } from "./result.ts";
+import { AuthResult, AuthorizationError, type AuthFailure } from "./result.ts";
 import {
   authFetch,
   discoverOAuth,
@@ -84,14 +85,14 @@ export class OAuthSession implements AsyncDisposable {
     return {
       token: async () => {
         const result = await this.token();
-        if (!result.ok) throw new AuthorizationError(result.error);
+        if (!result.ok) throw this.authorizationError(result.error);
 
         return result.value;
       },
       onUnauthorized: async ({ response }) => {
         const used = this.challengedTokens.get(response);
         const result = await this.token(true, used);
-        if (!result.ok) throw new AuthorizationError(result.error);
+        if (!result.ok) throw this.authorizationError(result.error);
       },
     };
   }
@@ -103,6 +104,24 @@ export class OAuthSession implements AsyncDisposable {
     const authorization = new Headers(headers).get("authorization");
     if (authorization?.startsWith("Bearer "))
       this.challengedTokens.set(response, authorization.slice(7));
+  }
+
+  private authorizationError(failure: AuthFailure): AuthorizationError {
+    const record = this.record;
+
+    const reopen =
+      record !== undefined &&
+      record.authorization.status === "authorized" &&
+      (record.issuer !== this.discovery.issuer || record.resource !== this.discovery.resource);
+
+    const version = credentialVersion(record);
+    if (reopen) return new AuthorizationError(failure, version, "reopen");
+
+    // Terminal failures may have consumed a rotating grant, even when their kind
+    // resembles a retryable storage/network failure.
+    if (this.terminal !== undefined) return new AuthorizationError(failure, version);
+
+    return AuthorizationError.beforeExchange(failure, version);
   }
 
   async token(force = false, rejected?: string): Promise<AuthResult<string>> {

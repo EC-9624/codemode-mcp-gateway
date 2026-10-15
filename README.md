@@ -47,9 +47,17 @@ ownership, cancellation, and limitations.
 bun run cmg examples/cmg.json
 ```
 
-The `cmg` executable speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`. It
-connects one upstream over stdio or Streamable HTTP, builds a catalog, rejects
-discovery-helper collisions, and supplies a fixed-policy QuickJS executor.
+The `cmg` executable speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`.
+It supports named stdio/HTTP upstreams with partial availability and automatic
+credential recovery, alongside the existing single-upstream configuration.
+
+Clients can launch installed `cmg` without arguments. Configuration defaults to
+`$XDG_CONFIG_HOME/cmg/config.json` or `~/.config/cmg/config.json`; `--config <path>`
+and the existing positional path override it. `cmg check`, `cmg doctor`, and
+`cmg login --server <name>` provide validation, diagnostics, and authorization.
+See [named upstreams and hot recovery](packages/gateway/README.md#named-upstreams-and-hot-recovery)
+and [`examples/multi.json`](examples/multi.json). Named tools use `server.original-name`;
+the single-upstream example below retains unqualified names.
 
 ```js
 return await tools.searchTools({ query: "add numbers" });

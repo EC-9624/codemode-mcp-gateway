@@ -257,9 +257,29 @@ export async function discoverOAuth(
   connection: OAuthConnection,
   signal: AbortSignal,
 ): Promise<AuthResult<OAuthDiscovery>> {
+  let discoveryFailure: AuthResult<never> | undefined;
   let info;
   try {
-    const fetchFn = authFetch(signal);
+    const request = authFetch(signal);
+
+    const fetchFn: FetchLike = async (url, init) => {
+      let response: Response;
+      try {
+        response = await request(url, init);
+      } catch (cause) {
+        discoveryFailure = oauthFailure(cause, signal);
+        throw cause;
+      }
+
+      if (response.status === 429 || response.status >= 500)
+        discoveryFailure = AuthResult.failure(
+          "unavailable",
+          "OAuth discovery is temporarily unavailable.",
+        );
+
+      return response;
+    };
+
     const response = await fetchFn(connection.url, { headers: { Accept: "text/event-stream" } });
     // A successful probe may open an SSE stream; discovery only needs the headers.
     await response.body?.cancel();
@@ -283,6 +303,10 @@ export async function discoverOAuth(
   } catch (cause) {
     return oauthFailure(cause, signal);
   }
+
+  // The SDK can fall back after failed resource discovery. An outage must not
+  // masquerade as a changed resource binding or missing authorization metadata.
+  if (discoveryFailure !== undefined) return discoveryFailure;
 
   const metadata = info.authorizationServerMetadata;
   if (metadata === undefined) {

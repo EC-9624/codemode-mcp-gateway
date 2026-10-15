@@ -1,4 +1,4 @@
-import { readConfiguration } from "../config.ts";
+import { authenticationTarget, readConfiguration } from "../config.ts";
 import {
   credentialStore,
   oauthConnection,
@@ -17,6 +17,7 @@ export type CredentialOptions = {
 };
 
 export type LoginOptions = CredentialOptions & {
+  server?: string;
   signal?: AbortSignal;
   /** Receives only an authorization URL, never tokens or the PKCE verifier. */
   authorize?: (url: URL) => Promise<void>;
@@ -35,7 +36,7 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
   }
 
   const config = await readConfiguration(path);
-  const connection = oauthConnection(config.upstream);
+  const connection = oauthConnection(authenticationTarget(config, options.server));
   if (!connection.ok) return connection;
 
   using deadlineCleanup = new DisposableStack();
@@ -119,10 +120,10 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
  */
 export async function logout(
   path: string,
-  options: CredentialOptions = {},
+  options: CredentialOptions & { server?: string } = {},
 ): Promise<AuthResult<void>> {
   const config = await readConfiguration(path);
-  const connection = oauthConnection(config.upstream);
+  const connection = oauthConnection(authenticationTarget(config, options.server));
   if (!connection.ok) return connection;
 
   const lease = await acquireLease(connection.value, options.lockDirectory);

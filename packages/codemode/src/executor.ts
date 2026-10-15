@@ -7,7 +7,7 @@ import { resolveOptions, type ResolvedOptions } from "./runtime/options.ts";
 import { cancelled, WorkerExecution, type WorkerControl } from "./runtime/execution.ts";
 import { type WorkerStartupData } from "./runtime/protocol.ts";
 
-/** Owns fixed configuration and tool bindings. Each execution gets a fresh worker and VM. */
+/** Owns fixed policy and default tools. Each execution gets its own tool snapshot, worker, and VM. */
 export class CodeExecutor {
   private readonly tools: ReadonlyMap<string, SandboxTool>;
   private readonly options: ResolvedOptions;
@@ -71,6 +71,14 @@ export class CodeExecutor {
     this.activeExecutions++;
     let worker: Worker | undefined;
     try {
+      let tools: ReadonlyMap<string, SandboxTool>;
+      try {
+        const supplied = options.tools;
+        tools = supplied === undefined ? this.tools : new Map(Object.entries(supplied));
+      } catch (cause) {
+        throw new SandboxExecutionError([], cause);
+      }
+
       const totalTimeoutMs = this.options.totalTimeoutMs;
 
       const control: WorkerControl = {
@@ -97,7 +105,7 @@ export class CodeExecutor {
             workerData: {
               type: "execute",
               code,
-              toolNames: [...this.tools.keys()],
+              toolNames: [...tools.keys()],
               limits,
               interruptBuffer: control.interrupt.buffer,
             } satisfies WorkerStartupData,
@@ -107,7 +115,7 @@ export class CodeExecutor {
         throw new SandboxExecutionError([], cause);
       }
 
-      return await new WorkerExecution(worker, this.tools, control, limits).run();
+      return await new WorkerExecution(worker, tools, control, limits).run();
     } finally {
       // Failed termination can leave a live worker. Releasing on rejection would admit
       // another worker while that one still consumes capacity.

@@ -6,6 +6,40 @@ import { executionErrorOf } from "./support/execution-error.ts";
 import { gateTermination } from "./support/worker-cleanup.ts";
 
 describe("CodeExecutor execution capacity", () => {
+  test("holds admission across per-execution tool snapshots until worker cleanup completes", async () => {
+    using captured = captureWorker();
+    const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
+    const oldTools = { value: () => ToolResult.success("old") };
+    const currentTools = { value: () => ToolResult.success("current") };
+
+    const running = sandbox.execute("return await tools.value();", { tools: oldTools });
+    const worker = await captured.worker;
+    using termination = gateTermination(worker);
+    await termination.terminating;
+
+    let reads = 0;
+
+    const rejected = await sandbox.execute("return await tools.value();", {
+      get tools() {
+        reads++;
+
+        return currentTools;
+      },
+    });
+
+    termination.release();
+    const previous = await running;
+    const recovered = await sandbox.execute("return await tools.value();", { tools: currentTools });
+
+    expect(rejected).toMatchObject({
+      result: { ok: false, error: { kind: "limit", resource: "executions", maximum: 1 } },
+      calls: [],
+    });
+    expect(previous.result).toEqual({ ok: true, value: "old" });
+    expect(recovered.result).toEqual({ ok: true, value: "current" });
+    expect(reads).toBe(0);
+  });
+
   test("admits four executions by default and rejects the fifth without creating a worker or dispatching a tool", async () => {
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -153,13 +187,24 @@ describe("CodeExecutor execution capacity", () => {
 
     const running = sandbox.execute("return await tools.wait();");
 
-    const rejected = await sandbox.execute(code, signal === undefined ? {} : { signal });
+    let reads = 0;
+
+    const rejected = await sandbox.execute(code, {
+      ...(signal === undefined ? {} : { signal }),
+      get tools() {
+        reads++;
+
+        return {};
+      },
+    });
+
     const stillFull = await sandbox.execute("return 7;");
     release.resolve();
     await running;
     const recovered = await sandbox.execute("return 7;");
 
     expect(rejected).toEqual(expected);
+    expect(reads).toBe(0);
     expect(stillFull).toMatchObject({
       result: { ok: false, error: { kind: "limit", resource: "executions" } },
       calls: [],
@@ -266,7 +311,7 @@ describe("CodeExecutor execution capacity", () => {
     expect(recovered).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 
-  test("keeps capacity reserved when termination fails before exit, then releases it on actual exit", async () => {
+  test("keeps capacity reserved across tool snapshots after termination failure until actual exit", async () => {
     using captured = captureWorker();
     const controller = new AbortController();
     const started = Promise.withResolvers<void>();
@@ -302,7 +347,7 @@ describe("CodeExecutor execution capacity", () => {
 
     controller.abort();
     const failed = await running;
-    const rejected = await sandbox.execute("return 7;");
+    const rejected = await sandbox.execute("return 7;", { tools: {} });
 
     expect(failed.cause).toBe(cause);
     expect(worker.threadId).not.toBe(-1);
@@ -313,7 +358,7 @@ describe("CodeExecutor execution capacity", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
 
     await terminateWorker();
-    const recovered = await sandbox.execute("return 7;");
+    const recovered = await sandbox.execute("return 7;", { tools: {} });
 
     expect(worker.listenerCount("exit")).toBe(0);
     expect(recovered).toEqual({ result: { ok: true, value: 7 }, calls: [] });

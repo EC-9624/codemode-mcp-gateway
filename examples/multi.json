@@ -1,0 +1,20 @@
+{
+  "mcp": {
+    "servers": {
+      "math": {
+        "type": "local",
+        "command": ["bun", "mcp-server.ts"]
+      },
+      "notion": {
+        "type": "remote",
+        "url": "https://mcp.notion.com/mcp",
+        "oauth": {}
+      }
+    }
+  },
+  "sandbox": {
+    "timeoutMs": 30000,
+    "totalTimeoutMs": 45000,
+    "maxConcurrentExecutions": 8
+  }
+}

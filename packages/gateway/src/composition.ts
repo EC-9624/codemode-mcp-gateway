@@ -27,13 +27,15 @@ export function createServer(catalog: ToolCatalog, options: Omit<SandboxOptions,
 
   return createCodemodeServer({
     execute: (code, options) => executor.execute(code, options),
-    description: `Run JavaScript as an async function body in a fresh QuickJS sandbox.
+    description: executionDescription,
+  });
+}
+
+export const executionDescription = `Run JavaScript as an async function body in a fresh QuickJS sandbox.
 tools.searchTools({ query, limit?, offset? }) returns { tools, total, nextOffset },
 with five ranked name/description previews by default, without schemas. nextOffset is null at the end.
 tools.describeTool({ name }) returns the full description and inputSchema.
 Call tools with await tools["name"](args). MCP results contain { content, structuredContent?, isError? }.
 Compose calls, paginate, and transform results as needed. Return the JSON value to expose.
 No fetch, filesystem, process, or imports are available. Resource limits are server-owned.
-The response includes the final result and compact call summaries.`,
-  });
-}
+The response includes the final result and compact call summaries.`;

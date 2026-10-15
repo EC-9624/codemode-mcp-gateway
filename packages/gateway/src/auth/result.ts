@@ -26,7 +26,19 @@ export const AuthResult = {
 
 /** Adapts explicit failures only at SDK/CLI boundaries requiring thrown errors. */
 export class AuthorizationError extends Error {
-  constructor(readonly failure: AuthFailure) {
+  /** Only for failures before a token exchange could have rotated the stored grant. */
+  static beforeExchange(failure: AuthFailure, version?: string): AuthorizationError {
+    const retry =
+      failure.kind === "unavailable" || failure.kind === "storage" || failure.kind === "busy";
+
+    return new AuthorizationError(failure, version, retry ? "retry" : "login");
+  }
+
+  constructor(
+    readonly failure: AuthFailure,
+    readonly credentialVersion?: string,
+    readonly recovery: "login" | "retry" | "reopen" = "login",
+  ) {
     super(failure.message, { cause: failure.cause });
     this.name = "AuthorizationError";
   }

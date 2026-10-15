@@ -1,11 +1,9 @@
 /**
- * Process lifetime of the stdio gateway. This module owns the upstream connection,
- * agent-facing transports, created MCP servers, and shutdown listeners; composition
- * supplies each server's fixed-policy executor.
+ * Process lifetime of the stdio gateway. Legacy mode owns one upstream directly;
+ * named mode delegates connections and catalog revisions to Gateway.
  *
- * Startup loads configuration, connects upstream, and builds a catalog before serving
- * requests. The agent-facing transport opens while upstream setup is pending, so EOF
- * can cancel a stalled handshake or discovery rather than leave startup waiting.
+ * Named mode exposes discovery/status while upstreams initialize independently.
+ * Legacy mode waits for its initial catalog. EOF can cancel either startup path.
  *
  * EOF, SIGINT, and SIGTERM abort setup and active executions. Cleanup closes the MCP
  * servers before releasing upstream resources, including on partial startup. Stdio
@@ -18,6 +16,7 @@ import { readConfiguration } from "./config.ts";
 import { createServer } from "./composition.ts";
 import { connectUpstream } from "./upstream.ts";
 import { type CredentialOptions } from "./auth/login.ts";
+import { Gateway } from "./gateway.ts";
 
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
@@ -48,42 +47,71 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
     for (const server of servers) await server.close();
   });
 
-  const ready = connectUpstream(config.upstream, dirname(path), shutdown.signal, options).then(
-    (upstream) => {
-      upstreamCleanup.use(upstream);
+  const gateway =
+    config.upstream === undefined
+      ? cleanup.use(
+          new Gateway(config, dirname(path), {
+            ...options,
+            signal: shutdown.signal,
+            onStatus: (status) =>
+              console.error(
+                JSON.stringify({
+                  server: status.name,
+                  state: status.state,
+                  toolCount: status.toolCount,
+                  ...("error" in status ? { error: status.error } : {}),
+                }),
+              ),
+          }),
+        )
+      : undefined;
 
-      const create = () => {
-        const server = createServer(upstream.catalog, config.sandbox);
-        server.server.onerror = () => console.error("CMG sandbox execution failed.");
-        servers.add(server);
+  const ready =
+    gateway !== undefined
+      ? gateway.start().then(() => () => gateway.createServer())
+      : connectUpstream(legacyUpstream(config), dirname(path), shutdown.signal, options).then(
+          (upstream) => {
+            upstreamCleanup.use(upstream);
 
-        return server;
-      };
+            const create = () => {
+              const server = createServer(upstream.catalog, config.sandbox);
+              servers.add(server);
 
-      // Validate helper-name collisions before announcing a ready server. The SDK
-      // can request another instance when switching from a discovery probe to legacy.
-      const initial = create();
-      let unused = true;
+              return server;
+            };
 
-      return () => {
-        shutdown.signal.throwIfAborted();
-        if (unused) {
-          unused = false;
+            // Validate helper-name collisions before announcing a ready server. The SDK
+            // can request another instance when switching from a discovery probe to legacy.
+            const initial = create();
+            let unused = true;
 
-          return initial;
-        }
+            return () => {
+              shutdown.signal.throwIfAborted();
+              if (unused) {
+                unused = false;
 
-        return create();
-      };
-    },
-  );
+                return initial;
+              }
+
+              return create();
+            };
+          },
+        );
 
   const wire = new StdioServerTransport();
 
-  const entry = serveStdio(async () => (await ready)(), {
-    transport: wire,
-    onerror: () => console.error("CMG protocol error."),
-  });
+  const entry = serveStdio(
+    async () => {
+      const server = gateway === undefined ? (await ready)() : gateway.createServer();
+      server.server.onerror = () => console.error("CMG sandbox execution failed.");
+
+      return server;
+    },
+    {
+      transport: wire,
+      onerror: () => console.error("CMG protocol error."),
+    },
+  );
 
   cleanup.defer(() => entry.close());
   // Preserve the SDK's close callback while observing EOF even before handshake.
@@ -95,10 +123,23 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
 
   try {
     await ready;
-    await stopped.promise;
+    if (gateway === undefined) await stopped.promise;
+    else
+      await Promise.race([
+        stopped.promise,
+        gateway.failure.then((cause) => {
+          throw cause;
+        }),
+      ]);
   } catch (error) {
     if (!shutdown.signal.aborted) throw error;
   } finally {
     stop();
   }
+}
+
+function legacyUpstream(config: Awaited<ReturnType<typeof readConfiguration>>) {
+  if (config.upstream === undefined) throw new Error("Expected a legacy upstream.");
+
+  return config.upstream;
 }

@@ -21,11 +21,11 @@ A source file or an existing private test does not automatically define a public
 
 Each package owns its `tests/`, support helpers, fixtures, and `test`/`check` commands:
 
-| Package             | Test through                                                  | Owns                                                                                |
-| ------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `packages/codemode` | `CodeExecutor`, `ToolCatalog`, public tool APIs               | JavaScript and host-call semantics, discovery, limits, cancellation, reports        |
-| `packages/mcp`      | `createMcpCatalog`, `createCodemodeServer`                    | Schema adaptation, dispatch, response projection, borrowed-client/executor lifetime |
-| `packages/gateway`  | Configuration, `createServer`, `login`, `logout`, serving/CLI | Composition, authorization, fixed policy, upstream/process lifetime                 |
+| Package             | Test through                                                             | Owns                                                                                            |
+| ------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `packages/codemode` | `CodeExecutor`, `ToolCatalog`, public tool APIs                          | JavaScript and host-call semantics, discovery, limits, cancellation, reports                    |
+| `packages/mcp`      | `createMcpCatalog`, `createCodemodeServer`                               | Schema adaptation, dispatch, response projection, borrowed-client/executor lifetime             |
+| `packages/gateway`  | Configuration, `createServer`, `Gateway`, `login`, `logout`, serving/CLI | Composition, partial availability, credential recovery, fixed policy, upstream/process lifetime |
 
 Root scripts coordinate package commands and packed-install verification. There
 is no root test suite. Tests can import another package's public API, but not its

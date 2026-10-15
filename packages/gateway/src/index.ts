@@ -1,5 +1,13 @@
 /** Programmatic gateway composition; importing this entry does not start the CLI. */
-export { Configuration, resolveHeaders } from "./config.ts";
+export {
+  Configuration,
+  UpstreamConfiguration,
+  configurationPath,
+  resolveHeaders,
+  type ServerConfiguration,
+  type ConfigurationInput,
+} from "./config.ts";
+export { Gateway, type GatewayOptions, type ServerStatus } from "./gateway.ts";
 export { createServer } from "./composition.ts";
 export { serve } from "./server.ts";
 export { login, logout, type LoginOptions, type CredentialOptions } from "./auth/login.ts";

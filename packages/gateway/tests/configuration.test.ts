@@ -1,7 +1,82 @@
 import { describe, expect, test } from "bun:test";
-import { Configuration, resolveHeaders } from "codemode-mcp-gateway";
+import { Configuration, configurationPath, resolveHeaders } from "codemode-mcp-gateway";
 
 describe("application configuration", () => {
+  test("normalizes named local and remote entries and derives OAuth identity from the name", () => {
+    const config = Configuration.parse({
+      mcp: {
+        servers: {
+          local: {
+            type: "local",
+            command: ["bun", "server.ts"],
+            environment: { MODE: "read" },
+            cwd: "tools",
+          },
+          notes: { type: "remote", url: "https://example.com/mcp", oauth: { scope: "read" } },
+          paused: { type: "local", command: ["unused"], disabled: true },
+        },
+      },
+    });
+
+    expect(config.mcp?.servers).toEqual({
+      local: {
+        disabled: false,
+        upstream: {
+          transport: "stdio",
+          command: "bun",
+          args: ["server.ts"],
+          env: { MODE: "read" },
+          cwd: "tools",
+        },
+      },
+      notes: {
+        disabled: false,
+        upstream: {
+          transport: "http",
+          id: "notes",
+          url: "https://example.com/mcp",
+          auth: { type: "oauth", scope: "read" },
+        },
+      },
+      paused: { disabled: true, upstream: { transport: "stdio", command: "unused", args: [] } },
+    });
+  });
+
+  test.each([
+    {
+      name: "mixed formats",
+      input: {
+        upstream: { command: "bun" },
+        mcp: { servers: { local: { type: "local", command: ["bun"] } } },
+      },
+    },
+    { name: "empty collection", input: { mcp: { servers: {} } } },
+    {
+      name: "ambiguous namespace",
+      input: { mcp: { servers: { "a.b": { type: "local", command: ["bun"] } } } },
+    },
+    {
+      name: "empty command",
+      input: { mcp: { servers: { local: { type: "local", command: [] } } } },
+    },
+    {
+      name: "competing OAuth header",
+      input: {
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: "https://example.com/mcp",
+              oauth: {},
+              headers: { Authorization: "private" },
+            },
+          },
+        },
+      },
+    },
+  ])("rejects $name", ({ input }) => {
+    expect(Configuration.safeParse(input).success).toBe(false);
+  });
   test("keeps command-only configurations as stdio upstreams", () => {
     const config = Configuration.parse({ upstream: { command: "bun", args: ["server.ts"] } });
 
@@ -138,6 +213,29 @@ describe("application configuration", () => {
     const result = Configuration.safeParse(input);
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("configuration path resolution", () => {
+  test("uses XDG configuration independently of the working directory", () => {
+    expect(configurationPath(undefined, { XDG_CONFIG_HOME: "/config" }, "/home/test")).toBe(
+      "/config/cmg/config.json",
+    );
+  });
+  test("falls back to the home configuration directory", () => {
+    expect(configurationPath(undefined, {}, "/home/test")).toBe(
+      "/home/test/.config/cmg/config.json",
+    );
+  });
+  test("an explicit absolute path overrides even invalid XDG configuration", () => {
+    expect(
+      configurationPath("/project/custom.json", { XDG_CONFIG_HOME: "relative" }, "/home/test"),
+    ).toBe("/project/custom.json");
+  });
+  test("rejects relative XDG_CONFIG_HOME instead of changing meaning with cwd", () => {
+    expect(() =>
+      configurationPath(undefined, { XDG_CONFIG_HOME: "relative" }, "/home/test"),
+    ).toThrow("XDG_CONFIG_HOME must be an absolute path");
   });
 });
 

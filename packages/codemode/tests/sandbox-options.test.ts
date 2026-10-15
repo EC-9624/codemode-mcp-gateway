@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { Worker } from "node:worker_threads";
 import { CodeExecutor, ToolResult, type ExecuteOptions, type SandboxOptions } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
@@ -12,6 +13,87 @@ describe("CodeExecutor", () => {
 
     expect(report.result).toEqual({ ok: true, value: "original" });
   });
+
+  test.each([
+    {
+      name: "supplied tools replace defaults",
+      tools: { custom: () => ToolResult.success("custom") },
+      expected: ["custom"],
+    },
+    { name: "an empty registry exposes no tools", tools: {}, expected: [] },
+  ])("$name without changing subsequent defaults", async ({ tools, expected }) => {
+    const sandbox = new CodeExecutor({ tools: { default: () => ToolResult.success("default") } });
+
+    const supplied = await sandbox.execute("return Object.keys(tools);", { tools });
+    const fallback = await sandbox.execute("return await tools.default();");
+
+    expect(supplied.result).toEqual({ ok: true, value: expected });
+    expect(fallback.result).toEqual({ ok: true, value: "default" });
+  });
+
+  test("overlapping executions snapshot their supplied bindings before the caller can mutate them", async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve());
+    const sandbox = new CodeExecutor({ timeoutMs: 5_000 });
+
+    const tools = {
+      wait: async () => {
+        started.resolve();
+        await release.promise;
+
+        return ToolResult.success();
+      },
+      value: () => ToolResult.success("original"),
+    };
+
+    const running = sandbox.execute("await tools.wait(); return await tools.value();", { tools });
+    tools.value = () => ToolResult.success("replacement");
+    await started.promise;
+    const overlapping = await sandbox.execute("return await tools.value();", { tools });
+    release.resolve();
+    const previous = await running;
+
+    expect(previous.result).toEqual({ ok: true, value: "original" });
+    expect(overlapping.result).toEqual({ ok: true, value: "replacement" });
+  });
+
+  test.each([
+    {
+      name: "registry",
+      options: (cause: Error): ExecuteOptions => ({
+        get tools(): never {
+          throw cause;
+        },
+      }),
+    },
+    {
+      name: "binding",
+      options: (cause: Error): ExecuteOptions => ({
+        tools: {
+          get read(): never {
+            throw cause;
+          },
+        },
+      }),
+    },
+  ])(
+    "a per-execution $name getter failure preserves its cause and releases admission without a worker",
+    async ({ options }) => {
+      const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
+      const cause = new Error("Private registry diagnostics");
+      using registration = spyOn(Worker.prototype, "on");
+
+      const failure = await executionErrorOf(sandbox.execute("return 42;", options(cause)));
+
+      expect(failure.cause).toBe(cause);
+      expect(failure.calls).toEqual([]);
+      expect(registration).not.toHaveBeenCalled();
+      const recovered = await sandbox.execute("return 7;", { tools: {} });
+      expect(recovered.result).toEqual({ ok: true, value: 7 });
+    },
+  );
 
   test("snapshots configuration at construction", async () => {
     const options = { maxSourceBytes: 1 };
@@ -134,7 +216,7 @@ describe("CodeExecutor", () => {
     expect(failure.calls).toEqual([]);
   });
 
-  test("reads configuration and tool bindings only during construction", async () => {
+  test("reads configuration and default tool bindings only during construction", async () => {
     let limitReads = 0;
     let toolReads = 0;
 
