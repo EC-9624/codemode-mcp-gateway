@@ -1,4 +1,9 @@
-import { type Client, type Tool } from "@modelcontextprotocol/client";
+import {
+  ProtocolError,
+  type CallToolResult,
+  type Client,
+  type Tool,
+} from "@modelcontextprotocol/client";
 import { ToolResult, validateTool, ToolCatalog, type ToolDefinition } from "@cmg/codemode";
 import { compileToolSchema } from "./schema.ts";
 import { type McpCatalogOptions } from "./types.ts";
@@ -13,7 +18,8 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
  * The caller owns the client on every exit, and must keep it connected for later tool calls.
  *
  * Discovery options do not carry into invocation: calls use the execution's signal.
- * MCP isError responses remain data; thrown invocation failures use the sandbox's private boundary.
+ * MCP isError responses remain data. Protocol errors expose their code/message, not data or stacks;
+ * other invocation exceptions use the sandbox's private boundary.
  */
 export async function createMcpCatalog(
   client: Client,
@@ -93,7 +99,20 @@ function createMcpTool(client: Client, tool: Tool): ToolDefinition {
       // Normalization precedes validation; the JSON validator preserves arguments unchanged.
       if (!isArguments(args)) throw new Error("MCP argument normalization failed.");
 
-      const response = await client.callTool({ name: tool.name, arguments: args }, { signal });
+      let response: CallToolResult;
+      try {
+        response = await client.callTool({ name: tool.name, arguments: args }, { signal });
+      } catch (cause) {
+        // The SDK also uses ProtocolError for local output validation. Both messages are public.
+        if (cause instanceof ProtocolError) {
+          return ToolResult.failure(
+            `MCP tool ${JSON.stringify(tool.name)} failed (code ${cause.code}): ${cause.message}`,
+            { cause },
+          );
+        }
+
+        throw cause;
+      }
 
       return ToolResult.success({
         content: response.content,

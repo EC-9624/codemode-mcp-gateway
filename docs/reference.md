@@ -53,7 +53,8 @@ rather than throwing validation errors. Guests receive ordinary values or
 catchable promise rejections. Failure-shaped data wrapped in `success` remains
 ordinary data.
 
-Each execution starts fresh deadlines using the stored durations. Either guest
+Both library deadlines are unset by default. Configured deadlines start fresh for
+each execution using the stored durations. Either guest
 or parent deadline can win; neither must be larger than the other. See
 [completion and deadline](#completion-and-deadline) and
 [parent supervision](#parent-supervised-deadline) for their exact coverage.
@@ -116,7 +117,7 @@ sandbox setup from completing.
 
 These settings do not cap total host/WASM memory or enlarge the WASM build's
 physical stack. Source admission happens before the execution deadlines start;
-guest parsing remains covered by `timeoutMs` and the optional parent deadline.
+guest parsing is covered by either deadline when configured.
 
 ### Execution capacity
 
@@ -192,7 +193,8 @@ host memory.
 
 ### Tool-call limits
 
-Each execution defaults to **100 total calls** and **10 outstanding calls**.
+Each execution defaults to **100 total calls** and **10 active calls**, with further
+calls queued in invocation order until a slot is free.
 Configure either field independently on the sandbox:
 
 ```ts
@@ -205,17 +207,17 @@ Both counts must be integers from 1 to 2147483647. Invalid counts throw
 A total limit below the concurrency limit is valid; there is no required relationship
 between them.
 
-- Each admitted invocation consumes one total call, including tool failures,
+- Each admitted invocation consumes one total call, including queued calls, tool failures,
   discovery, and unawaited calls. Awaiting the same promise twice counts once.
 - Argument serialization failures before admission consume no call capacity.
 - A concurrency slot remains occupied until the response is handled: through
   guest-promise settlement on the worker, and through serialization/transport on
   the parent. Completed success or failure responses release the slot.
-- Exactly the configured number is allowed. The next admission attempt ends
-  execution with a structured limit result. Calls are not queued or retried, and
-  guest `try/catch` cannot bypass execution-level limits.
-- Total capacity is checked before concurrency. If both are exhausted, the result
-  identifies the total-call limit.
+- Excess concurrency queues on the worker instead of failing. The total-call
+  budget bounds admitted active and queued calls together. Queueing is not retrying.
+- Exceeding the total-call budget ends execution with a structured limit result;
+  guest `try/catch` cannot bypass it. Failure, timeout, or cancellation discards
+  queued calls without invoking them. Queued wait counts toward configured deadlines.
 
 ```ts
 const sandbox = new CodeExecutor({
@@ -238,22 +240,24 @@ await sandbox.execute("await tools.read(); return await tools.read();");
 // }
 ```
 
-Concurrency exhaustion uses `resource: "concurrent-tool-calls"`. Excess calls never
-invoke a host callback and do not appear in the dispatched-call report. Completed
-responses stay completed; pending dispatched calls become interrupted with
-`reason: "call-limit"` or `"concurrency-limit"`. The parent requests cooperative
+Queued and rejected calls do not appear in the dispatched-call report. The parent
+retains an independent hard concurrency guard for invalid worker traffic, using
+`resource: "concurrent-tool-calls"`; normal excess guest concurrency queues instead.
+Completed responses stay completed; pending dispatched calls become interrupted with
+`reason: "call-limit"` (or `"concurrency-limit"` for the parent safeguard). The parent requests cooperative
 tool cancellation and awaits worker cleanup. A later cleanup failure retains the
 selected interruption reason in `SandboxExecutionError.calls`.
 
 ```text
 guest serializes arguments and records a guest promise resolver
-  -> worker validates payload and reserves total/concurrent capacity
+  -> worker validates payload and reserves total capacity
        denied -> record structured limit, interrupt guest execution
-       admitted -> record outstanding ID and post tool request
+       admitted -> record outstanding ID and queue until an active slot is free
+       slot available -> post next tool request in invocation order
   -> parent validates request and independently reserves capacity
        denied -> select limit result and close dispatch/call snapshot
        admitted -> record dispatch, invoke tool, retain and post response
-  -> parent releases slot; worker settles guest promise and releases its slot
+  -> parent releases slot; worker settles guest promise and dispatches next queued call
 ```
 
 Checking on the worker bounds admitted calls and posted requests during a
@@ -629,9 +633,13 @@ Guest response handling preserves MCP data:
   errors. Guest code checks it explicitly.
 - Top-level `_meta` and unrelated extension fields are excluded. Metadata inside
   content blocks is preserved.
-- SDK invocation exceptions use the existing `Host tool failed.` guest rejection.
-  Arbitrary protocol/transport/validator exception text is never forwarded by the
-  adapter. A `ProtocolError` class alone does not prove a message came from upstream.
+- Invocation `ProtocolError`s reject with the tool name, numeric code, and message.
+  This intentionally includes SDK-generated output-schema errors: the class does
+  not establish whether an error came from upstream. Error data and stacks are
+  excluded; messages are public, not redacted, and must not contain secrets.
+  Other invocation exceptions remain generic `Host tool failed.` rejections.
+  Hosts observe the original cause in both cases through `onToolException`; `cmg`
+  writes the original error name/message/code to stderr.
 
 A completed call can therefore have delivered an upstream response with
 `isError: true`: the summary records completion, while the MCP flag received by
@@ -864,7 +872,7 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 - The supervisor removes message, message-error, and exit listeners before
   terminating the worker. The error listener stays until termination settles, so
   late errors cannot become unhandled EventEmitter errors. Partial setup unwinds.
-- The guest bridge's `pendingCalls` tracks admitted IDs until replies are settled;
+- The guest bridge's `pendingCalls` tracks both active and queued admitted IDs until replies are settled;
   `failure` records the first private infrastructure failure or admission limit (`kind`
   `error` or `limit`; undefined while healthy) and `failureSignal`
   wakes the engine. A renewable `changeSignal` wakes an idle engine after successful
@@ -883,6 +891,10 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 - Only deliberately public tool-failure messages cross into the guest.
   Exceptions thrown by a callback become `Host tool failed.` without exposing
   private messages or stacks. Scripts can catch tool rejections and continue.
+  `ToolResult.failure(message, { cause })` attaches a host-only diagnostic cause
+  without changing the public guest rejection. The optional `onToolException`
+  observer receives thrown or attached causes, call ID, and tool name while the
+  execution is running; an observer exception is an infrastructure failure.
 - Infrastructure failures reject the host promise and never become catchable tool
   failures: parser and VM allocation/settlement failures, protocol violations,
   transport failures, worker crashes, and premature exit. They are not retried
@@ -921,7 +933,7 @@ executable methods are never shared between host and guest.
 
 ### Completion and deadline
 
-- Successful scripts wait for all started host calls and queued guest jobs,
+- Successful scripts wait for active and queued host calls and queued guest jobs,
   including unawaited calls, race losers, and calls started by `toJSON`. Awaiting
   one promise twice does not dispatch twice; `Promise.race` does not cancel losers.
 - Draining calls is not proof that they succeeded: unhandled tool rejections
@@ -930,11 +942,12 @@ executable methods are never shared between host and guest.
   instead of hanging.
 - An uncaught script failure or timeout ends execution without waiting for
   unrelated callbacks. Late results are dropped before conversion or posting.
-- One monotonic deadline covers source validation, prelude setup, execution, guest
+- When `timeoutMs` is configured, one monotonic deadline covers source validation, prelude setup, execution, guest
   jobs, host waits, and error conversion (including guest getters and `toJSON`).
   It starts after worker startup, WASM loading, VM creation,
   and tool installation. A worker timer wakes idle execution; the QuickJS interrupt
-  handler stops running guest computation.
+  handler stops running guest computation. Without a configured deadline there is
+  no expiration timer; caller cancellation still interrupts the worker.
 
 ### Parent-supervised deadline
 

@@ -2,6 +2,8 @@
  * Process lifetime of the stdio gateway. Gateway owns connections and MCP instances.
  *
  * Discovery/status is available while upstreams initialize independently. EOF cancels setup.
+ * Status changes and tool exception diagnostics are written to stderr as JSON lines;
+ * agents receive public protocol messages but only `Host tool failed.` for unknown exceptions.
  *
  * EOF, SIGINT, and SIGTERM abort setup and active executions. Cleanup closes the MCP
  * servers before releasing upstream resources, including on partial startup. Stdio
@@ -47,6 +49,24 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
             state: status.state,
             toolCount: status.toolCount,
             ...("error" in status ? { error: status.error } : {}),
+          }),
+        );
+      },
+      onToolException: (exception) => {
+        const cause = exception.cause;
+
+        console.error(
+          JSON.stringify({
+            tool: exception.name,
+            callId: exception.callId,
+            error:
+              cause instanceof Error
+                ? {
+                    name: cause.name,
+                    message: cause.message,
+                    ...("code" in cause ? { code: cause.code } : {}),
+                  }
+                : { name: typeof cause },
           }),
         );
       },

@@ -156,8 +156,9 @@ provider bodies. Capacity rejection is a smoke failure and is never retried. Log
 remains interactive; serving uses saved credentials.
 
 `examples/notion.json` sets `maxConcurrentExecutions` to 8 for multi-agent usage,
-with the default 64-MiB guest heap and its existing 30-second guest / 45-second total
+with its existing 30-second guest / 45-second total
 deadlines. The library and gateway defaults remain 4 concurrent executions.
+Guest memory now defaults to 256 MiB; historical measurements below used 64 MiB.
 
 Both commands emit JSON lines. Live `elapsedMs` measures each client request through
 response validation; startup measures process launch through MCP initialization and upstream readiness.
@@ -717,6 +718,14 @@ Completed slices:
     request overlap, and an opt-in metadata-only stdio observer.
 27. Compact paged discovery, name-prioritized search, selected-tool schema lookup,
     and updated agent guidance based on observed broad-catalog failures.
+28. Host-only `onToolException` observer for callback exceptions that agents see as
+    `Host tool failed.`; `cmg` writes them to stderr as JSON lines.
+29. MCP protocol failures expose tool names, numeric codes, and messages to scripts,
+    including SDK output-validation messages, while retaining original causes for
+    host diagnostics and keeping error data and stacks out of guest rejections.
+30. Library deadlines are unset by default and guest memory defaults to 256 MiB.
+    Tool calls beyond the configured active concurrency queue in invocation order
+    within the total-call budget; gateway deadlines remain 5/10 seconds.
 
 Next: continue ordinary multi-agent use and longer runs before revisiting
 defaults. Additional limits remain paused. Runtime-level follow-up on the

@@ -3,15 +3,23 @@ import { type StandardSchemaV1 } from "@standard-schema/spec";
 /** Descriptive JSON Schema metadata; validation belongs to the tool definition. */
 export type ToolSchema = boolean | Readonly<Record<string, unknown>>;
 
-export type ToolResult = { ok: true; value: unknown } | { ok: false; error: { message: string } };
+export type ToolResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: { message: string; cause?: unknown } };
 
-/** Only explicit failure messages cross into the guest; thrown errors stay private. */
+/** Only explicit failure messages cross into the guest; thrown errors and causes stay private. */
 export const ToolResult = {
   /** The guest receives the JSON-round-tripped value; an omitted value remains undefined. */
   success,
-  /** Reject the guest's tool promise with this deliberately public message. */
-  failure(message: string) {
-    return { ok: false, error: { message } } satisfies ToolResult;
+  /**
+   * Reject the guest's tool promise with this deliberately public message. An optional
+   * cause stays on the host and is reported to the executor's onToolException observer.
+   */
+  failure(message: string, options?: { cause: unknown }) {
+    return {
+      ok: false,
+      error: options === undefined ? { message } : { message, cause: options.cause },
+    } satisfies ToolResult;
   },
 } as const;
 
@@ -103,7 +111,7 @@ export async function callTool(
 ): Promise<ToolResult> {
   try {
     return await tool(args, context);
-  } catch {
-    return ToolResult.failure("Host tool failed.");
+  } catch (cause) {
+    return ToolResult.failure("Host tool failed.", { cause });
   }
 }

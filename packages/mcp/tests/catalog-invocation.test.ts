@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHandler, type CallToolResult } from "@modelcontextprotocol/server";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ToolException } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { connectMcp, requireTool, toolServer } from "./support/mcp.ts";
@@ -192,7 +192,28 @@ describe("createMcpCatalog invocation", () => {
     expect(result).toEqual({ ok: true, value: { content: [], structuredContent, isError: false } });
   });
 
-  test("keeps SDK output-schema failures generic at the sandbox boundary", async () => {
+  test("keeps unknown client exceptions generic while reporting their original cause to the host", async () => {
+    await using connection = await connectMcp(createMcpServer());
+    const catalog = await createMcpCatalog(connection.client);
+    const cause = new Error("Private transport details");
+    using invocation = spyOn(connection.client, "callTool").mockRejectedValue(cause);
+    const exceptions: ToolException[] = [];
+
+    const report = await new CodeExecutor({
+      tools: catalog.tools,
+      onToolException: (exception) => exceptions.push(exception),
+    }).execute("return await tools.add({ a: 2, b: 3 });");
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "script", message: "Host tool failed." },
+    });
+    expect(exceptions).toEqual([{ callId: 1, name: "add", cause }]);
+    expect(exceptions[0]?.cause).toBe(cause);
+    expect(invocation).toHaveBeenCalledTimes(1);
+  });
+
+  test("exposes SDK output-schema protocol messages to the guest", async () => {
     const server = toolServer([
       {
         name: "read",
@@ -207,7 +228,7 @@ describe("createMcpCatalog invocation", () => {
 
     server.server.setRequestHandler("tools/call", () => ({
       content: [],
-      structuredContent: { sum: "Private output details" },
+      structuredContent: { sum: "Invalid output" },
     }));
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
@@ -216,7 +237,14 @@ describe("createMcpCatalog invocation", () => {
     const report = await sandbox.execute("return await tools.read({});");
 
     expect(report).toEqual({
-      result: { ok: false, error: { kind: "script", message: "Host tool failed." } },
+      result: {
+        ok: false,
+        error: {
+          kind: "script",
+          message:
+            'MCP tool "read" failed (code -32602): Structured content does not match the tool\'s output schema: data/sum must be number',
+        },
+      },
       calls: [
         {
           callId: 1,

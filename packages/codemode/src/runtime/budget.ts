@@ -3,7 +3,7 @@ import { type ToolCallLimit } from "../types.ts";
 
 export type ToolCallLimits = Pick<ExecutionLimits, "maxToolCalls" | "maxConcurrentToolCalls">;
 
-/** Each boundary owns its budget; only outstanding slots are reusable. */
+/** Total admission counts queued calls too; only active slots are reusable. */
 export function createToolCallBudget(limits: ToolCallLimits) {
   let total = 0;
   let pending = 0;
@@ -19,6 +19,11 @@ export function createToolCallBudget(limits: ToolCallLimits) {
         };
       }
 
+      total++;
+
+      return undefined;
+    },
+    start(): ToolCallLimit | undefined {
       if (pending >= limits.maxConcurrentToolCalls) {
         return {
           kind: "limit",
@@ -28,7 +33,6 @@ export function createToolCallBudget(limits: ToolCallLimits) {
         };
       }
 
-      total++;
       pending++;
 
       return undefined;

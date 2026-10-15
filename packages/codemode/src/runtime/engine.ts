@@ -61,7 +61,7 @@ export async function executeEngine(
 async function executeScript(
   vm: QuickJSContext,
   code: string,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   maxOutputBytes: number,
   bridge: ToolBridge,
   interrupt: Int32Array<SharedArrayBuffer>,
@@ -205,14 +205,14 @@ function outputLimit(maximum: number): GuestResult {
   };
 }
 
-function createDeadline(timeoutMs: number) {
-  const expiresAt = performance.now() + timeoutMs;
+function createDeadline(timeoutMs: number | undefined) {
+  const expiresAt = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
   const expiration = Promise.withResolvers<void>();
-  const timer = setTimeout(expiration.resolve, timeoutMs);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(expiration.resolve, timeoutMs);
 
   return {
     expired: expiration.promise,
-    passed: () => performance.now() >= expiresAt,
+    passed: () => expiresAt !== undefined && performance.now() >= expiresAt,
     [Symbol.dispose]() {
       clearTimeout(timer);
     },

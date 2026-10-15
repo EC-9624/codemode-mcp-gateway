@@ -74,6 +74,22 @@ Tool callbacks receive unknown arguments and `{ signal }` on the host thread.
 Return `ToolResult.failure(message)` for a deliberately public, catchable guest
 rejection. Unexpected callback exceptions become `Host tool failed.` without
 exposing their messages or stacks. Failure-shaped values inside `success()` remain data.
+Use `ToolResult.failure(message, { cause })` to attach an original diagnostic cause
+to a deliberately public failure. Only the message crosses into the guest.
+
+To see those exceptions on the host, pass `onToolException` to the constructor:
+
+```ts
+const sandbox = new CodeExecutor({
+  tools,
+  onToolException: ({ callId, name, cause }) => console.error(name, callId, cause),
+});
+```
+
+It is called synchronously with the original thrown or attached `cause` while the
+execution is still running. Failures after the outcome is fixed, such as tools rejecting on
+abort, are not reported. If the observer throws, the execution rejects with
+`SandboxExecutionError` carrying that error.
 
 Call records stay in invocation order and contain only `callId`, `name`, `status`,
 and an interruption `reason` when applicable. `completed` means the parent serialized
@@ -96,26 +112,28 @@ const cancelled = await sandbox.execute("return await tools.answer();", {
 console.log(cancelled.calls); // [] — no worker or tool call started
 ```
 
-Successful execution drains all started calls and queued guest jobs, including
+Successful execution drains active and queued calls and queued guest jobs, including
 unawaited calls and `Promise.race` losers. Failure or cancellation stops observing
-unfinished calls and aborts their shared tool signal. Tools must stop cooperatively;
+unfinished calls, discards undispatched queued calls, and aborts their shared tool signal. Tools must stop cooperatively;
 the sandbox awaits worker cleanup, not cancelled callbacks. It cannot roll back side effects.
 
 ## Limits and boundaries
 
-| Option                    | Default  | Bounds                                                                                    |
-| ------------------------- | -------- | ----------------------------------------------------------------------------------------- |
-| `timeoutMs`               | 1,000 ms | Source parsing through completion, after VM/bridge setup; includes host waits             |
-| `totalTimeoutMs`          | Unset    | Worker construction through acceptance of completion                                      |
-| `memoryLimitBytes`        | 64 MiB   | QuickJS guest heap                                                                        |
-| `maxStackSizeBytes`       | 1 MiB    | QuickJS stack guard; maximum 4 MiB                                                        |
-| `maxSourceBytes`          | 256 KiB  | Submitted body's UTF-8 bytes                                                              |
-| `maxOutputBytes`          | 256 KiB  | Final JSON value or script-error message, not tool payloads                               |
-| `maxToolCalls`            | 100      | Total admitted tool calls                                                                 |
-| `maxConcurrentToolCalls`  | 10       | Outstanding tool calls; excess calls are rejected, not queued                             |
-| `maxConcurrentExecutions` | 4        | Active executions per executor, including worker cleanup; excess submissions are rejected |
+| Option                    | Default | Bounds                                                                                    |
+| ------------------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `timeoutMs`               | Unset   | Optional deadline after VM/bridge setup; includes parsing, queued calls, and host waits   |
+| `totalTimeoutMs`          | Unset   | Worker construction through acceptance of completion                                      |
+| `memoryLimitBytes`        | 256 MiB | QuickJS guest heap                                                                        |
+| `maxStackSizeBytes`       | 1 MiB   | QuickJS stack guard; maximum 4 MiB                                                        |
+| `maxSourceBytes`          | 256 KiB | Submitted body's UTF-8 bytes                                                              |
+| `maxOutputBytes`          | 256 KiB | Final JSON value or script-error message, not tool payloads                               |
+| `maxToolCalls`            | 100     | Total admitted tool calls, including queued calls                                         |
+| `maxConcurrentToolCalls`  | 10      | Active tool calls; additional calls wait in invocation order                              |
+| `maxConcurrentExecutions` | 4       | Active executions per executor, including worker cleanup; excess submissions are rejected |
 
-Limits must be positive integers; zero and infinity do not disable them. A total
+Both deadlines are unset by default; set a deadline or supply cancellation for
+work that may not terminate. Configured limits must be positive integers; zero
+and infinity do not disable them. A total
 deadline can cover startup, but is not a hard response-latency cap: synchronous
 host work can delay enforcement, and cleanup may finish after the deadline.
 See [exact boundaries](../../docs/reference.md#resource-limits).
@@ -149,7 +167,8 @@ stays occupied until actual worker exit. Cancellation does not wait for uncooper
 host callbacks; those may outlive the worker and its slot.
 
 This is separate from `maxConcurrentToolCalls`, which applies inside each execution.
-With both defaults, four admitted executions can each have ten outstanding tool calls.
+With both defaults, four admitted executions can each have ten active tool calls,
+with additional calls queued within each execution's 100-call total budget.
 
 Workers provide thread separation, not OS/process isolation. Tool payloads, temporary
 serialization/transport allocations, and aggregate host/WASM memory are not bounded
@@ -187,9 +206,9 @@ in a fresh worker with its own VM. The host keeps the tool callbacks and call re
 
 ```text
 guest: tools.answer() -> private JSON call envelope
-worker: validate and admit -> post request to host
+worker: validate and admit -> queue until a slot is free -> post request to host
 host: invoke callback -> serialize and record ToolResult -> post reply
-worker: settle guest promise -> release call slot -> pump guest jobs
+worker: settle guest promise -> release slot and dispatch next queued call -> pump guest jobs
 guest: continue after await -> serialize final return value
 ```
 

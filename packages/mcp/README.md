@@ -58,7 +58,12 @@ observations; other rejection reasons produce an empty summary.
 
 Catalog setup failures reject before an executor is used. Omitted tool arguments
 normalize to `{}`; non-object or schema-invalid arguments fail before upstream
-dispatch. Invocation exceptions use codemode's private host-tool failure boundary.
+dispatch. Invocation `ProtocolError`s reject with the tool name, numeric code, and
+message, including SDK-generated output-schema errors. Error data and stacks are
+not forwarded. Messages are treated as public and are not redacted; upstreams must
+not put secrets in them. Other invocation exceptions still become `Host tool failed.`
+The original cause is available to the executor's host-only `onToolException` observer
+for both cases.
 
 ## Discovery and limits
 

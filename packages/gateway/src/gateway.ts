@@ -6,6 +6,7 @@ import {
   type ExecuteOptions,
   type SandboxTool,
   type ToolDefinition,
+  type ToolException,
 } from "@cmg/codemode";
 import { createCodemodeServer } from "@cmg/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
@@ -51,6 +52,8 @@ export type GatewayOptions = CredentialOptions & {
   signal?: AbortSignal;
   /** Receives controlled public status only. Exceptions remain host infrastructure failures. */
   onStatus?: (status: ServerStatus) => void;
+  /** Receives original tool failure causes for host diagnostics; agents see only public messages. */
+  onToolException?: (exception: ToolException) => void;
 };
 
 /** Owns upstream lifetimes and one executor, supplying a catalog snapshot for each execution. */
@@ -76,7 +79,11 @@ export class Gateway implements AsyncDisposable {
     private readonly options: GatewayOptions = {},
   ) {
     const snapshot = structuredClone(config);
-    this.executor = new CodeExecutor(snapshot.sandbox);
+    const onToolException = options.onToolException;
+    this.executor = new CodeExecutor({
+      ...snapshot.sandbox,
+      ...(onToolException === undefined ? {} : { onToolException }),
+    });
 
     this.entries = Object.entries(snapshot.mcp.servers).map(([name, entry]) => {
       const oauth = oauthConnection(name, entry);

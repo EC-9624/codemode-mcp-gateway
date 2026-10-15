@@ -15,7 +15,12 @@
 import { type Worker } from "node:worker_threads";
 import { createCallLog } from "./report.ts";
 import { listen } from "./listener.ts";
-import { type ExecutionReport, type InterruptionReason, type SandboxResult } from "../types.ts";
+import {
+  type ExecutionReport,
+  type InterruptionReason,
+  type SandboxResult,
+  type ToolException,
+} from "../types.ts";
 import { SandboxExecutionError } from "../errors.ts";
 import { callTool, serializeToolResult, type SandboxTool } from "../tools.ts";
 import { createToolCallBudget, type ToolCallLimits } from "./budget.ts";
@@ -35,6 +40,7 @@ export type WorkerControl = {
   deadline?: { timeoutMs: number; expiresAt: number };
   signal?: AbortSignal;
   interrupt: Int32Array<SharedArrayBuffer>;
+  onToolException?: (exception: ToolException) => void;
 };
 
 /** One run owns a fresh worker, its listeners, and termination. */
@@ -247,7 +253,7 @@ export class WorkerExecution {
     this.lastCallId = call.callId;
     if (!this.checkRunning()) return;
 
-    const limit = this.budget.admit();
+    const limit = this.budget.admit() ?? this.budget.start();
     if (limit !== undefined) {
       this.finish({ ok: true, result: { ok: false, error: limit } });
 
@@ -256,10 +262,22 @@ export class WorkerExecution {
 
     try {
       this.calls.dispatch(call.callId, call.name);
+
       // Domain validation belongs to the callback; the protocol only checks JSON syntax.
       const result = await callTool(tool, call.args, this.context);
+
       // Converting a late result would run getters/toJSON after execution has ended.
+      // Aborted tools also commonly fail late; those causes are not diagnostics.
       if (!this.checkRunning()) return;
+
+      if (!result.ok && "cause" in result.error) {
+        this.control.onToolException?.({
+          callId: call.callId,
+          name: call.name,
+          cause: result.error.cause,
+        });
+        if (!this.checkRunning()) return;
+      }
 
       const serialized = serializeToolResult(result);
       // Host getters/toJSON cannot be interrupted and may exhaust the parent budget.

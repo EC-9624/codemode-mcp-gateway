@@ -5,7 +5,7 @@ import { McpServer, ProtocolError, ProtocolErrorCode } from "@modelcontextprotoc
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { CodeExecutor } from "@cmg/codemode";
+import { CodeExecutor, type ToolException } from "@cmg/codemode";
 import { createMcpCatalog } from "@cmg/mcp";
 import { connectMcp, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
@@ -151,22 +151,36 @@ describe("MCP transport contracts", () => {
     expect(JSON.stringify(report)).toBe(snapshot);
   });
 
-  test("keeps server protocol-error details out of guest errors and call summaries", async () => {
+  test("exposes server protocol codes and messages while keeping data and original causes host-only", async () => {
     const server = toolServer([{ name: "read", inputSchema: { type: "object" } }]);
     // Tool callbacks turn exceptions into public error data; this test needs a protocol failure.
     server.server.setRequestHandler("tools/call", () => {
-      throw new ProtocolError(ProtocolErrorCode.InternalError, "Private upstream details");
+      throw new ProtocolError(
+        ProtocolErrorCode.InternalError,
+        "Upstream could not read the record.",
+        {
+          detail: "Host-only data",
+        },
+      );
     });
 
     await using connection = await connectMcp(server);
     const catalog = await createMcpCatalog(connection.client);
+    const exceptions: ToolException[] = [];
 
-    const report = await new CodeExecutor({ tools: catalog.tools }).execute(
-      "return await tools.read();",
-    );
+    const report = await new CodeExecutor({
+      tools: catalog.tools,
+      onToolException: (exception) => exceptions.push(exception),
+    }).execute("return await tools.read();");
 
     expect(report).toEqual({
-      result: { ok: false, error: { kind: "script", message: "Host tool failed." } },
+      result: {
+        ok: false,
+        error: {
+          kind: "script",
+          message: 'MCP tool "read" failed (code -32603): Upstream could not read the record.',
+        },
+      },
       calls: [
         {
           callId: 1,
@@ -174,6 +188,12 @@ describe("MCP transport contracts", () => {
           status: "completed",
         },
       ],
+    });
+    expect(exceptions).toHaveLength(1);
+    expect(exceptions[0]?.cause).toBeInstanceOf(ProtocolError);
+    expect(exceptions[0]?.cause).toMatchObject({
+      code: -32603,
+      data: { detail: "Host-only data" },
     });
   });
 
