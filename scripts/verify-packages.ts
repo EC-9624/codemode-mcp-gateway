@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ok } from "node:assert/strict";
+import { deepEqual, ok } from "node:assert/strict";
 import { z } from "zod";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -23,11 +23,21 @@ for (const [workspace, file, required] of [
   const entries = (await run(["tar", "-tf", archive], directory)).trim().split("\n");
   ok(entries.includes(required), `Missing built asset ${required}`);
   ok(entries.includes("package/README.md"), "Package documentation must be included");
-  if (workspace === "packages/gateway")
-    ok(
-      !entries.some((entry) => entry.startsWith("package/dist/composition.")),
-      "Removed gateway composition must not ship",
-    );
+  const sources = await readdir(join(root, workspace, "src"), { recursive: true });
+
+  const expected = sources
+    .filter((source) => source.endsWith(".ts"))
+    .flatMap((source) => [
+      "package/dist/" + source.replace(/\.ts$/, ".js"),
+      "package/dist/" + source.replace(/\.ts$/, ".d.ts"),
+    ])
+    .sort();
+
+  const built = entries
+    .filter((entry) => entry.startsWith("package/dist/") && !entry.endsWith("/"))
+    .sort();
+
+  deepEqual(built, expected, `Built assets for ${workspace} must match current source files`);
 
   ok(
     entries.every((entry) => !/^package\/(src|tests|node_modules)\//.test(entry)),

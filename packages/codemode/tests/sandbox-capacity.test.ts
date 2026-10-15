@@ -356,11 +356,14 @@ describe("CodeExecutor execution capacity", () => {
       calls: [],
     });
     expect(terminate).toHaveBeenCalledTimes(1);
+    expect(worker.listenerCount("error")).toBeGreaterThan(0);
+    expect(() => worker.emit("error", new Error("Late private worker failure"))).not.toThrow();
 
     await terminateWorker();
     const recovered = await sandbox.execute("return 7;", { tools: {} });
 
     expect(worker.listenerCount("exit")).toBe(0);
+    expect(worker.listenerCount("error")).toBe(0);
     expect(recovered).toEqual({ result: { ok: true, value: 7 }, calls: [] });
   });
 });

@@ -13,6 +13,38 @@ import { interruptFlag } from "./support/workers.ts";
 // Public execution terminates its worker, hiding VM handles and original worker-local causes.
 // These probes inspect actual owned resources and failures that cannot cross that boundary.
 
+test("final successful conversion observes the guest deadline and disposes resources", async () => {
+  const resources: ExecutionResources[] = [];
+  using cleanup = new DisposableStack();
+  using clock = spyOn(performance, "now").mockReturnValue(0);
+
+  const result = await executeEngine(
+    "return 42;",
+    { ...DEFAULT_LIMITS, timeoutMs: 1000 },
+    (vm, scope) => {
+      resources.push({ vm, scope });
+      const getString = vm.getString.bind(vm);
+      cleanup.use(
+        spyOn(vm, "getString").mockImplementation((handle) => {
+          const text = getString(handle);
+          if (text === "42") clock.mockReturnValue(1001);
+
+          return text;
+        }),
+      );
+
+      return installLocalToolBridge(vm, {}, scope);
+    },
+    interruptFlag(),
+  );
+
+  expect(result).toEqual({
+    ok: false,
+    error: { kind: "timeout", message: "Execution exceeded the 1000 ms limit." },
+  });
+  expectDisposedExecution(resources);
+});
+
 test("propagates unexpected parser failures instead of reporting a script error", async () => {
   const failure = new Error("Parser infrastructure failed");
 

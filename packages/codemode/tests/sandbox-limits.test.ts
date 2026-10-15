@@ -3,6 +3,26 @@ import { CodeExecutor, ToolResult, type SandboxOptions } from "@cmg/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor limit configuration", () => {
+  test("recovers from an allocation failure while preparing an undispatched tool call", async () => {
+    const sandbox = new CodeExecutor({
+      memoryLimitBytes: 262144,
+      tools: { read: () => ToolResult.success(42) },
+    });
+
+    const report = await sandbox.execute(`
+      let held = [];
+      let failed = false;
+      try { while (true) held.push(new Uint8Array(160)); } catch {}
+      try { await tools.read(); } catch { failed = true; }
+      held = null;
+      return { failed, value: await tools.read() };
+    `);
+
+    expect(report).toEqual({
+      result: { ok: true, value: { failed: true, value: 42 } },
+      calls: [{ callId: 1, name: "read", status: "completed" }],
+    });
+  });
   test.each([
     ["null", null],
     ["string", "1"],

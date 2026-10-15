@@ -43,6 +43,7 @@ type Entry = {
   updatedAt: string;
   store: CredentialStore | undefined;
   version: string;
+  blocked: Map<string, AuthorizationError>;
   attempt: number;
   failures: number;
 };
@@ -88,6 +89,7 @@ export class Gateway implements AsyncDisposable {
         updatedAt: new Date().toISOString(),
         store: oauth.ok ? (options.store ?? credentialStore)(oauth.value) : undefined,
         version: credentialVersion(undefined),
+        blocked: new Map(),
         attempt: 0,
         failures: 0,
       };
@@ -202,10 +204,32 @@ export class Gateway implements AsyncDisposable {
         if (!loaded.ok) throw AuthorizationError.beforeExchange(loaded.error);
 
         entry.version = credentialVersion(loaded.value);
+        const blocked = entry.blocked.get(entry.version);
+        if (blocked !== undefined) throw blocked;
       }
 
       this.shutdown.signal.throwIfAborted();
       const store = entry.store;
+
+      // A terminal exchange failure belongs to the grant, not the transport. Old
+      // leased connections can report it after a replacement attempt has started.
+      const guarded =
+        store === undefined
+          ? undefined
+          : ({
+              async load() {
+                const loaded = await store.load();
+                if (loaded.ok) {
+                  const failure = entry.blocked.get(credentialVersion(loaded.value));
+                  if (failure !== undefined) throw failure;
+                }
+
+                return loaded;
+              },
+              save: (value) => store.save(value),
+              clear: () => store.clear(),
+            } satisfies CredentialStore);
+
       connection = await connectUpstream(
         entry.name,
         entry.config,
@@ -213,7 +237,7 @@ export class Gateway implements AsyncDisposable {
         this.shutdown.signal,
         {
           ...this.options,
-          ...(store === undefined ? {} : { store: () => store }),
+          ...(guarded === undefined ? {} : { store: () => guarded }),
         },
         {
           closed: () => {
@@ -236,13 +260,7 @@ export class Gateway implements AsyncDisposable {
               // it also preserves any concurrent refresh's terminal-failure latch.
               if (error.recovery === "retry") return;
 
-              if (
-                !this.shutdown.signal.aborted &&
-                entry.attempt === attempt &&
-                entry.state.kind === "connected"
-              ) {
-                this.authorizationFailed(entry, error);
-              }
+              if (!this.shutdown.signal.aborted) this.authorizationFailed(entry, error, attempt);
             },
             message: (error) =>
               error.recovery === "retry" ? error.message : this.authMessage(entry, error),
@@ -284,8 +302,19 @@ export class Gateway implements AsyncDisposable {
       return;
     }
 
+    const version = connection.credentialVersion;
+    const blocked = version === undefined ? undefined : entry.blocked.get(version);
+    if (blocked !== undefined) {
+      await connection[Symbol.asyncDispose]();
+      this.authorizationFailed(entry, blocked);
+
+      return;
+    }
+
     const lease: Lease = { connection, users: 0, retired: false };
     this.leases.add(lease);
+    if (version !== undefined) entry.version = version;
+
     entry.failures = 0;
     this.update(entry, { kind: "connected", lease });
   }
@@ -355,7 +384,20 @@ export class Gateway implements AsyncDisposable {
     return { ...base, state: state.kind, toolCount: 0 };
   }
 
-  private authorizationFailed(entry: Entry, cause: AuthorizationError) {
+  private authorizationFailed(entry: Entry, cause: AuthorizationError, attempt = entry.attempt) {
+    if (cause.recovery === "login" && cause.credentialVersion !== undefined)
+      entry.blocked.set(cause.credentialVersion, cause);
+
+    // A replacement using the same grant is affected too; a newer grant is not.
+    if (
+      attempt !== entry.attempt &&
+      (cause.recovery !== "login" ||
+        entry.state.kind !== "connected" ||
+        cause.credentialVersion === undefined ||
+        entry.state.lease.connection.credentialVersion !== cause.credentialVersion)
+    )
+      return;
+
     if (cause.credentialVersion !== undefined) entry.version = cause.credentialVersion;
 
     const error = { kind: cause.failure.kind, message: this.authMessage(entry, cause) };
@@ -380,7 +422,7 @@ export class Gateway implements AsyncDisposable {
     if (cause.recovery === "retry")
       return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}; reconnection will be attempted automatically.`;
 
-    return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}. Run cmg login --server ${entry.name} with the same configuration; recovery is automatic after credentials change.`;
+    return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}. Run cmg login --server=${entry.name} with the same configuration; recovery is automatic after credentials change.`;
   }
 
   private snapshot() {

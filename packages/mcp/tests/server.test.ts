@@ -3,8 +3,63 @@ import { SandboxExecutionError, type ExecutionReport } from "@cmg/codemode";
 import { createCodemodeServer } from "@cmg/mcp";
 import { connectMcp } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { PassThrough } from "node:stream";
+import { once } from "node:events";
+import { setImmediate } from "node:timers/promises";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 describe("agent-facing MCP server", () => {
+  test("close prevents a received request from starting its executor after shutdown", async () => {
+    let executions = 0;
+
+    const server = createCodemodeServer({
+      execute: async () => {
+        executions++;
+
+        return { result: { ok: true, value: 42 }, calls: [] };
+      },
+    });
+
+    await using cleanup = new AsyncDisposableStack();
+    cleanup.defer(() => server.close());
+    const input = new PassThrough();
+    const output = new PassThrough();
+    cleanup.defer(() => {
+      input.destroy();
+      output.destroy();
+    });
+    server.server.onerror = () => {};
+
+    await server.connect(new StdioServerTransport(input, output));
+    const initialized = once(output, "data");
+    input.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "close-race", version: "0" },
+        },
+      }) + "\n",
+    );
+    await initialized;
+    input.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+
+    input.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "execute", arguments: { code: "return 42;" } },
+      }) + "\n",
+    );
+    await server.close();
+    await setImmediate();
+
+    expect(executions).toBe(0);
+  });
   test("advertises the application-supplied execute description", async () => {
     const server = createCodemodeServer({
       description: "Run the application's read-only workflow.",

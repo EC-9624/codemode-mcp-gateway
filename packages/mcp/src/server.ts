@@ -62,8 +62,19 @@ observations, not a guarantee of external success or safe retry.`,
 
   private async executeCode(code: string, requestSignal: AbortSignal): Promise<CallToolResult> {
     const signal = AbortSignal.any([requestSignal, this.shutdown.signal]);
+
     // Scheduling also turns synchronous executor exceptions into the controlled rejection path.
-    const execution = Promise.resolve().then(() => this.execute(code, { signal }));
+    const execution = Promise.resolve().then(() => {
+      // SDK validation may finish after close has already drained tracked executions.
+      if (this.shutdown.signal.aborted)
+        return {
+          result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+          calls: [],
+        } satisfies ExecutionReport;
+
+      return this.execute(code, { signal });
+    });
+
     this.executions.add(execution);
 
     let report: ExecutionReport;

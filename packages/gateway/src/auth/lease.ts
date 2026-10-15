@@ -1,6 +1,6 @@
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { credentialName, type CredentialStore, type OAuthConnection } from "./credentials.ts";
 import { AuthResult, AuthorizationError } from "./result.ts";
@@ -15,20 +15,21 @@ export type CredentialLease = AsyncDisposable & {
 /** Short credential-operation lock. All processes use the same stale/heartbeat policy. */
 export async function acquireLease(
   connection: OAuthConnection,
-  directory = join(
-    process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"),
-    "cmg",
-    "locks",
-  ),
+  directory?: string,
   options: { signal?: AbortSignal; waitMs?: number } = {},
 ): Promise<AuthResult<CredentialLease>> {
+  const xdg = process.env.XDG_STATE_HOME;
+  if (directory === undefined && xdg !== undefined && xdg !== "" && !isAbsolute(xdg))
+    return AuthResult.failure("invalid", "XDG_STATE_HOME must be an absolute path.");
+
+  const path = directory ?? join(xdg || join(homedir(), ".local", "state"), "cmg", "locks");
   const lost = new AbortController();
   const deadline = performance.now() + (options.waitMs ?? 25_000);
   let release: (() => Promise<void>) | undefined;
 
   try {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const info = await stat(directory);
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    const info = await stat(path);
     if (
       !info.isDirectory() ||
       (process.getuid !== undefined && (info.uid !== process.getuid() || (info.mode & 0o077) !== 0))
@@ -46,7 +47,7 @@ export async function acquireLease(
         return AuthResult.failure("cancelled", "OAuth lock acquisition was cancelled.");
 
       try {
-        release = await lock(join(directory, credentialName(connection) + ".credentials"), {
+        release = await lock(join(path, credentialName(connection) + ".credentials"), {
           realpath: false,
           stale: 20_000,
           update: 1_000,

@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { type McpServer } from "@modelcontextprotocol/server";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { Configuration, Gateway, login, type CredentialStore } from "codemode-mcp-gateway";
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
 import { configurationDocument } from "./support/configuration.ts";
@@ -13,6 +14,474 @@ const localCommand = [
 ];
 
 describe("multi-upstream gateway", () => {
+  test("login guidance selects a leading-hyphen server name without an option parsing error", async () => {
+    const memory = memoryCredentials();
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            "-notes": {
+              type: "remote",
+              url: "https://example.com/mcp",
+              oauth: {},
+            },
+          },
+        },
+      }),
+      ".",
+      { store: () => memory.store },
+    );
+
+    await gateway.start();
+    const status = gateway.status()[0];
+    if (status === undefined || !("error" in status))
+      throw new Error("Expected authorization guidance.");
+
+    const argument = status.error.message.match(/Run cmg login (\S+) with/)?.[1];
+    if (argument === undefined) throw new Error("Missing login server argument.");
+
+    expect(
+      parseArgs({ args: [argument], options: { server: { type: "string" } } }).values.server,
+    ).toBe("-notes");
+  });
+  test("session expiry cannot erase an uncertain refresh failure for unchanged credentials", async () => {
+    await using race = await retiringOAuthSession();
+    const memory = memoryCredentials(race.upstream.credentials());
+    const recovered = Promise.withResolvers<void>();
+    let connections = 0;
+    const now = Date.now();
+    using clock = spyOn(Date, "now").mockReturnValue(now);
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: race.upstream.url,
+              oauth: {},
+            },
+          },
+        },
+      }),
+      ".",
+      {
+        store: () => memory.store,
+        lockDirectory: race.upstream.lockDirectory,
+        onStatus: (status) => {
+          if (status.state === "connected" && ++connections === 2) recovered.resolve();
+        },
+      },
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => {
+      race.expire.resolve();
+      race.failRefresh.resolve();
+      race.publish.resolve();
+    });
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const expired = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 1, b: 0 });' },
+    });
+
+    await within(race.held.promise);
+
+    const failed = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 2, b: 0 });' },
+    });
+
+    await within(race.refreshing.promise);
+    race.expire.resolve();
+    await expired;
+    expect(gateway.status()).toMatchObject([{ state: "failed" }]);
+    race.failRefresh.resolve();
+    expect((await failed).isError).toBe(true);
+    expect(gateway.status()).toMatchObject([{ state: "needs-auth" }]);
+
+    // Advance beyond reconnect backoff; unchanged credentials must stay blocked.
+    clock.mockReturnValue(now + 60_000);
+    await Bun.sleep(1100);
+    expect(connections).toBe(1);
+    expect(race.upstream.refreshes).toBe(1);
+    expect(gateway.status()).toMatchObject([{ state: "needs-auth" }]);
+
+    await memory.store.save(race.upstream.credentials(now + 60_000));
+    race.publish.resolve();
+    await within(recovered.promise);
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'return (await tools["notes.add"]({ a: 3, b: 4 })).structuredContent.sum;',
+      },
+    });
+
+    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 7 } });
+    expect(race.upstream.refreshes).toBe(1);
+  }, 10000);
+
+  test("a retired session's terminal failure blocks a replacement already initializing with the same grant", async () => {
+    await using race = await retiringOAuthSession();
+    const memory = memoryCredentials(race.upstream.credentials());
+    const denied = Promise.withResolvers<void>();
+    const now = Date.now();
+    using clock = spyOn(Date, "now").mockReturnValue(now);
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: race.upstream.url,
+              oauth: {},
+            },
+          },
+        },
+      }),
+      ".",
+      {
+        store: () => memory.store,
+        lockDirectory: race.upstream.lockDirectory,
+        onStatus: (status) => {
+          if (status.state === "needs-auth") denied.resolve();
+        },
+      },
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => {
+      race.expire.resolve();
+      race.failRefresh.resolve();
+      race.publish.resolve();
+    });
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const expired = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 1, b: 0 });' },
+    });
+
+    await within(race.held.promise);
+
+    const failed = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 2, b: 0 });' },
+    });
+
+    await within(race.refreshing.promise);
+    race.expire.resolve();
+    await expired;
+    clock.mockReturnValue(now + 60_000);
+    await within(race.replacing.promise);
+    race.failRefresh.resolve();
+    expect((await failed).isError).toBe(true);
+    race.publish.resolve();
+    await within(denied.promise);
+
+    expect(gateway.status()).toMatchObject([{ state: "needs-auth" }]);
+    expect(race.handshakes).toBe(2);
+    expect(race.upstream.refreshes).toBe(1);
+  }, 10000);
+
+  test("a retired session's terminal failure also retires a connected replacement using the same grant", async () => {
+    await using race = await retiringOAuthSession();
+    const memory = memoryCredentials(race.upstream.credentials());
+    const recovered = Promise.withResolvers<void>();
+    let connections = 0;
+    const now = Date.now();
+    using clock = spyOn(Date, "now").mockReturnValue(now);
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: race.upstream.url,
+              oauth: {},
+            },
+          },
+        },
+      }),
+      ".",
+      {
+        store: () => memory.store,
+        lockDirectory: race.upstream.lockDirectory,
+        onStatus: (status) => {
+          if (status.state === "connected" && ++connections === 2) recovered.resolve();
+        },
+      },
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => {
+      race.expire.resolve();
+      race.failRefresh.resolve();
+      race.publish.resolve();
+    });
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const expired = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 1, b: 0 });' },
+    });
+
+    await within(race.held.promise);
+
+    const failed = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 2, b: 0 });' },
+    });
+
+    await within(race.refreshing.promise);
+    race.expire.resolve();
+    await expired;
+    clock.mockReturnValue(now + 60_000);
+    await within(race.replacing.promise);
+    race.publish.resolve();
+    await within(recovered.promise);
+    race.failRefresh.resolve();
+    expect((await failed).isError).toBe(true);
+
+    expect(gateway.status()).toMatchObject([{ state: "needs-auth" }]);
+    expect(race.upstream.refreshes).toBe(1);
+  }, 10000);
+
+  test("a retired session's terminal failure cannot invalidate a newer authorized grant", async () => {
+    await using race = await retiringOAuthSession();
+    const memory = memoryCredentials(race.upstream.credentials());
+    const recovered = Promise.withResolvers<void>();
+    let connections = 0;
+    const now = Date.now();
+    using clock = spyOn(Date, "now").mockReturnValue(now);
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: race.upstream.url,
+              oauth: {},
+            },
+          },
+        },
+      }),
+      ".",
+      {
+        store: () => memory.store,
+        lockDirectory: race.upstream.lockDirectory,
+        onStatus: (status) => {
+          if (status.state === "connected" && ++connections === 2) recovered.resolve();
+        },
+      },
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => {
+      race.expire.resolve();
+      race.failRefresh.resolve();
+      race.publish.resolve();
+    });
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const expired = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 1, b: 0 });' },
+    });
+
+    await within(race.held.promise);
+
+    const failed = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 2, b: 0 });' },
+    });
+
+    await within(race.refreshing.promise);
+    race.expire.resolve();
+    await expired;
+    await memory.store.save(race.upstream.credentials(now + 60_000));
+    clock.mockReturnValue(now + 60_000);
+    await within(race.replacing.promise);
+    race.publish.resolve();
+    await within(recovered.promise);
+    race.failRefresh.resolve();
+    expect((await failed).isError).toBe(true);
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: {
+        code: 'return (await tools["notes.add"]({ a: 3, b: 4 })).structuredContent.sum;',
+      },
+    });
+
+    expect(gateway.status()).toMatchObject([{ state: "connected" }]);
+    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 7 } });
+    expect(race.upstream.refreshes).toBe(1);
+  }, 10000);
+  test("shutdown cancels a blocked initialized notification without waiting for its response", async () => {
+    const initialized = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+
+    await using upstream = await oauthFixture({
+      mcp: async (request) => {
+        if (request.method !== "POST") return;
+
+        const body: unknown = await request.clone().json();
+        if (
+          typeof body !== "object" ||
+          body === null ||
+          !("method" in body) ||
+          body.method !== "notifications/initialized"
+        )
+          return;
+
+        initialized.resolve();
+        await release.promise;
+
+        return new Response(null, { status: 202 });
+      },
+    });
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: upstream.url,
+              headers: { Authorization: "Bearer access-0" },
+            },
+          },
+        },
+      }),
+      ".",
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => release.resolve());
+
+    const starting = gateway.start();
+    await within(initialized.promise);
+    await within(gateway.close(), 1000);
+    await starting;
+
+    expect(() => gateway.createServer()).toThrow("Gateway is closed.");
+  });
+
+  test("the startup budget includes a stalled initialized-notification response body", async () => {
+    const initialized = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+
+    await using upstream = await oauthFixture({
+      mcp: async (request) => {
+        if (request.method !== "POST") return;
+
+        const body: unknown = await request.clone().json();
+        if (
+          typeof body !== "object" ||
+          body === null ||
+          !("method" in body) ||
+          body.method !== "notifications/initialized"
+        )
+          return;
+
+        initialized.resolve();
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(" "));
+            },
+            async pull(controller) {
+              await release.promise;
+              controller.close();
+            },
+          }),
+          { status: 202 },
+        );
+      },
+    });
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: upstream.url,
+              headers: { Authorization: "Bearer access-0" },
+            },
+          },
+        },
+      }),
+      ".",
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => release.resolve());
+
+    const starting = gateway.start();
+    await within(initialized.promise);
+    await within(starting, 6500);
+
+    expect(gateway.status()).toMatchObject([{ state: "failed", error: { kind: "connect" } }]);
+  }, 9000);
+
+  test("successful initialization disarms the startup timer without aborting its SSE stream", async () => {
+    await using upstream = await oauthFixture();
+    const opened = Promise.withResolvers<AbortSignal>();
+    const request = globalThis.fetch;
+
+    using transport = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        (...args: Parameters<typeof fetch>) => {
+          const [url, init] = args;
+          const address = url instanceof URL ? url.href : url;
+          if (address === upstream.url && init?.method === "GET" && init.signal)
+            opened.resolve(init.signal);
+
+          return request(...args);
+        },
+        { preconnect: request.preconnect },
+      ),
+    );
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: upstream.url,
+              headers: { Authorization: "Bearer access-0" },
+            },
+          },
+        },
+      }),
+      ".",
+    );
+
+    await gateway.start();
+    const signal = await within(opened.promise);
+    transport.mockRestore();
+    await Bun.sleep(5100);
+
+    expect(signal.aborted).toBe(false);
+    expect(gateway.status()).toMatchObject([{ state: "connected" }]);
+    await gateway.close();
+    expect(signal.aborted).toBe(true);
+  }, 8000);
   test("the description matches server-filtered discovery capabilities", async () => {
     await using gateway = new Gateway(
       Configuration.parse({ mcp: { servers: { math: { type: "local", command: localCommand } } } }),
@@ -749,7 +1218,7 @@ describe("multi-upstream gateway", () => {
     });
 
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("cmg login --server notes");
+    expect(JSON.stringify(denied)).toContain("cmg login --server=notes");
     expect(JSON.stringify(denied)).not.toContain("private revoked grant");
     expect(gateway.status()).toMatchObject([{ state: "needs-auth" }, { state: "connected" }]);
     expect(healthy.structuredContent).toMatchObject({ result: { ok: true, value: 3 } });
@@ -1107,6 +1576,69 @@ async function connect(server: McpServer) {
   const cleanup = setup.move();
 
   return { client, [Symbol.asyncDispose]: () => cleanup.disposeAsync() };
+}
+
+/** Gate independent HTTP calls and a replacement handshake; tests own their ordering. */
+async function retiringOAuthSession() {
+  const held = Promise.withResolvers<void>();
+  const expire = Promise.withResolvers<void>();
+  const refreshing = Promise.withResolvers<void>();
+  const failRefresh = Promise.withResolvers<void>();
+  const replacing = Promise.withResolvers<void>();
+  const publish = Promise.withResolvers<void>();
+  let handshakes = 0;
+
+  const upstream = await oauthFixture({
+    mcp: async (request) => {
+      if (request.method !== "POST") return;
+
+      const body: unknown = await request.clone().json();
+      if (typeof body !== "object" || body === null || !("method" in body)) return;
+
+      if (body.method === "initialize" && ++handshakes === 2) {
+        replacing.resolve();
+        await publish.promise;
+      }
+
+      if (body.method !== "tools/call" || !("params" in body)) return;
+
+      const params = body.params;
+      if (typeof params !== "object" || params === null || !("arguments" in params)) return;
+
+      const args = params.arguments;
+      if (typeof args !== "object" || args === null || !("a" in args)) return;
+
+      if (args.a === 1) {
+        held.resolve();
+        await expire.promise;
+
+        return new Response("Expired session", { status: 404 });
+      }
+
+      if (args.a === 2)
+        return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+    },
+    refresh: async () => {
+      refreshing.resolve();
+      await failRefresh.promise;
+
+      return new Response("Private uncertain exchange", { status: 503 });
+    },
+  });
+
+  return {
+    upstream,
+    held,
+    expire,
+    refreshing,
+    failRefresh,
+    replacing,
+    publish,
+    get handshakes() {
+      return handshakes;
+    },
+    [Symbol.asyncDispose]: () => upstream[Symbol.asyncDispose](),
+  };
 }
 
 async function within<T>(promise: Promise<T>, ms = 4000): Promise<T> {

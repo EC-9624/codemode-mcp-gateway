@@ -55,9 +55,24 @@ const remote = z
 export const ServerConfiguration = z.discriminatedUnion("type", [local, remote]);
 export type ServerConfiguration = z.infer<typeof ServerConfiguration>;
 
-const servers = z
+const serverEntries = z
   .record(z.string().regex(/^[a-zA-Z0-9_-]+$/), ServerConfiguration)
   .refine((value) => Object.keys(value).length > 0, "Configure at least one MCP server.");
+
+// Zod drops this key before record validation; reject it before parsing can hide an upstream.
+const servers = z.preprocess((value: z.input<typeof serverEntries>, context) => {
+  if (typeof value === "object" && value !== null && Object.hasOwn(value, "__proto__")) {
+    context.addIssue({
+      code: "custom",
+      path: ["__proto__"],
+      message: 'Server name "__proto__" is not supported.',
+    });
+
+    return z.NEVER;
+  }
+
+  return value;
+}, serverEntries);
 
 const sandbox = z
   .strictObject({
@@ -150,7 +165,7 @@ export function resolveHeaders(
     const value = template.replaceAll(
       /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
       (_match: string, name: string) => {
-        const variable = environment[name];
+        const variable = Object.hasOwn(environment, name) ? environment[name] : undefined;
         if (variable === undefined) missing = name;
 
         return variable ?? "";

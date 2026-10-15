@@ -29,7 +29,7 @@ export const PRELUDE_SOURCE = `((dispatch, toolNamesJson) => {
         throw new ConversionError("Tool arguments are not JSON-serializable.");
       }
 
-      const callId = nextCallId++;
+      const callId = nextCallId;
       // Control records have no prototype: guest toJSON hooks must not rewrite the envelope.
       const call = create(null);
       call.type = "call";
@@ -43,7 +43,8 @@ export const PRELUDE_SOURCE = `((dispatch, toolNamesJson) => {
         entry.resolve = resolve;
         entry.reject = reject;
         apply(set, pending, [callId, entry]);
-        if (!dispatch(json)) apply(remove, pending, [callId]);
+        if (dispatch(json)) nextCallId++;
+        else apply(remove, pending, [callId]);
       }));
     };
   }

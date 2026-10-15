@@ -81,6 +81,10 @@ export class OAuthSession implements AsyncDisposable {
     );
   }
 
+  get version(): string {
+    return credentialVersion(this.record);
+  }
+
   get provider(): AuthProvider {
     return {
       token: async () => {

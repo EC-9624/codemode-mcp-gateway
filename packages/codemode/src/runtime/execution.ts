@@ -85,10 +85,10 @@ export class WorkerExecution {
       this.fail(new Error("Sandbox worker failed. Internal error details are not transferred."));
     };
 
-    // Keep an error listener until termination settles: EventEmitter throws unhandled errors.
-    // It is registered before termination is deferred, so its removal runs last.
+    // Rejected termination can leave a live worker. Contain its errors until actual exit.
     cleanup.defer(() => {
-      this.worker.off("error", onError);
+      if (this.worker.threadId === -1) this.worker.off("error", onError);
+      else this.worker.once("exit", () => this.worker.off("error", onError));
     });
     cleanup.defer(async () => {
       await this.worker.terminate();

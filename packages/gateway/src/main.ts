@@ -138,6 +138,8 @@ export async function main(
 
     if (command === "check") {
       const config = await readConfiguration(path);
+      if (shutdown.signal.aborted) return 130;
+
       const names = Object.keys(config.mcp.servers);
       if (parsed.values.json)
         console.log(JSON.stringify({ ok: true, configuration: path, servers: names }));

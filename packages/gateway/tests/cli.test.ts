@@ -1,12 +1,40 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { configurationDocument } from "./support/configuration.ts";
 import { oauthFixture } from "./support/oauth.ts";
+import { main } from "../src/main.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 describe("cmg executable", () => {
+  test("interrupted check exits 130 without reporting successful validation", async () => {
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const file = Bun.file("unused-check.json");
+    using cleanup = new DisposableStack();
+    cleanup.use(
+      spyOn(file, "json").mockImplementation(async () => {
+        reading.resolve();
+        await release.promise;
+
+        return {
+          mcp: { servers: { paused: { type: "local", command: ["unused"], disabled: true } } },
+        };
+      }),
+    );
+    cleanup.use(spyOn(Bun, "file").mockReturnValue(file));
+    using output = spyOn(console, "log").mockImplementation(() => {});
+    cleanup.defer(() => release.resolve());
+
+    const checking = main(["check", "unused-check.json", "--json"]);
+    await reading.promise;
+    process.emit("SIGINT");
+    release.resolve();
+
+    expect(await checking).toBe(130);
+    expect(output).not.toHaveBeenCalled();
+  });
   test.each([
     { name: "extra arguments", args: ["unused.json", "extra"] },
     { name: "unknown command", args: ["unknown", "unused.json"] },

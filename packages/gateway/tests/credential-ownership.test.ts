@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,99 @@ import { OAuthSession } from "../src/auth/session.ts";
 // Public serving tests own auth behavior. These probes need control over individual
 // store completions and abandoned/compromised lock owners that serve does not expose.
 describe("credential ownership fault boundaries", () => {
+  test("empty XDG_STATE_HOME shares the home lock across processes with different working directories", async () => {
+    await using cleanup = new AsyncDisposableStack();
+    const home = await mkdtemp(join(tmpdir(), "cmg-default-lease-"));
+    cleanup.defer(() => rm(home, { recursive: true, force: true }));
+    const firstCwd = join(home, "one");
+    const secondCwd = join(home, "two");
+    await mkdir(firstCwd);
+    await mkdir(secondCwd);
+    const fixture = fileURLToPath(new URL("./fixtures/oauth-lease.ts", import.meta.url));
+    const env = { ...process.env, HOME: home, XDG_STATE_HOME: "" };
+
+    const owner = Bun.spawn([process.execPath, fixture, "--default"], {
+      cwd: firstCwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const watchdog = setTimeout(() => owner.kill("SIGKILL"), 4000);
+    cleanup.defer(() => clearTimeout(watchdog));
+    cleanup.defer(async () => {
+      owner.kill("SIGKILL");
+      await owner.exited;
+    });
+    const reader = owner.stdout.getReader();
+    cleanup.defer(() => reader.releaseLock());
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("owned");
+
+    const competitor = Bun.spawn([process.execPath, fixture, "--default"], {
+      cwd: secondCwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const competitorWatchdog = setTimeout(() => competitor.kill("SIGKILL"), 4000);
+    cleanup.defer(() => clearTimeout(competitorWatchdog));
+    cleanup.defer(async () => {
+      competitor.kill("SIGKILL");
+      await competitor.exited;
+    });
+
+    expect(await competitor.exited).toBe(1);
+    expect(await new Response(competitor.stderr).text()).toContain(
+      "another OAuth credential operation",
+    );
+    expect(
+      (
+        await stat(
+          join(
+            home,
+            ".local",
+            "state",
+            "cmg",
+            "locks",
+            credentialName({ id: "test", url: "https://example.com/mcp" }) + ".credentials.lock",
+          ),
+        )
+      ).isDirectory(),
+    ).toBe(true);
+  });
+
+  test("relative XDG_STATE_HOME is rejected before creating a cwd-relative lock", async () => {
+    await using cleanup = new AsyncDisposableStack();
+    const directory = await mkdtemp(join(tmpdir(), "cmg-relative-lease-"));
+    cleanup.defer(() => rm(directory, { recursive: true, force: true }));
+
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        fileURLToPath(new URL("./fixtures/oauth-lease.ts", import.meta.url)),
+        "--default",
+      ],
+      {
+        cwd: directory,
+        env: { ...process.env, XDG_STATE_HOME: "relative" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    const watchdog = setTimeout(() => child.kill("SIGKILL"), 4000);
+    cleanup.defer(() => clearTimeout(watchdog));
+    cleanup.defer(async () => {
+      child.kill("SIGKILL");
+      await child.exited;
+    });
+
+    expect(await child.exited).toBe(1);
+    expect(await new Response(child.stderr).text()).toContain(
+      "XDG_STATE_HOME must be an absolute path",
+    );
+  });
   test("an older credential read cannot erase a newer snapshot's failed refresh", async () => {
     await using upstream = await oauthFixture({
       refresh: async () => Response.json({ error: "server_error" }, { status: 503 }),

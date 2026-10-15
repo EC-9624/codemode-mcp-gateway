@@ -862,8 +862,9 @@ parent accepts completion / cancellation / timeout / infrastructure failure
 - Error reporting borrows the thrown handle and disposes only owned promise-state
   handles; the SDK's `dump` consumes promise handles.
 - The supervisor removes message, message-error, and exit listeners before
-  terminating the worker. The error listener stays until termination settles, so
-  late errors cannot become unhandled EventEmitter errors. Partial setup unwinds.
+  terminating the worker. If termination rejects while the worker remains alive,
+  its error listener stays until actual exit, alongside the capacity reservation.
+  Late errors cannot become unhandled EventEmitter errors. Partial setup unwinds.
 - The guest bridge's `pendingCalls` tracks admitted IDs until replies are settled;
   `failure` records the first private infrastructure failure or admission limit (`kind`
   `error` or `limit`; undefined while healthy) and `failureSignal`

@@ -154,11 +154,15 @@ async function executeScript(
       // A return does not abandon calls already started by the script or toJSON.
       if (!runtime.hasPendingJob() && bridge.pendingCalls.size === 0) {
         const json = vm.getString(result);
-        if (Buffer.byteLength(json, "utf8") > maxOutputBytes) return outputLimit(maxOutputBytes);
+        const bytes = Buffer.byteLength(json, "utf8");
+        const extracted = checkpoint();
+        if (extracted) return extracted;
+
+        if (bytes > maxOutputBytes) return outputLimit(maxOutputBytes);
 
         const value: unknown = JSON.parse(json);
 
-        return { ok: true, value };
+        return checkpoint() ?? { ok: true, value };
       }
     }
 

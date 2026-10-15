@@ -69,7 +69,7 @@ returns 1. `--json` is accepted only by check/doctor so it cannot pollute MCP st
 }
 ```
 
-Server names contain letters, digits, `_`, or `-`. Local entries use a command
+Server names contain letters, digits, `_`, or `-`; `__proto__` is rejected. Local entries use a command
 array, optional `cwd`, and optional `environment`. Remote entries use an HTTP(S)
 `url`, optional header templates, and explicit `oauth: {}` (or `{ "scope": "read" }`)
 to enable OAuth. Omitted/false `oauth` uses an unauthenticated or static-header
@@ -99,7 +99,8 @@ Access-token refresh remains automatic. A missing/revoked grant or uncertain ref
 failure moves the affected server to `needs-auth`. Run `cmg login --server notion`
 using the same configuration; the gateway checks waiting credential records on a
 one-second maintenance cadence and reconnects after an authorized snapshot changes.
-Unchanged failed grants are not refreshed repeatedly. Transient OAuth metadata and
+Unchanged failed grants are not refreshed repeatedly, including after session expiry
+or a late failure from a retired connection. Transient OAuth metadata and
 credential-read failures during setup retry with connection backoff. On an already
 connected session, a pre-exchange credential-read/lock failure fails the current call;
 subsequent executions can use the same session when storage becomes available.
@@ -238,7 +239,8 @@ For example, configure execution capacity and total tool calls without request o
 ```
 
 Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
-Startup has separate budgets: 5 seconds for the upstream handshake and 15 seconds
+Startup has separate budgets: 5 seconds for the upstream handshake, including its
+initialized notification, and 15 seconds
 for discovery. Configuration is loaded once; recovery republishes catalog snapshots.
 
 Each gateway's `maxConcurrentExecutions` defaults to 4 across all its MCP instances, including
@@ -303,7 +305,9 @@ tool calls hold no credential lock. Before refreshing, CMG acquires a short
 another process. Otherwise it refreshes and saves under that lock. No native FFI is used.
 
 The lock lives in `$XDG_STATE_HOME/cmg/locks` (default `~/.local/state/cmg/locks`)
-and contains no credentials. CMG renews it every second; an abandoned lock becomes
+and contains no credentials. Empty `XDG_STATE_HOME` uses that default; relative values
+are rejected so different working directories cannot split credential ownership.
+CMG renews it every second; an abandoned lock becomes
 eligible for recovery after 20 seconds. Acquisition waits up to 25 seconds and is
 cancellable during serving/login. Lost ownership aborts auth requests and blocks
 further credential writes. This is an advisory heartbeat lock, not transactional

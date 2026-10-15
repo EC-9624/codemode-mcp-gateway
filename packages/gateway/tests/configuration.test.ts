@@ -7,6 +7,24 @@ import {
 } from "codemode-mcp-gateway";
 
 describe("application configuration", () => {
+  test("rejects a prototype-sensitive server name instead of silently dropping it", () => {
+    const input: unknown = JSON.parse(`{"mcp":{"servers":{
+      "__proto__":{"type":"local","command":["unused"]},
+      "normal":{"type":"local","command":["unused"]}
+    }}}`);
+
+    const result = Configuration.safeParse(input);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected invalid server name.");
+
+    expect(result.error.issues).toMatchObject([
+      {
+        path: ["mcp", "servers", "__proto__"],
+        message: 'Server name "__proto__" is not supported.',
+      },
+    ]);
+  });
   test("validates named local and remote entries without changing their transport shape", () => {
     const config = Configuration.parse({
       mcp: {
@@ -238,6 +256,23 @@ describe("configuration path resolution", () => {
 });
 
 describe("HTTP header templates", () => {
+  test.each(["constructor", "toString", "__proto__"])(
+    "does not expand inherited %s as an environment variable",
+    (name) => {
+      expect(resolveHeaders({ "X-Token": `{env:${name}}` }, {})).toEqual({
+        ok: false,
+        message: `Missing environment variable ${name} for upstream header "X-Token".`,
+      });
+    },
+  );
+
+  test("expands an own environment variable with a prototype-sensitive name", () => {
+    const result = resolveHeaders({ "X-Token": "{env:constructor}" }, { constructor: "token" });
+
+    if (!result.ok) throw new Error(result.message);
+
+    expect(result.headers.get("X-Token")).toBe("token");
+  });
   test("returns empty headers when no templates are supplied", () => {
     const result = resolveHeaders();
 

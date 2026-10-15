@@ -44,6 +44,8 @@ export async function connectUpstream(
   // Partial setup failures await registered cleanup in reverse order before rejecting.
   await using setup = new AsyncDisposableStack();
   const recovery = events.authorization;
+  const timeout = new AbortController();
+  const handshake = AbortSignal.any([signal, timeout.signal]);
   let session: OAuthSession | undefined;
   let authorizationUnavailable = false;
   if (upstream.type === "remote" && upstream.oauth) {
@@ -53,7 +55,7 @@ export async function connectUpstream(
     const opened = await OAuthSession.open(
       connection.value,
       (options.store ?? credentialStore)(connection.value),
-      signal,
+      handshake,
       options.lockDirectory,
     );
 
@@ -65,13 +67,27 @@ export async function connectUpstream(
 
   const closed = Promise.withResolvers<void>();
   let disconnected = false;
+  let initialized = false;
 
-  const transport = createTransport(upstream, directory, session, () => {
-    if (disconnected) return;
+  const timer = setTimeout(
+    () => timeout.abort(new DOMException("Upstream handshake timed out.", "TimeoutError")),
+    5_000,
+  );
 
-    disconnected = true;
-    events.closed();
-  });
+  setup.defer(() => clearTimeout(timer));
+
+  const transport = createTransport(
+    upstream,
+    directory,
+    session,
+    () => (initialized ? undefined : handshake),
+    () => {
+      if (disconnected) return;
+
+      disconnected = true;
+      events.closed();
+    },
+  );
 
   transport.onclose = () => {
     disconnected = true;
@@ -80,7 +96,7 @@ export async function connectUpstream(
   };
 
   const client = new Client({ name: "codemode-mcp-gateway", version: "0.0.0" });
-  const connecting = client.connect(transport, { signal, timeout: 5_000 });
+  const connecting = client.connect(transport, { signal: handshake, timeout: 5_000 });
   const spawned = transport instanceof StdioClientTransport && transport.pid !== null;
   setup.defer(async () => {
     if (spawned) await closed.promise;
@@ -99,8 +115,7 @@ export async function connectUpstream(
         // Logout or shutdown can prevent authenticating session deletion.
         if (
           cause instanceof AuthorizationError &&
-          (cause.failure.kind === "required" ||
-            (signal.aborted && cause.failure.kind === "cancelled"))
+          (cause.recovery !== "retry" || (signal.aborted && cause.failure.kind === "cancelled"))
         )
           return;
 
@@ -111,6 +126,8 @@ export async function connectUpstream(
 
   try {
     await connecting;
+    handshake.throwIfAborted();
+    initialized = true;
   } catch (cause) {
     if (cause instanceof AuthorizationError) {
       authorizationUnavailable = true;
@@ -122,6 +139,10 @@ export async function connectUpstream(
       "Could not connect to the upstream MCP server. Check its transport configuration and authentication.",
       cause,
     );
+  } finally {
+    // The SDK may already have opened a long-lived SSE stream with this signal.
+    // A successful handshake must disarm its timer without aborting that stream.
+    clearTimeout(timer);
   }
 
   let catalog: ToolCatalog;
@@ -157,6 +178,9 @@ export async function connectUpstream(
 
   return {
     catalog,
+    get credentialVersion() {
+      return session?.version;
+    },
     get connected() {
       return !disconnected;
     },
@@ -168,6 +192,7 @@ function createTransport(
   upstream: ServerConfiguration,
   directory: string,
   session: OAuthSession | undefined,
+  connectionSignal: () => AbortSignal | undefined,
   invalidated: () => void,
 ) {
   if (upstream.type === "local") {
@@ -188,12 +213,14 @@ function createTransport(
     ...(session === undefined ? {} : { authProvider: session.provider }),
     onInsufficientScope: "throw",
     fetch: async (url, init) => {
-      const timeout = init?.method === "DELETE" ? AbortSignal.timeout(5_000) : undefined;
+      // SDK notifications do not inherit connect's request signal. Bound the entire
+      // handshake, but let authenticated DELETE use its own shutdown-independent budget.
+      const deadline = init?.method === "DELETE" ? AbortSignal.timeout(5_000) : connectionSignal();
 
       const signal =
-        timeout === undefined
+        deadline === undefined
           ? init?.signal
-          : AbortSignal.any([timeout, ...(init?.signal ? [init.signal] : [])]);
+          : AbortSignal.any([deadline, ...(init?.signal ? [init.signal] : [])]);
 
       const response = await fetch(url, { ...init, ...(signal === undefined ? {} : { signal }) });
       session?.observe(response, init?.headers);

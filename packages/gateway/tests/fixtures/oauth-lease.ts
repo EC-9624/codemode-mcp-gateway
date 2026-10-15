@@ -3,7 +3,12 @@ import { acquireLease } from "../../src/auth/lease.ts";
 const directory = process.argv[2];
 if (directory === undefined) throw new Error("Missing lease fixture directory");
 
-const result = await acquireLease({ id: "test", url: "https://example.com/mcp" }, directory);
+const result = await acquireLease(
+  { id: "test", url: "https://example.com/mcp" },
+  directory === "--default" ? undefined : directory,
+  { waitMs: 0 },
+);
+
 if (!result.ok) {
   console.error(result.error.message);
   process.exitCode = 1;
