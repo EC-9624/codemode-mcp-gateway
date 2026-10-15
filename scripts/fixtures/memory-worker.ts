@@ -6,6 +6,8 @@ if (
   workerData !== "worker" &&
   workerData !== "wasm" &&
   workerData !== "wasm-memory" &&
+  workerData !== "wasm-memory-unread" &&
+  workerData !== "array-buffer" &&
   workerData !== "quickjs"
 )
   throw new Error("Unknown memory probe workload.");
@@ -15,6 +17,19 @@ if (workerData === "wasm-memory") {
   const bytes = new Uint8Array(memory.buffer);
   bytes[0] = 42;
   if (bytes[0] !== 42) throw new Error("WebAssembly memory write failed.");
+}
+
+if (workerData === "wasm-memory-unread") {
+  const memory = new WebAssembly.Memory({ initial: 256 });
+  // Exercise construction without creating its ArrayBuffer wrapper or a typed view.
+  if (!(memory instanceof WebAssembly.Memory))
+    throw new Error("WebAssembly memory creation failed.");
+}
+
+if (workerData === "array-buffer") {
+  const bytes = new Uint8Array(new ArrayBuffer(16 * 1024 * 1024));
+  bytes[0] = 42;
+  if (bytes[0] !== 42) throw new Error("ArrayBuffer write failed.");
 }
 
 if (workerData === "wasm") {

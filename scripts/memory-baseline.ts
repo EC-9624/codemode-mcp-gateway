@@ -8,13 +8,23 @@ import { z } from "zod";
 
 const settings = z.object({
   scenario: z
-    .enum(["control", "worker", "wasm", "wasm-memory", "quickjs", "executor"])
+    .enum([
+      "control",
+      "worker",
+      "wasm",
+      "wasm-memory",
+      "wasm-memory-unread",
+      "array-buffer",
+      "quickjs",
+      "executor",
+    ])
     .default("executor"),
   runs: z.coerce.number().int().min(1).max(10_000).default(1000),
   "batch-size": z.coerce.number().int().min(1).max(1000).default(100),
   gc: z.enum(["natural", "forced"]).default("natural"),
   mode: z.enum(["source", "compiled"]).default("source"),
   "worker-exit": z.enum(["terminate", "natural"]).default("terminate"),
+  profile: z.boolean().default(false),
   child: z.boolean().default(false),
 });
 
@@ -29,12 +39,13 @@ try {
       gc: { type: "string" },
       mode: { type: "string" },
       "worker-exit": { type: "string" },
+      profile: { type: "boolean" },
       child: { type: "boolean" },
     },
   });
 } catch {
   console.error(
-    "Usage: bun run baseline:memory --scenario <control|worker|wasm|wasm-memory|quickjs|executor> --runs <1-10000> --batch-size <1-1000> --gc <natural|forced> --mode <source|compiled> --worker-exit <terminate|natural>",
+    "Usage: bun run baseline:memory --scenario <control|worker|wasm|wasm-memory|wasm-memory-unread|array-buffer|quickjs|executor> --runs <1-10000> --batch-size <1-1000> --gc <natural|forced> --mode <source|compiled> --worker-exit <terminate|natural> [--profile]",
   );
   process.exit(1);
 }
@@ -46,6 +57,11 @@ if (!parsed.success) {
 }
 
 const options = parsed.data;
+if (options.profile && process.platform !== "darwin") {
+  console.error("--profile requires macOS vmmap.");
+  process.exit(1);
+}
+
 type Counts = {
   completed: number;
   workersStarted: number;
@@ -102,6 +118,11 @@ async function measure() {
       pid: process.pid,
       bun: Bun.version,
       revision: Bun.revision,
+      versions: process.versions,
+      jscOptions: {
+        useWasmFastMemory: process.env.BUN_JSC_useWasmFastMemory ?? null,
+        logWasmMemory: process.env.BUN_JSC_logWasmMemory ?? null,
+      },
       platform: process.platform,
       arch: process.arch,
       osRelease: release(),
@@ -114,7 +135,7 @@ async function measure() {
     }),
   );
   await setImmediate();
-  let previousRss = snapshot("before", counts).rss;
+  let previousRss = (await snapshot("before", counts)).rss;
 
   while (counts.completed < options.runs) {
     const size = Math.min(options["batch-size"], options.runs - counts.completed);
@@ -133,7 +154,7 @@ async function measure() {
 
     // Measurements occur after per-execution locals and promise jobs leave their turn.
     await setImmediate();
-    const measured = snapshot("batch", counts);
+    const measured = await snapshot("batch", counts);
     console.log(
       JSON.stringify({
         phase: "batch-summary",
@@ -147,10 +168,10 @@ async function measure() {
   }
 
   await Bun.sleep(1000);
-  snapshot("idle", counts);
+  await snapshot("idle", counts);
 }
 
-function snapshot(phase: string, counts: Counts) {
+async function snapshot(phase: string, counts: Counts) {
   if (options.gc === "forced") Bun.gc(true);
 
   const processMemory = process.memoryUsage();
@@ -185,6 +206,53 @@ function snapshot(phase: string, counts: Counts) {
       },
     }),
   );
+
+  if (options.profile) {
+    // Bun 1.4.2 implements this diagnostic argument but does not declare it in bun-types.
+    const diagnostics: unknown = Reflect.apply(heapStats, undefined, [{ dump: true }]);
+    if (
+      typeof diagnostics !== "object" ||
+      diagnostics === null ||
+      !("mimalloc" in diagnostics) ||
+      !("mimallocDump" in diagnostics)
+    )
+      throw new Error("This Bun build does not expose mimalloc heap diagnostics.");
+
+    console.log(
+      JSON.stringify({
+        phase: "allocator",
+        snapshot: phase,
+        completed: counts.completed,
+        mimalloc: diagnostics.mimalloc,
+        dump: diagnostics.mimallocDump,
+      }),
+    );
+
+    // The probe waits here, so each map is taken between workers, outside batch timing.
+    const profiler = Bun.spawn(
+      [
+        "/usr/bin/vmmap",
+        ...(phase === "idle" ? ["-wide", "-noCoalesce"] : ["-summary"]),
+        String(process.pid),
+      ],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    );
+
+    const [output, code] = await Promise.all([
+      new Response(profiler.stdout).text(),
+      profiler.exited,
+    ]);
+
+    if (code !== 0) throw new Error(`vmmap exited with code ${code}.`);
+
+    console.log(
+      JSON.stringify({ phase: "vmmap", snapshot: phase, completed: counts.completed, output }),
+    );
+  }
 
   return { rss: processMemory.rss };
 }

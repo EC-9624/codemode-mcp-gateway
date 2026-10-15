@@ -111,6 +111,9 @@ workers, exercise the MCP adapter and gateway API, and launch the packaged `cmg`
 Temporary local overrides stand in for unpublished workspace registry versions.
 No package is published by these commands.
 
+For saved-credential Notion checks and an optional OpenCode session through an
+installed executable, follow the [external-consumer workflow](docs/installed-validation.md).
+
 Builds emit ESM JavaScript and declarations into each package's `dist/`, including
 the codemode worker. Dependencies are not bundled. Export maps expose only package
 roots; repository scripts use the `development` condition, while installed consumers
@@ -282,6 +285,11 @@ execution lifetimes. The small reproduction is preserved in
 Report-body retention has since been removed independently of this runtime finding.
 Runtime-level investigation can use the WASM-memory reproduction; metadata-only
 reports do not fix growth already observable with scalar executions.
+
+The [WASM follow-up](docs/wasm-memory.md) narrows this to the fast-memory allocation
+path and documents matching upstream page-map findings. It includes a dependency-free
+[standalone reproduction](scripts/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
+controls, and opt-in macOS allocator/VM profiling (`--profile`).
 
 ### Shared-gateway concurrency diagnostic
 
@@ -543,7 +551,100 @@ controlled latency benchmark. The updated Notion smoke example and a focused loc
 concurrency diagnostic also passed. The observed gateway exited with code 0, no
 signal, and zero pending requests; its temporary OpenCode configuration was removed.
 
+### Contract-only prompt validation
+
+Four fresh sessions repeated the same research tasks against commit `c475844`,
+using the shorter API-contract description and the same probe-agent instructions.
+All four completed their research and reported successful page identity/marker
+checks. One gateway PID served all four session IDs, with peak overlap of two
+requests. All **20 executions succeeded**, with **51 observed tool calls**, no
+discovery-limit failures, and no timeouts or infrastructure errors. Request latency
+was 48–3,508 ms (p50 455 ms, p95 2,941 ms).
+
+Compared with the prescriptive-description run, execution requests changed from
+21 to 20 and tool calls from 40 to 51. Agents exercised more choice: one requested
+ten search previews, and others described the default five. Discovery-only output
+spills stayed at zero; document-related spills stayed at five. This small comparison
+supports retaining the shorter prompt, without establishing a general latency or
+efficiency advantage. The gateway exited naturally with code 0, no signal, and no
+pending requests; its temporary OpenCode configuration was removed.
+
+#### Why large document returns disappear from the preview
+
+CMG's [`response()`](packages/mcp/src/server.ts) emits the complete report both as
+`structuredContent` and as one compact JSON text line. In the inspected local
+OpenCode source (`bcf23b6775`), `packages/core/src/tool-output.ts` defaults to 2,000
+lines / 50 KiB and retains only whole lines within that byte budget. A first line
+larger than 51,200 bytes produces a saved-output notice with **zero inline lines**.
+OpenCode's direct MCP adapter uses text content for model-visible content; the
+parallel structured result does not replace that preview.
+
+Five saved document responses from the preceding discovery run were 51,266–66,894
+bytes, each on one line. Three were only **66 bytes over** the client threshold.
+An offline pretty-print check still left the document marker outside the retained
+preview in four of five cases: the embedded document remained one long JSON-string
+line. Simply adding JSON indentation would expose some envelope/search metadata,
+but would not reliably expose the document.
+
+The smallest targeted follow-up is client-side: retain a UTF-8-safe partial line
+when the next line exceeds the remaining preview budget, keep the full saved output,
+and clearly mark the partial preview. Increasing CMG's guest limits does not address
+this boundary. No response-format or client-runtime change was made during this
+investigation. The probe agent permits only `cmg_execute`, so it could not use
+OpenCode's file-read tool to recover saved output; ordinary agents with that tool
+can attempt another recovery path. The read-enabled follow-up below tests that
+path. Repeated fetch counts depend on tool availability as well as formatting.
+
+#### Saved-output reads
+
+A follow-up enabled `read` and external-directory access specifically for
+OpenCode's saved-output directory, keeping the same model, research prompts,
+gateway configuration, and ten-step budget. The probe's instructions were adjusted
+to allow saved-output reads rather than requiring exclusive use of `cmg_execute`.
+
+Three original sessions completed. The design session stalled before its first
+assistant response and made no gateway calls; it was interrupted and rerun in a
+fresh session, which completed. The cause of that pre-tool stall was not identified.
+The four completed tasks shared one gateway PID but their requests did not overlap,
+so this is a recovery-path observation rather than a four-way load comparison.
+
+| Observation               | Without `read` | With `read` (including design retry) |
+| ------------------------- | -------------- | ------------------------------------ |
+| Completed research tasks  | 4/4            | 4/4                                  |
+| Successful CMG executions | 20             | 13                                   |
+| CMG execution failures    | 0              | 0                                    |
+| Observed calls inside CMG | 51             | 42                                   |
+| Upstream searches         | 9              | 6                                    |
+| Upstream fetches          | 16             | 9                                    |
+| Saved-output `read` calls | 0              | 1                                    |
+| Client output spills      | 5              | 3                                    |
+
+Only the migration agent used `read`; the others either avoided spilling or
+requested narrower returns through CMG. The counts are descriptive, not a measured
+causal benefit of enabling `read`: agent choices varied, and the design task ran
+separately after the stall.
+
+The migration agent successfully read a spilled result: permissions did not block
+it. However, the result was a 51,266-byte single-line JSON file, and `read` returned
+only the first 2,000 characters plus a line-truncation notice. The required document
+marker was at character offset 11,405, outside that preview. The agent subsequently
+fetched the page again through CMG and returned a smaller, parsed excerpt.
+
+This is a second client-side boundary. In the inspected OpenCode
+`packages/core/src/tool/read-filesystem.ts`, `clampLine()` shortens each line to
+2,000 UTF-16 code units; `offset` and `limit` select lines, not positions within a
+line. Enabling `read` alone therefore does not guarantee recovery of large compact
+JSON. A partial-line display fix would improve the initial preview, but full
+saved-output recovery also needs a way to access the remainder of a long line.
+
+The gateway exited with code 0, no signal, and zero pending requests. The temporary
+OpenCode configuration and analysis script were removed. No runtime changes were
+made to CMG or OpenCode for this test.
+
 ## Development
+
+For the bounded ten-minute local reliability workload and its fault/recovery
+sequence, see [the reliability diagnostic](docs/reliability.md).
 
 Each package owns its `tests/`, support helpers, fixtures, and test/check commands.
 Tests are organized by public module contract, with real implementations and a small
