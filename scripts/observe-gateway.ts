@@ -3,11 +3,26 @@ import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { z } from "zod";
 
-const [configuration, output] = process.argv.slice(2);
-if (process.argv.length !== 4 || configuration === undefined || output === undefined) {
-  console.error("Usage: bun scripts/observe-gateway.ts <gateway-config> <metadata-jsonl>");
+const args = parseArgs({
+  args: process.argv.slice(2),
+  allowPositionals: true,
+  options: { gateway: { type: "string" } },
+});
+
+const [configuration, output] = args.positionals;
+const gateway = args.values.gateway;
+if (
+  args.positionals.length !== 2 ||
+  configuration === undefined ||
+  output === undefined ||
+  (gateway !== undefined && !gateway.trim())
+) {
+  console.error(
+    "Usage: bun scripts/observe-gateway.ts <gateway-config> <metadata-jsonl> [--gateway <installed-cmg-path>]",
+  );
   process.exit(1);
 }
 
@@ -46,12 +61,14 @@ const pending = new Map<string | number, { started: number; session: string | un
 const logPath = resolve(output);
 
 const child = spawn(
-  process.execPath,
-  [
-    "--conditions=development",
-    fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
-    resolve(configuration),
-  ],
+  gateway === undefined ? process.execPath : resolve(gateway),
+  gateway === undefined
+    ? [
+        "--conditions=development",
+        fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
+        resolve(configuration),
+      ]
+    : [resolve(configuration)],
   { stdio: ["pipe", "pipe", "inherit"] },
 );
 

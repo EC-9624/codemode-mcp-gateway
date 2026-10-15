@@ -9,9 +9,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 // This fixture is copied into an unrelated directory and imports only installed public exports.
-const installed = fileURLToPath(import.meta.resolve("@cmg/codemode"));
-ok(installed.startsWith(fileURLToPath(new URL("./node_modules/", import.meta.url))));
-ok(installed.endsWith("/dist/index.js"));
+for (const name of ["@cmg/codemode", "@cmg/mcp", "codemode-mcp-gateway"]) {
+  const installed = fileURLToPath(import.meta.resolve(name));
+  ok(installed.startsWith(fileURLToPath(new URL("./node_modules/", import.meta.url))));
+  ok(installed.endsWith("/dist/index.js"));
+}
 
 await using cleanup = new AsyncDisposableStack();
 const upstream = new McpServer({ name: "packed-upstream", version: "1" });

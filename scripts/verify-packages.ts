@@ -109,16 +109,16 @@ await Bun.write(
 for (const [source, target] of [
   ["packages/gateway/tests/fixtures/packaged-consumer.ts", "consumer.ts"],
   ["packages/gateway/tests/fixtures/import-gateway.ts", "import-gateway.ts"],
-  ["examples/mcp-server.ts", "mcp-server.ts"],
-  ["examples/mcp-tools.ts", "mcp-tools.ts"],
+  ["examples/mcp-server.ts", "upstream/mcp-server.ts"],
+  ["examples/mcp-tools.ts", "upstream/mcp-tools.ts"],
 ] as const) {
   await Bun.write(join(consumer, target), Bun.file(join(root, source)));
 }
 
 await Bun.write(
-  join(consumer, "cmg.json"),
+  join(consumer, "config/cmg.json"),
   JSON.stringify({
-    upstream: { command: process.execPath, args: ["mcp-server.ts"] },
+    upstream: { command: process.execPath, args: ["mcp-server.ts"], cwd: "../upstream" },
     sandbox: { timeoutMs: 5_000, totalTimeoutMs: 10_000 },
   }),
 );
@@ -130,7 +130,7 @@ await run(
     process.execPath,
     "consumer.ts",
     join(consumer, "node_modules/.bin/cmg"),
-    join(consumer, "cmg.json"),
+    join(consumer, "config/cmg.json"),
   ],
   consumer,
 );

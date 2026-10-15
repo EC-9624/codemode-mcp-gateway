@@ -289,6 +289,11 @@ arguments and exit status. [`composition.ts`](src/composition.ts) selects policy
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
 build, invoke it as `cmg configuration.json`; dependencies are not bundled.
 
+The Notion runner and metadata observer accept `--gateway <installed-cmg-path>`
+to launch that executable instead of the source CLI. See the
+[external-consumer validation guide](../../docs/installed-validation.md) for local
+tarball installation, saved-credential reuse, and OpenCode V2 integration.
+
 ## Current scope
 
 One upstream, a startup catalog snapshot, and agent-facing stdio only. HTTP refers

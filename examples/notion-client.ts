@@ -12,7 +12,7 @@ if (!options.ok) {
   process.exit(1);
 }
 
-const { configuration, query, page, marker, runs, agents } = options.value;
+const { configuration, query, page, marker, runs, agents, gateway } = options.value;
 
 const check = z.discriminatedUnion("status", [
   z.object({
@@ -131,12 +131,14 @@ console.log(
 const started = performance.now();
 
 const child = spawn(
-  process.execPath,
-  [
-    "--conditions=development",
-    fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
-    resolve(configuration),
-  ],
+  gateway === undefined ? process.execPath : resolve(gateway),
+  gateway === undefined
+    ? [
+        "--conditions=development",
+        fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
+        resolve(configuration),
+      ]
+    : [resolve(configuration)],
   { stdio: ["pipe", "pipe", "inherit"] },
 );
 
@@ -276,7 +278,7 @@ async function runStep(step: string, code: string, iteration: number, agent: num
 
 function argumentsOf(args: string[]) {
   const usage =
-    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>]";
+    "Usage: bun run example:notion <config> <query> [page URL or id] [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>] [--gateway <installed-cmg-path>]";
 
   let parsed;
   try {
@@ -288,6 +290,7 @@ function argumentsOf(args: string[]) {
         expect: { type: "string" },
         runs: { type: "string", default: "1" },
         agents: { type: "string", default: "1" },
+        gateway: { type: "string" },
       },
     });
   } catch {
@@ -299,9 +302,11 @@ function argumentsOf(args: string[]) {
   const marker = parsed.values.expect;
   const runs = Number(parsed.values.runs);
   const agents = Number(parsed.values.agents);
+  const gateway = parsed.values.gateway;
   if (
     !configuration ||
     !query?.trim() ||
+    (gateway !== undefined && !gateway.trim()) ||
     parsed.positionals.length > 3 ||
     (legacyPage !== undefined && parsed.values.page !== undefined) ||
     (page !== undefined && !page.replace(/-/g, "").match(/[a-f0-9]{32}/i)) ||
@@ -316,5 +321,8 @@ function argumentsOf(args: string[]) {
     return { ok: false, message: usage } as const;
   }
 
-  return { ok: true, value: { configuration, query, page, marker, runs, agents } } as const;
+  return {
+    ok: true,
+    value: { configuration, query, page, marker, runs, agents, gateway },
+  } as const;
 }
