@@ -3,8 +3,9 @@
  * call envelopes; ordinary guest promises and their resolvers stay in the prelude.
  * The supplied scope owns the dispatcher and the settlement handle, not this object.
  *
- * Calls are validated and admitted before dispatch. A reply settles its guest promise,
- * releases the outstanding slot, and wakes the engine. Decoding the returned value
+ * Calls are validated and admitted before dispatch; excess concurrency waits in FIFO order.
+ * A reply settles its guest promise, releases an active slot, dispatches the next queued
+ * call, and wakes the engine. Decoding the returned value
  * runs later on the guest job queue, so a then getter can safely start another call.
  *
  * The first admission limit or infrastructure failure stops the bridge. Exceptions
@@ -51,6 +52,8 @@ export function installGuestToolBridge(
   const names = new Set(toolNames);
   const budget = createToolCallBudget(limits);
   const pendingCalls = new Set<number>();
+  const activeCalls = new Set<number>();
+  const queuedCalls: GuestCall[] = [];
   const failureSignal = Promise.withResolvers<void>();
   let change = Promise.withResolvers<void>();
   let failure: BridgeFailure | undefined;
@@ -66,10 +69,22 @@ export function installGuestToolBridge(
     if (failure !== undefined) return;
 
     failure = next;
+    queuedCalls.length = 0;
     failureSignal.resolve();
   };
 
   const fail = (error: unknown) => stop({ kind: "error", error });
+
+  const dispatchNext = () => {
+    if (!scope.alive || failure !== undefined) return;
+
+    const call = queuedCalls[0];
+    if (call === undefined || budget.start() !== undefined) return;
+
+    queuedCalls.shift();
+    activeCalls.add(call.callId);
+    dispatch(call);
+  };
 
   const dispatcher = scope.manage(
     context.newFunction("dispatch", (json = context.undefined) => {
@@ -102,7 +117,8 @@ export function installGuestToolBridge(
 
         lastCallId = call.callId;
         pendingCalls.add(call.callId);
-        dispatch(call);
+        queuedCalls.push(call);
+        dispatchNext();
 
         return context.true;
       } catch (error) {
@@ -141,7 +157,7 @@ export function installGuestToolBridge(
           return;
         }
 
-        if (!pendingCalls.has(decoded.value.callId)) {
+        if (!activeCalls.has(decoded.value.callId)) {
           fail(new Error("Sandbox worker received an unknown or duplicate tool reply."));
 
           return;
@@ -154,7 +170,9 @@ export function installGuestToolBridge(
         if (result.error) throw new Error("Sandbox guest settlement failed.");
 
         pendingCalls.delete(decoded.value.callId);
+        activeCalls.delete(decoded.value.callId);
         budget.release();
+        dispatchNext();
         notify();
       } catch (error) {
         // A broken settlement is terminal, never retried as a guest tool rejection.

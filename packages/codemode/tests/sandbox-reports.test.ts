@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isMainThread } from "node:worker_threads";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ToolException } from "@cmg/codemode";
+import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor reports", () => {
   test("records call summaries in invocation order even when replies finish in reverse order", async () => {
@@ -172,6 +173,95 @@ describe("CodeExecutor reports", () => {
         },
       ],
     });
+  });
+
+  test("reports a thrown host error to onToolException without exposing it to the guest", async () => {
+    const cause = new Error("Private credentials");
+    const exceptions: ToolException[] = [];
+
+    const report = await new CodeExecutor({
+      tools: {
+        read: () => {
+          throw cause;
+        },
+      },
+      onToolException: (exception) => exceptions.push(exception),
+    }).execute("try { await tools.read(); } catch (error) { return error.message; }");
+
+    expect(report.result).toEqual({ ok: true, value: "Host tool failed." });
+    expect(exceptions).toEqual([{ callId: 1, name: "read", cause }]);
+    expect(exceptions[0]?.cause).toBe(cause);
+  });
+
+  test("rejects with an infrastructure failure when onToolException throws", async () => {
+    const observerFailure = new Error("Observer failed");
+
+    const failure = await executionErrorOf(
+      new CodeExecutor({
+        tools: {
+          read: () => {
+            throw new Error("Private credentials");
+          },
+        },
+        onToolException: () => {
+          throw observerFailure;
+        },
+      }).execute("try { await tools.read(); } catch { return 'caught'; }"),
+    );
+
+    expect(failure.cause).toBe(observerFailure);
+    expect(failure.calls).toEqual([
+      { callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" },
+    ]);
+  });
+
+  test("reports an explicit failure cause only to the host observer", async () => {
+    const cause = new Error("Private details");
+    const exceptions: ToolException[] = [];
+
+    const report = await new CodeExecutor({
+      tools: { read: () => ToolResult.failure("Public explanation", { cause }) },
+      onToolException: (exception) => exceptions.push(exception),
+    }).execute(`
+      try { await tools.read(); }
+      catch (error) { return { message: error.message, hasCause: "cause" in error }; }
+    `);
+
+    expect(report).toEqual({
+      result: { ok: true, value: { message: "Public explanation", hasCause: false } },
+      calls: [{ callId: 1, name: "read", status: "completed" }],
+    });
+    expect(exceptions).toEqual([{ callId: 1, name: "read", cause }]);
+    expect(exceptions[0]?.cause).toBe(cause);
+  });
+
+  test("does not report tool exceptions thrown after cancellation ends the execution", async () => {
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const exceptions: ToolException[] = [];
+
+    const completion = new CodeExecutor({
+      tools: {
+        wait: (_args, { signal }) => {
+          started.resolve();
+
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+      onToolException: (exception) => exceptions.push(exception),
+    }).execute("return await tools.wait();", { signal: controller.signal });
+
+    await started.promise;
+    controller.abort();
+    const report = await completion;
+
+    expect(report.result).toEqual({
+      ok: false,
+      error: { kind: "cancelled", message: "Execution cancelled." },
+    });
+    expect(exceptions).toEqual([]);
   });
 
   test("reports completion for an unserializable response and delivers its conversion error to the guest", async () => {

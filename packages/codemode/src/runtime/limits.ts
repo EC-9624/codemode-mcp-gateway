@@ -6,7 +6,7 @@ export const MAX_LIMIT = SandboxLimits.totalTimeoutMs.maximum;
 export const MAX_STACK_SIZE_BYTES = SandboxLimits.maxStackSizeBytes.maximum;
 
 export type ExecutionLimits = {
-  readonly timeoutMs: number;
+  readonly timeoutMs: number | undefined;
   readonly memoryLimitBytes: number;
   readonly maxStackSizeBytes: number;
   readonly maxSourceBytes: number;
@@ -25,7 +25,7 @@ export const DEFAULT_LIMITS: ExecutionLimits = {
   maxConcurrentToolCalls: SandboxLimits.maxConcurrentToolCalls.default,
 };
 
-const MAXIMUM_LIMITS: ExecutionLimits = {
+const MAXIMUM_LIMITS = {
   timeoutMs: SandboxLimits.timeoutMs.maximum,
   memoryLimitBytes: SandboxLimits.memoryLimitBytes.maximum,
   maxStackSizeBytes: SandboxLimits.maxStackSizeBytes.maximum,
@@ -33,7 +33,7 @@ const MAXIMUM_LIMITS: ExecutionLimits = {
   maxOutputBytes: SandboxLimits.maxOutputBytes.maximum,
   maxToolCalls: SandboxLimits.maxToolCalls.maximum,
   maxConcurrentToolCalls: SandboxLimits.maxConcurrentToolCalls.maximum,
-};
+} satisfies Record<keyof ExecutionLimits, number>;
 
 export function isPositiveInt(value: unknown, maximum = MAX_LIMIT): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= maximum;
@@ -42,6 +42,8 @@ export function isPositiveInt(value: unknown, maximum = MAX_LIMIT): value is num
 /** Returns the first field outside its range, in declaration order. */
 export function findInvalidLimit(limits: Readonly<Record<string, unknown>>) {
   for (const [name, maximum] of Object.entries(MAXIMUM_LIMITS)) {
+    if (name === "timeoutMs" && limits[name] === undefined) continue;
+
     if (!isPositiveInt(limits[name], maximum)) return { name, maximum };
   }
 

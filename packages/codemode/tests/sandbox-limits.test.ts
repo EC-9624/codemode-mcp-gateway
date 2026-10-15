@@ -88,6 +88,16 @@ describe("CodeExecutor limit configuration", () => {
   });
 
   test.each([null, "1", 0, -1, 1.5, NaN, Infinity])(
+    "rejects an invalid optional guest deadline %s",
+    (value) => {
+      const options: SandboxOptions = {};
+      Object.assign(options, { timeoutMs: value });
+
+      expect(() => new CodeExecutor(options)).toThrow(RangeError);
+    },
+  );
+
+  test.each([null, "1", 0, -1, 1.5, NaN, Infinity])(
     "rejects execution capacity %s before reading tools",
     (value) => {
       let reads = 0;
@@ -278,10 +288,18 @@ describe("worker VM limits", () => {
     expect(defaults).toEqual({ result: { ok: true, value: 2097152 }, calls: [] });
   });
 
-  test("can catch guest allocation failure and continue in the same execution", async () => {
+  test("allows a guest allocation above the former 64 MiB default", async () => {
+    const report = await new CodeExecutor().execute(
+      "return new ArrayBuffer(128 * 1024 * 1024).byteLength;",
+    );
+
+    expect(report).toEqual({ result: { ok: true, value: 134217728 }, calls: [] });
+  });
+
+  test("can catch allocation failure above the default 256 MiB and continue", async () => {
     const report = await new CodeExecutor().execute(`
       let failed = false;
-      try { new ArrayBuffer(128 * 1024 * 1024); } catch { failed = true; }
+      try { new ArrayBuffer(257 * 1024 * 1024); } catch { failed = true; }
       return { failed, value: 1 + 2 };
     `);
 

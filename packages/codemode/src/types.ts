@@ -49,6 +49,13 @@ export type ExecutionReport = {
   /** Fixed when the outcome is selected; late tool completions cannot update these observations. */
   readonly calls: readonly CallOutcome[];
 };
+/** Host-only observation of a thrown exception or a cause attached to an explicit tool failure. */
+export type ToolException = {
+  readonly callId: number;
+  readonly name: string;
+  readonly cause: unknown;
+};
+
 export type ExecuteOptions = {
   /** Host-supplied bindings, snapshotted at admission. Replace constructor defaults; {} exposes no tools. */
   tools?: Readonly<Record<string, SandboxTool>>;
@@ -60,14 +67,14 @@ export type ExecuteOptions = {
 export type SandboxOptions = {
   /** Default bindings when execute omits tools. The application owns their external resources. */
   tools?: Readonly<Record<string, SandboxTool>>;
-  /** Guest deadline after VM and bridge setup, including source parsing and host waits. Default: 1000 ms. */
+  /** Optional guest deadline after VM/bridge setup, including parsing and host waits. Unset by default. */
   timeoutMs?: number;
   /**
    * Optional deadline from worker construction through acceptance of completion. Cleanup follows
    * and may outlast it; this is not a hard response-latency cap. Default: no parent deadline.
    */
   totalTimeoutMs?: number;
-  /** QuickJS guest heap limit. Defaults to 64 MiB. */
+  /** QuickJS guest heap limit. Defaults to 256 MiB. */
   memoryLimitBytes?: number;
   /** QuickJS stack guard, at most 4 MiB. Defaults to 1 MiB. */
   maxStackSizeBytes?: number;
@@ -75,10 +82,16 @@ export type SandboxOptions = {
   maxSourceBytes?: number;
   /** Final JSON return value or script-error message in UTF-8 bytes. Defaults to 256 KiB. */
   maxOutputBytes?: number;
-  /** Total admitted calls, including failed responses. Defaults to 100. */
+  /** Total admitted calls, including queued calls and failed responses. Defaults to 100. */
   maxToolCalls?: number;
-  /** Outstanding calls. Exceeding this limit stops execution. Defaults to 10. */
+  /** Active tool calls. Additional calls queue in invocation order. Defaults to 10. */
   maxConcurrentToolCalls?: number;
   /** Active executions per executor, including worker cleanup. Defaults to 4; excess calls are rejected. */
   maxConcurrentExecutions?: number;
+  /**
+   * Observes thrown exceptions and explicit failure causes while the execution is running.
+   * Only the public failure message reaches the guest. Failures after the execution ends,
+   * such as cooperative aborts, are not reported. An observer exception is an infrastructure failure.
+   */
+  onToolException?: (exception: ToolException) => void;
 };

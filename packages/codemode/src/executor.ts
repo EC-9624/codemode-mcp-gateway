@@ -80,8 +80,10 @@ export class CodeExecutor {
       }
 
       const totalTimeoutMs = this.options.totalTimeoutMs;
+      const onToolException = this.options.onToolException;
 
       const control: WorkerControl = {
+        ...(onToolException === undefined ? {} : { onToolException }),
         ...(totalTimeoutMs === undefined
           ? {}
           : {

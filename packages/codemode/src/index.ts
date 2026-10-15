@@ -9,6 +9,7 @@ export {
   type SandboxResult,
   type ExecuteOptions,
   type SandboxOptions,
+  type ToolException,
 } from "./types.ts";
 export {
   ToolResult,

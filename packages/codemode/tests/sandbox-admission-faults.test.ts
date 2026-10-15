@@ -14,17 +14,19 @@ describe("worker-side admission ownership", () => {
       "total",
       { maxToolCalls: 2, maxConcurrentToolCalls: 10 },
       "tool-calls",
+      2,
       "Execution exceeded the 2 tool-call limit.",
     ],
     [
-      "concurrent",
+      "total including queued calls",
       { maxToolCalls: 10, maxConcurrentToolCalls: 2 },
-      "concurrent-tool-calls",
-      "Execution exceeded the 2 concurrent tool-call limit.",
+      "tool-calls",
+      10,
+      "Execution exceeded the 10 tool-call limit.",
     ],
   ] as const)(
     "stops at the %s limit despite guest catch and disposes resources",
-    async (_name, limits, resource, message) => {
+    async (_name, limits, resource, maximum, message) => {
       const resources: ExecutionResources[] = [];
       const late = Promise.withResolvers<ToolResult>();
       using cleanup = new DisposableStack();
@@ -55,7 +57,7 @@ describe("worker-side admission ownership", () => {
 
       expect(result).toEqual({
         ok: false,
-        error: { kind: "limit", resource, maximum: 2, message },
+        error: { kind: "limit", resource, maximum, message },
       });
       expect(calls).toBe(2);
       expectDisposedExecution(resources);

@@ -40,6 +40,23 @@ serveStdio(() => {
 
     return { content: [] };
   });
+  if (mode === "malformed") {
+    // A raw handler bypasses server-side output validation, so the client SDK throws.
+    server.server.setRequestHandler("tools/list", () => ({
+      tools: [
+        {
+          name: "malformed",
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object", required: ["sum"] },
+        },
+      ],
+    }));
+    server.server.setRequestHandler("tools/call", () => ({
+      content: [],
+      structuredContent: { private: "upstream-private-detail" },
+    }));
+  }
+
   server.registerTool("started", {}, () => {
     console.error("request-started");
 

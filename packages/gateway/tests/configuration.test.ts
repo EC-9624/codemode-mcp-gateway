@@ -103,7 +103,7 @@ describe("application configuration", () => {
     expect(config.sandbox).toEqual({
       timeoutMs: 5000,
       totalTimeoutMs: 10000,
-      memoryLimitBytes: 64 * 1024 * 1024,
+      memoryLimitBytes: 256 * 1024 * 1024,
       maxStackSizeBytes: 1024 * 1024,
       maxSourceBytes: 256 * 1024,
       maxOutputBytes: 256 * 1024,

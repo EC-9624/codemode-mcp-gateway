@@ -226,6 +226,42 @@ describe("CMG stdio application", () => {
     expect(await app.closed).toEqual({ code: 0, signal: null });
   }, 10_000);
 
+  test("logs original protocol errors to stderr while exposing code and message to agents", async () => {
+    await using app = await gatewayProcess({ mode: "malformed" });
+    await app.client.connect(app.transport, { timeout: 4_000 });
+    await app.waitForConnections(1);
+
+    const response = await app.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["test.malformed"]({});' },
+    });
+
+    await app.waitFor('"tool":"test.malformed"');
+    app.child.stdin.end();
+
+    expect(response.structuredContent).toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "script",
+          message:
+            "MCP tool \"malformed\" failed (code -32602): Structured content does not match the tool's output schema: data must have required property 'sum'",
+        },
+      },
+      calls: [{ callId: 1, name: "test.malformed", status: "completed" }],
+    });
+    expect(JSON.stringify(response)).not.toContain("upstream-private-detail");
+    const line = app.stderr.split("\n").find((entry) => entry.includes('"tool":"test.malformed"'));
+    const logged: unknown = JSON.parse(line ?? "null");
+    expect(logged).toMatchObject({
+      tool: "test.malformed",
+      callId: 1,
+      error: { name: "ProtocolError", code: -32602 },
+    });
+    expect(line).toContain("output schema");
+    expect(await app.closed).toEqual({ code: 0, signal: null });
+  }, 10_000);
+
   test("rejects invalid configuration before spawning the upstream", async () => {
     await using app = await gatewayProcess({ sandbox: { timeoutMs: 0 } });
     await rejectionOf(app.client.connect(app.transport, { timeout: 4_000 }));

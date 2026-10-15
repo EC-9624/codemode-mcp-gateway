@@ -205,7 +205,12 @@ must inspect; outer MCP `isError` indicates that the final execution failed.
 
 Script errors, deadlines, cancellation, and execution limits appear in `result`.
 Infrastructure failures use a controlled `sandbox` error; private diagnostics stay
-host-side. Cancellation cannot roll back upstream side effects, and a completed
+host-side. MCP protocol errors reject in the script with the original tool name,
+numeric code, and message, including SDK-generated output-schema errors. Error data
+and stacks are excluded; messages are public and are not redacted. Unknown exceptions
+still reject as `Host tool failed.`. For both cases, `cmg` writes the qualified tool
+name, call ID, and original error name/message/code to stderr as one JSON line.
+Cancellation cannot roll back upstream side effects, and a completed
 summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
 
 ## Headers and execution policy
@@ -227,7 +232,8 @@ summary does not establish safe retry. See [execution contracts](../../docs/refe
 Header templates expand host environment variables before connecting. Missing
 variables mark that server failed before contacting it. Static headers do not enable OAuth or store credentials.
 Optional `sandbox` settings configure the fixed QuickJS policy; app defaults use
-a 5-second guest deadline and 10-second total deadline. Other defaults come from codemode.
+a 5-second guest deadline and 10-second total deadline, unchanged by the library's
+unset deadlines. Guest memory defaults to 256 MiB. Other defaults come from codemode.
 
 For example, configure execution capacity and total tool calls without request overrides:
 
@@ -246,7 +252,9 @@ for discovery. Configuration is loaded once; recovery republishes catalog snapsh
 Each gateway's `maxConcurrentExecutions` defaults to 4 across all its MCP instances, including
 worker cleanup. Excess requests receive `isError: true` with `result.error.resource:
 "executions"` and empty calls; they are not queued or retried. Separate gateways have separate budgets.
-The per-execution `maxConcurrentToolCalls` limit remains independent.
+The per-execution `maxConcurrentToolCalls` limit remains independent: ten active
+calls by default, with additional calls queued in invocation order. Queued calls
+consume the total-call budget and their wait counts toward execution deadlines.
 
 ### Local OAuth
 
@@ -383,6 +391,8 @@ options?)`, call `await gateway.start()`, and attach `gateway.createServer()` to
 application-owned transport. `start()` waits for initial attempts; expected upstream
 failures are available from `gateway.status()`. Creating an MCP server before that
 promise settles exposes connecting statuses. `options.onStatus` receives updates;
+`options.onToolException` receives private tool exceptions (see the
+[codemode option](../codemode/README.md#results-and-failures));
 `gateway.failure` resolves with unexpected background infrastructure failures, which
 are also surfaced by `close()`. Close/dispose the gateway to stop maintenance,
 abort executions, and release all connections. Importing the package starts none

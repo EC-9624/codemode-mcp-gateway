@@ -5,7 +5,7 @@ import {
   MAX_LIMIT,
   type ExecutionLimits,
 } from "./limits.ts";
-import { type SandboxOptions } from "../types.ts";
+import { type SandboxOptions, type ToolException } from "../types.ts";
 import { SandboxLimits } from "../limits.ts";
 
 /** Fixed, validated configuration. Cancellation belongs to each execution. */
@@ -13,6 +13,7 @@ export type ResolvedOptions = {
   readonly limits: ExecutionLimits;
   readonly totalTimeoutMs: number | undefined;
   readonly maxConcurrentExecutions: number;
+  readonly onToolException: ((exception: ToolException) => void) | undefined;
 };
 
 /** Apply built-in defaults and validate once, before reading tool bindings. */
@@ -51,7 +52,12 @@ export function resolveOptions(options: SandboxOptions): ResolvedOptions {
     throw new RangeError(`maxConcurrentExecutions must be an integer from 1 to ${MAX_LIMIT}.`);
   }
 
-  return { limits, totalTimeoutMs, maxConcurrentExecutions };
+  return {
+    limits,
+    totalTimeoutMs,
+    maxConcurrentExecutions,
+    onToolException: options.onToolException,
+  };
 }
 
 /** Unlike `??`, keeps a JavaScript caller's null so validation rejects it. */

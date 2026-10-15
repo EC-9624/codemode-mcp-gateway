@@ -213,7 +213,175 @@ describe("CodeExecutor call budget", () => {
 });
 
 describe("concurrent tool calls", () => {
-  test("stops an unawaited burst at the default 10 outstanding calls", async () => {
+  test("queues Promise.all calls beyond the default 10 active calls and completes every call", async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve());
+    let calls = 0;
+    let active = 0;
+    let peak = 0;
+
+    const completion = new CodeExecutor({
+      totalTimeoutMs: 2000,
+      tools: {
+        read: async () => {
+          calls++;
+          active++;
+          peak = Math.max(peak, active);
+          if (calls === 10) started.resolve();
+
+          await release.promise;
+          active--;
+
+          return ToolResult.success(1);
+        },
+      },
+    }).execute(
+      "return (await Promise.all(Array.from({ length: 20 }, () => tools.read()))).length;",
+    );
+
+    await started.promise;
+    expect(calls).toBe(10);
+    release.resolve();
+    const report = await completion;
+
+    expect(report.result).toEqual({ ok: true, value: 20 });
+    expect(report.calls).toHaveLength(20);
+    expect(calls).toBe(20);
+    expect(peak).toBe(10);
+    expect(active).toBe(0);
+  });
+
+  test("drains unawaited queued calls in invocation order before successful completion", async () => {
+    const received: unknown[] = [];
+
+    const report = await new CodeExecutor({
+      maxConcurrentToolCalls: 1,
+      tools: {
+        read: (args) => {
+          received.push(args);
+
+          return ToolResult.success(args);
+        },
+      },
+    }).execute('tools.read("first"); tools.read("second"); tools.read("third"); return 42;');
+
+    expect(received).toEqual(["first", "second", "third"]);
+    expect(report.result).toEqual({ ok: true, value: 42 });
+    expect(report.calls).toEqual([
+      { callId: 1, name: "read", status: "completed" },
+      { callId: 2, name: "read", status: "completed" },
+      { callId: 3, name: "read", status: "completed" },
+    ]);
+  });
+
+  test("starts the next queued call after a public tool failure releases its slot", async () => {
+    const report = await new CodeExecutor({
+      maxConcurrentToolCalls: 1,
+      tools: {
+        fail: () => ToolResult.failure("Public failure"),
+        read: () => ToolResult.success(42),
+      },
+    }).execute(`
+      const results = await Promise.allSettled([tools.fail(), tools.read()]);
+      return results.map(result => result.status);
+    `);
+
+    expect(report.result).toEqual({ ok: true, value: ["rejected", "fulfilled"] });
+    expect(report.calls).toEqual([
+      { callId: 1, name: "fail", status: "completed" },
+      { callId: 2, name: "read", status: "completed" },
+    ]);
+  });
+
+  test("does not start queued calls after cancellation", async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve(ToolResult.success()));
+    const controller = new AbortController();
+    const received: unknown[] = [];
+
+    const completion = new CodeExecutor({
+      maxConcurrentToolCalls: 1,
+      tools: {
+        read: (args) => {
+          received.push(args);
+          started.resolve();
+
+          return release.promise;
+        },
+      },
+    }).execute('await Promise.all([tools.read("first"), tools.read("second")]);', {
+      signal: controller.signal,
+    });
+
+    await started.promise;
+    controller.abort();
+    const report = await completion;
+    release.resolve(ToolResult.success());
+
+    expect(report).toEqual({
+      result: { ok: false, error: { kind: "cancelled", message: "Execution cancelled." } },
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "cancelled" }],
+    });
+    expect(received).toEqual(["first"]);
+  });
+
+  test("does not dispatch queued calls when the guest deadline expires", async () => {
+    const release = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve(ToolResult.success()));
+    const received: unknown[] = [];
+
+    const report = await new CodeExecutor({
+      timeoutMs: 100,
+      maxConcurrentToolCalls: 1,
+      tools: {
+        read: (args) => {
+          received.push(args);
+
+          return release.promise;
+        },
+      },
+    }).execute('await Promise.all([tools.read("first"), tools.read("second")]);');
+
+    expect(report).toEqual({
+      result: {
+        ok: false,
+        error: { kind: "timeout", message: "Execution exceeded the 100 ms limit." },
+      },
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "timeout" }],
+    });
+    expect(received).toEqual(["first"]);
+  });
+
+  test("does not dispatch queued calls after an uncaught script failure", async () => {
+    const release = Promise.withResolvers<ToolResult>();
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => release.resolve(ToolResult.success()));
+    const received: unknown[] = [];
+
+    const report = await new CodeExecutor({
+      maxConcurrentToolCalls: 1,
+      tools: {
+        read: (args) => {
+          received.push(args);
+
+          return release.promise;
+        },
+      },
+    }).execute('tools.read("first"); tools.read("second"); throw new Error("Script failed");');
+
+    expect(report).toEqual({
+      result: { ok: false, error: { kind: "script", message: "Script failed" } },
+      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "script-error" }],
+    });
+    expect(received).toEqual(["first"]);
+  });
+
+  test("counts queued calls toward the total limit and dispatches only 10 active calls", async () => {
     const late = Promise.withResolvers<ToolResult>();
     using cleanup = new DisposableStack();
     cleanup.defer(() => late.resolve(ToolResult.success()));
@@ -233,17 +401,15 @@ describe("concurrent tool calls", () => {
       ok: false,
       error: {
         kind: "limit",
-        resource: "concurrent-tool-calls",
-        maximum: 10,
-        message: "Execution exceeded the 10 concurrent tool-call limit.",
+        resource: "tool-calls",
+        maximum: 100,
+        message: "Execution exceeded the 100 tool-call limit.",
       },
     });
     expect(calls).toBe(10);
     expect(report.calls).toHaveLength(10);
     expect(
-      report.calls.every(
-        (call) => call.status === "interrupted" && call.reason === "concurrency-limit",
-      ),
+      report.calls.every((call) => call.status === "interrupted" && call.reason === "call-limit"),
     ).toBe(true);
   });
 

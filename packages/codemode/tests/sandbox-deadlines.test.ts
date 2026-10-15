@@ -35,16 +35,14 @@ describe("CodeExecutor guest deadline", () => {
     });
   });
 
-  test("applies the default one-second deadline", async () => {
-    const started = performance.now();
+  test("allows computation beyond one second when no guest deadline is configured", async () => {
+    const report = await new CodeExecutor().execute(`
+      const started = Date.now();
+      while (Date.now() - started < 1100) {}
+      return 42;
+    `);
 
-    const { result } = await new CodeExecutor().execute("while (true) {} ");
-
-    expect(result).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "Execution exceeded the 1000 ms limit." },
-    });
-    expect(performance.now() - started).toBeGreaterThanOrEqual(1000);
+    expect(report).toEqual({ result: { ok: true, value: 42 }, calls: [] });
   });
 
   test("times out an infinite guest microtask chain and recovers", async () => {
