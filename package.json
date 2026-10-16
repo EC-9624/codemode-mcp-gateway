@@ -21,13 +21,16 @@
     "baseline:reliability": "bun --conditions=development run scripts/reliability-baseline.ts",
     "validate:agents": "bun --conditions=development run scripts/agent-validation.ts",
     "baseline:gateway": "bun --conditions=development run scripts/gateway-soak.ts",
+    "validate:http-idle": "bun run scripts/http-idle.ts",
+    "validate:models": "bun run scripts/model-validation.ts",
     "typecheck": "bun run --cwd packages/codemode typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/gateway typecheck && tsc --noEmit",
     "test": "bun run --cwd packages/codemode test && bun run --cwd packages/mcp test && bun run --cwd packages/gateway test",
     "lint": "oxlint --deny-warnings .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "bun run build && bun run typecheck && bun run lint && bun run format:check && bun run test && bun run scripts/verify-packages.ts",
-    "verify:packages": "bun run build && bun run scripts/verify-packages.ts"
+    "verify:packages": "bun run build && bun run scripts/verify-packages.ts",
+    "verify:packages:clean": "bun run scripts/verify-clean-packages.ts"
   },
   "devDependencies": {
     "@cmg/codemode": "workspace:*",

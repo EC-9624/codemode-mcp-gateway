@@ -69,7 +69,7 @@ configuration/credential identity rules when changing names or defaults
 ## SDK patch and notices
 
 - [x] **Implementation present:** core 0.32.0 is patched in the root manifest and
-      lockfile (`package.json:56-58`, `bun.lock:70-72`). The codemode build bundles the
+      lockfile (`package.json` patchedDependencies, `bun.lock:70-72`). The codemode build bundles the
       SDK JS specifically because consumers do not inherit workspace patches;
       four WASM variants remain external (`scripts/build-codemode-runtime.ts:3-21`).
       Codemode's `prepack` calls that build (`packages/codemode/package.json:21-26`).
@@ -91,9 +91,9 @@ configuration/credential identity rules when changing names or defaults
 
 ## Verification gaps and smallest next actions
 
-- [ ] **Observed clean-source packing failure:** root checks
+- [x] **Local packaging path established; implicit hook dependency explained:** root checks
       build in dependency order, then pack with `--ignore-scripts`
-      (`package.json:11,29-30`, `scripts/verify-packages.ts:13-22`). They do not prove
+      (`package.json`, `scripts/verify-packages.ts:13-22`). They do not prove
       lifecycle-enabled prepack from a clean source checkout. Build tooling, root
       tsconfig, patch, and bundler script live in the monorepo; building a package
       directory copied alone is not an established source-distribution contract.
@@ -101,8 +101,14 @@ configuration/credential identity rules when changing names or defaults
       in this environment and omitted `dist/`; removing `--quiet` did not change that.
       The codemode archive contained only its manifest, README, and notices. This is a
       proven local failure of relying on the hook, not a claim about all Bun setups.
-      **Use an explicit root `bun run build` before packing**, as the supported verifier
-      already does. Investigate the hook behavior before claiming build-on-pack readiness.
+      Slice 38 found the user's global `~/.npmrc` sets `ignore-scripts=true`.
+      That explains the skipped hook; it is not an unexplained Bun packaging defect.
+      The safeguard was not changed or bypassed. **Use an explicit root `bun run build`
+      before packing**, as the supported verifier already does. The new
+      `bun run verify:packages:clean` automates a current-source copy, frozen install
+      with scripts disabled, explicit build, tarball inspection, and installed
+      consumers without touching shared build/install directories or creating a
+      Git worktree. This command passed on Bun 1.4.3. No automatic-hook guarantee is made.
 - [x] **Fresh installed validation passed after explicit build:** the existing verifier checks exact
       emitted JS/declaration inventory, worker asset, README/notice, absence of
       source/tests/node_modules, and workspace dependency rewriting
@@ -140,7 +146,10 @@ Source: `149cf22` plus the uncommitted slice changes, Bun 1.4.3, macOS arm64.
   archives rather than repack them; no assertions or consumer fixtures changed.
 
 The temporary source copy is not a new worktree. These checks do not resolve the
-license/naming decisions or establish that automatic prepack hooks work.
+license/naming decisions or establish that automatic prepack hooks work. Slice 38
+automated this local verification and explained the skipped hook as the global
+script-disable setting. Release decisions remain deferred: the user wants local
+use only, not a release.
 
 ## Reproduction
 
@@ -149,16 +158,19 @@ Run serially using Bun 1.4.3:
 ```sh
 bun run check
 bun run example
+bun run verify:packages:clean
 ```
 
-`check` includes isolated-consumer verification. For a focused rerun instead of
-duplicating it: `bun run verify:packages`. To check hook behavior separately, use a
-disposable full source copy with no inherited `node_modules`/`dist`; run
-`bun install --frozen-lockfile --ignore-scripts`, then package-local packing before
-building. Inspect whether runtime assets exist; do not infer a hook ran from exit
-code zero. For the explicit-build path, run root `bun run build` before
-`bun pm pack --filename <temporary-archive>` in each package directory. Inspect those tarballs and feed them to the
-same external-consumer scenarios, without development export conditions or
-consumer patches. Record commands, source revision, runtime, and outcomes; no
-publishing is needed or authorized. Registry names/access, release credentials,
-and final visibility remain owner decisions, not validation steps for this slice.
+`check` includes built-artifact isolated-consumer verification. For a focused rerun:
+`bun run verify:packages`. The separate `verify:packages:clean` starts without
+inherited `node_modules`/`dist`, installs with a frozen lockfile and scripts off,
+then explicitly builds before packing with scripts off. Both use the same archive
+inventory and installed-consumer scenarios, without development export conditions
+or consumer patches. The clean command copies tracked and untracked nonignored
+source, so it checks current edits rather than just HEAD. Deleted files stay deleted.
+Temporary sources, installs, and archives are removed on every exit path.
+
+For retained local tarballs, use the explicit build/pack commands in
+[installed validation](installed-validation.md#prepare-an-external-consumer).
+Never infer a prepack hook ran just because packing exited zero; honor the user's
+script-disable policy. Nothing here publishes or authorizes a release.

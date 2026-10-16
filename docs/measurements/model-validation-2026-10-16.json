@@ -1,0 +1,58 @@
+{
+  "source": {
+    "revision": "4cf580684e63d43044e84bfdc42f54d169ea9b25",
+    "uncommittedDiagnostics": true,
+    "postRunChanges": "Two blank-line lint fixes and one comment clarification in scripts/model-validation.ts; hashes identify the executed sources.",
+    "sha256": {
+      "scripts/model-validation.ts": "cc648bfb37c5da67550d85fa1f80fddbe547716d654f941e2483293b5b765fb4",
+      "scripts/fixtures/model-validation-upstream.ts": "5bea2f487f2c173ec771d0b7c39f98274f6b59c48cab8a3967909535e53942b6",
+      "scripts/observe-gateway.ts": "cd9d84d6494e94bfdc55f3722f97829d5b770946fca1a0c53ba0262f21b0782c"
+    }
+  },
+  "command": "bun run validate:models --approve-model-calls",
+  "date": "2026-10-16",
+  "environment": {
+    "opencode": "2.0.30",
+    "bun": "1.4.3",
+    "platform": "darwin",
+    "arch": "arm64",
+    "model": "openai/gpt-6.1-sol-fast",
+    "observedVariant": "default"
+  },
+  "elapsedMs": 18032,
+  "sessions": [
+    { "workflow": "alpha", "id": "ses_ebd1fb92cffe51y38MWrhDpQHl", "toolCalls": 6 },
+    { "workflow": "delta", "id": "ses_ebd1fb924ffdKzPGN5B9SantuA", "toolCalls": 6 },
+    { "workflow": "bravo", "id": "ses_ebd1fb924ffeP1u5A5BqPXGusG", "toolCalls": 6 },
+    { "workflow": "charlie", "id": "ses_ebd1fb915ffeNJtDyGsuWyhkZz", "toolCalls": 6 }
+  ],
+  "observations": {
+    "gatewayProcesses": 1,
+    "fourRequestsInFlightObserved": true,
+    "searchArrivals": 4,
+    "searchReturns": 4,
+    "fetches": 4,
+    "deliberatePublicFailures": 4,
+    "completedNativeReads": 4,
+    "hiddenRecordsInFinalAnswers": 4,
+    "actionableErrorsInFinalAnswers": 4,
+    "spillsDeleted": 4,
+    "outputDirectoriesRemoved": true,
+    "gatewayExit": { "code": 0, "signal": null, "pendingExecuteRequests": 0 }
+  },
+  "earlierBatch": {
+    "sessions": 4,
+    "agentTasksCompleted": true,
+    "fullVerifierPassed": false,
+    "reason": "Text-part provider metadata was parsed as tool state; temporary metadata was removed by the earlier cleanup.",
+    "modelCallsReplayedAutomatically": false,
+    "correctedBatchSeparatelyApproved": true
+  },
+  "limitations": [
+    "Synthetic documents with actual model agents, not live-upstream or ordinary-use traffic.",
+    "Overlap is induced by a four-arrival gate, not natural saturation.",
+    "Synthetic session transcripts remain in the local OpenCode session store; raw temporary metadata was removed after success.",
+    "No dollar-cost cap or independently audited billing; four sessions, at most 12 agent steps each, per approved batch.",
+    "Gateway exit and spill cleanup do not prove individual VM disposal or production stability."
+  ]
+}

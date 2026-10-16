@@ -112,7 +112,7 @@ async function measure() {
           http: { type: "remote", url: http.url, oauth: false },
         },
       },
-      sandbox: { timeoutMs: 15_000, totalTimeoutMs: 20_000, maxConcurrentExecutions: 4 },
+      sandbox: { timeoutMs: 20_000, totalTimeoutMs: 25_000, maxConcurrentExecutions: 4 },
     }),
     process.cwd(),
     {
@@ -261,6 +261,25 @@ async function measure() {
   await document();
   await spill();
   snapshot("warmup");
+  phase = "http-idle-check";
+  const getsBeforeIdle = http.gets();
+
+  const heldAcrossIdle = success(waitCode("http", "idle-check")).then(
+    (value) => ({ ok: true, value }) as const,
+    (cause: unknown) => ({ ok: false, cause }) as const,
+  );
+
+  await active("http", 1);
+  // Time is the behavior: cross Bun's default 10s idle limit and the SDK's 15s
+  // SSE heartbeat without reconnecting or losing the held JSON POST.
+  await Bun.sleep(16_000);
+  await success('await tools["http.release"]({ id: "idle-check" }); return "released";');
+  const idleResult = await heldAcrossIdle;
+  if (!idleResult.ok) throw idleResult.cause;
+
+  strictEqual(idleResult.value, "idle-check");
+  strictEqual(http.gets(), getsBeforeIdle, "Idle SSE unexpectedly reconnected");
+  snapshot("http-idle-passed");
   const trafficStarted = performance.now();
   do {
     const cycle = counts.cycles;
@@ -471,13 +490,19 @@ async function httpUpstream() {
   let current = await session();
   let expired = false;
   let deletions = 0;
+  let gets = 0;
   let closed = false;
 
   const listener = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
+    // The SDK sends SSE heartbeats every 15s and executions may wait for 25s.
+    // Bun's default 10s idle timer otherwise interferes with the intended faults.
+    idleTimeout: 30,
     async fetch(request) {
       if (request.method === "DELETE") deletions++;
+
+      if (request.method === "GET") gets++;
 
       if (expired) {
         if (request.headers.has("mcp-session-id"))
@@ -496,6 +521,7 @@ async function httpUpstream() {
     counts: () => current.counts,
     active: () => current.active(),
     deletes: () => deletions,
+    gets: () => gets,
     async expire() {
       strictEqual(current.active(), 0);
       expired = true;

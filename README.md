@@ -160,6 +160,7 @@ bun run --cwd packages/codemode test
 bun run --cwd packages/mcp test
 bun run --cwd packages/gateway test
 bun run verify:packages
+bun run verify:packages:clean
 ```
 
 Each package owns its tests and local `check` command. Root `check` coordinates
@@ -168,6 +169,9 @@ there is no root test suite. `verify:packages` builds/packs all workspaces and c
 unrelated temporary consumers, declarations, workers, MCP, gateway API, and packaged
 `cmg`. Temporary overrides stand in for unpublished registry versions; nothing is
 published. Use `bun run typecheck` for typechecking and `bun run format` for formatting.
+The clean variant copies current source without inherited installs/builds, then
+performs a frozen install, explicit build, and the same consumer checks. Local
+packing does not rely on lifecycle hooks; script-disable settings remain respected.
 
 Opt-in local integration diagnostics:
 
@@ -175,12 +179,18 @@ Opt-in local integration diagnostics:
 bun run validate:agents
 bun run baseline:gateway --smoke
 bun run baseline:gateway --minutes 30
+bun run validate:http-idle
 ```
 
 The [four-workflow diagnostic](docs/agent-validation.md) checks the real CLI and
 saved-output retrieval. The [managed transport soak](docs/gateway-soak.md) exercises
 stdio and loopback HTTP upstreams; run measurements serially. Both use scripted
 synthetic traffic, not language-model agents or live providers.
+
+For separately approved **actual model-agent calls**, use
+`bun run validate:models --approve-model-calls`. This runs four Sol Fast sessions
+against synthetic local documents and can incur provider charges. See
+[actual-agent validation](docs/model-validation.md) for permissions, evidence, and limits.
 
 Builds emit ESM/declarations and the worker into `dist/`. Repository scripts use the
 `development` export condition; installed consumers use compiled exports. The
@@ -217,11 +227,15 @@ host-only call counts or execution failure categories. The new four-workflow CLI
 diagnostic, managed-gateway smoke, and a 30-minute managed transport soak passed
 locally on Bun 1.4.3. The soak completed 180 cycles and 3,192 requests; its guide
 records one HTTP idle-timeout warning and the scope of its memory observations.
-Longer actual-agent/provider use and aggregate/payload hardening remain gaps;
-synthetic local runs are not production evidence.
+The later idle probe characterized resets/warnings; the updated fixture smoke
+passed with a justified explicit idle timeout, without rewriting the old soak.
+Four actual Sol Fast sessions also passed shared-gateway, hidden saved-output
+retrieval, actionable-error, and cleanup checks. Longer ordinary agent/provider use
+and aggregate/payload hardening remain gaps; bounded local runs are not production evidence.
 
 The [distribution checklist](docs/distribution-readiness.md) records release blockers
-and owner decisions; this project is not approved for publication.
+and owner decisions. Local use is the current goal; release work is deferred and
+this project is not approved for publication.
 
 Further reading: [behavior/ownership reference](docs/reference.md),
 [testing conventions](docs/testing.md), [bounded reliability diagnostic](docs/reliability.md),

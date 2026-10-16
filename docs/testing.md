@@ -181,6 +181,7 @@ bun run --cwd packages/mcp test
 bun run --cwd packages/gateway test
 bun run --cwd packages/gateway check
 bun run verify:packages
+bun run verify:packages:clean
 ```
 
 After changing test organization or timing-sensitive behavior, use a reproducible
@@ -198,6 +199,16 @@ must not run concurrently in the same runtime. The default suite runs every pack
 The standalone fixture installs codemode without MCP; the composition fixture
 checks the MCP adapter and executable CLI. Both typecheck against emitted `.d.ts`
 files and use real workers. These fixtures are not imported by ordinary tests.
+
+`verify:packages:clean` performs the same scenarios from a disposable copy of current
+source with no inherited installs/builds. It installs the frozen lockfile with scripts
+disabled, builds explicitly, then invokes the existing verifier. It does not create a
+Git worktree or weaken user lifecycle-script settings. This is opt-in because it
+performs an additional install and build.
+
+Timing-sensitive `validate:http-idle` and the managed-gateway smoke are separate
+local diagnostics. `validate:models --approve-model-calls` is a separately approved,
+paid actual-agent run; never add it to routine package or CI checks.
 
 ## References
 

@@ -20,7 +20,11 @@ over stdio and a real ephemeral `127.0.0.1` Streamable HTTP listener. The stdio
 fixture is runnable independently and does not import test helpers.
 
 Warmup checks qualified discovery, reads 64 KiB from each upstream, and verifies
-both complete document boundaries. Every cycle repeats this workflow, holds two
+both complete document boundaries. It also holds an HTTP call for 16 seconds,
+crossing Bun's default 10-second idle timer and the SDK's 15-second SSE heartbeat;
+the result must survive and no new SSE GET may be opened. This synthetic fixture
+uses `idleTimeout: 30`, with 20-second execution and 25-second total deadlines.
+These diagnostic settings do not alter production defaults. Every cycle repeats this workflow, holds two
 separate executions (one per transport), observes both active through read-only
 stats calls, then explicitly releases them and checks both results. A public MCP
 tool failure is checked as ordinary error data with exactly one handler invocation.
@@ -134,7 +138,41 @@ observations, not proof of a plateau or a hard bound, and exclude the stdio chil
 
 Stderr contained the command banner and **one Bun HTTP idle-timeout warning**:
 `Bun.serve() timed out a request after 10 seconds. Pass idleTimeout to configure.`
-No assertion failed, but the warning's cause was not isolated. The local HTTP
-fixture has no explicit `idleTimeout`; a follow-up should characterize its idle
-request behavior before claiming a warning-free transport soak. No production
-timeout or historical measurement was changed to hide this observation.
+No assertion failed. At the time, the fixture had no explicit `idleTimeout` and
+the warning's cause was not isolated. That historical measurement is unchanged.
+
+### Slice 37: idle behavior characterized
+
+`bun run validate:http-idle` is an opt-in raw HTTP probe, without gateway retries or
+automatic SSE reconnection. On Bun 1.4.3 it checks default and explicit 30-second
+idle settings separately for an SSE GET and a JSON POST held for 18 seconds.
+The expected default-timeout case can print Bun's warning; this command is not
+supposed to be warning-free. Each case has a 25-second watchdog, checks the result
+or `ECONNRESET`, and requires a subsequent ping on the same MCP session. A pending
+POST is invoked exactly once; it is never retried.
+
+The observed default SSE GET reset after approximately 12 seconds, before its
+15-second heartbeat. With an explicit 30-second idle timeout it delivered the
+heartbeat at 15 seconds. The held default JSON POST emitted the same warning but
+still returned its result at 18 seconds; the configured POST returned at 18 seconds
+without that warning. Thus the warning does **not** by itself establish lost or
+failed tool work. The original long-run warning cannot retrospectively be assigned
+to an exact request from its metadata.
+
+The SDK's installed GET implementation sends its first keepalive after 15 seconds;
+`enableJsonResponse` does not disable that separate stream. Bun documents a default
+10-second idle timer, including pending/streaming requests:
+[server idle timeout](https://bun.com/docs/runtime/http/server#idletimeout).
+The probe uses `node:http` to observe reset directly; an initial Bun `fetch` GET
+probe reached its watchdog instead of exposing the reset. That client difference
+was not investigated further.
+
+Only the synthetic soak listener now has an explicit 30-second idle timeout,
+longer than its heartbeat and execution deadlines. The updated smoke passed all
+four phases in approximately 30.5 seconds, including the new 16-second idle check,
+with no timeout warning: 80 requests, two controlled failures, two cancellations,
+one shutdown disconnect, two reconnects, and two verified/deleted spills. The
+gateway supervisor exited naturally with code zero and no signal or forced kill.
+An initial attempt correctly hit the diagnostic's old 15-second execution deadline
+during the new hold; the fixture deadlines were raised, not production defaults.
+The 30-minute soak has **not** been rerun with this changed fixture.

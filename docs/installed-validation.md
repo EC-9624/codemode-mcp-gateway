@@ -5,6 +5,12 @@ in for registry versions. `bun run verify:packages` remains the automated,
 synthetic distribution check. The opt-in workflow below additionally exercises
 saved OS credentials and a real upstream from outside the repository.
 
+For a fresh-source synthetic check without credentials or live upstreams, run
+`bun run verify:packages:clean`. It automates a disposable source copy, frozen
+install with scripts disabled, explicit build, packing, and the existing isolated
+consumer checks. A global `ignore-scripts=true` setting is supported; no prepack
+hook is required. This is local artifact verification, not publication.
+
 ## Prepare an external consumer
 
 From the repository root, with dependencies installed:
