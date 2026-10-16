@@ -120,7 +120,7 @@ bun run --cwd packages/mcp test
 bun run --cwd packages/mcp check
 ```
 
-The package is private and its name provisional. Bun 1.4.2 is the supported runtime;
+The package is private and its name provisional. Bun 1.4.3 is the supported runtime;
 Node compatibility is not an acceptance requirement.
 
 Tests under `tests/` exercise the public catalog and server modules. Catalog tests

@@ -4,7 +4,7 @@ A code-mode gateway for MCP tools, built from reusable execution and MCP adapter
 packages. An agent writes JavaScript; the gateway executes it with explicitly
 supplied tools. The libraries do not run an agent/model loop.
 
-Requires Bun **1.4.2**, pinned in `.bun-version`. The package names are provisional
+Requires Bun **1.4.3**, pinned in `.bun-version`. The package names are provisional
 and nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
@@ -299,6 +299,12 @@ The [WASM follow-up](docs/wasm-memory.md) narrows this to the fast-memory alloca
 path and documents matching upstream page-map findings. It includes a dependency-free
 [standalone reproduction](scripts/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
 controls, and opt-in macOS allocator/VM profiling (`--profile`).
+
+The [host-runtime study](docs/runtime-study.md) compares actual executor memory and
+performance on Bun 1.4.2, its fast-memory-disabled mode, Bun 1.4.3, and Node 24,
+with reproducible probes and an explicit Node migration boundary.
+Its 10,000-operation soaks support upgrading to 1.4.3 rather than migrating to Node
+to address this allocator issue; the historical 1.4.2 measurements above remain unchanged.
 
 ### Shared-gateway concurrency diagnostic
 

@@ -12,6 +12,7 @@
  * throws. The worker entry converts those exceptions to private failure categories.
  */
 import { Buffer } from "node:buffer";
+import { scheduler } from "node:timers/promises";
 import { Scope, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { createVm } from "./vm.ts";
 import { type ToolBridge } from "./guest-bridge.ts";
@@ -168,7 +169,7 @@ async function executeScript(
 
     if (runtime.hasPendingJob()) {
       // Yield to host timers/I/O instead of monopolizing the microtask queue.
-      await Bun.sleep(0);
+      await scheduler.wait(0);
       continue;
     }
 

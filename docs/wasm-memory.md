@@ -2,6 +2,10 @@
 
 Local investigation, 2026-10-15. Nothing published upstream.
 
+Follow-up, 2026-10-16: the [host-runtime study](runtime-study.md) verifies the relevant
+allocator fix in Bun 1.4.3 and compares real executor memory, throughput, and Node
+portability. The measurements and upstream inspection below remain historical.
+
 **Outcome:** growth is tied to Bun 1.4.2's WASM fast-memory allocation path. The
 measurements and pinned source strongly match mimalloc's retained page-map metadata
 described in [Bun #41459](https://github.com/oven-sh/bun/issues/41459) and

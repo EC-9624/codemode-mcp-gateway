@@ -1,7 +1,7 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 import { Ajv, type Options, type ValidateFunction } from "ajv";
-import { Ajv2020 } from "ajv/dist/2020";
-import { fullFormats } from "ajv-formats/dist/formats";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { fullFormats } from "ajv-formats/dist/formats.js";
 import { type ToolSchema } from "@cmg/codemode";
 
 /** A synchronous Standard Schema: compilation rejects asynchronous JSON Schemas. */

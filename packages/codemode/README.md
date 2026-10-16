@@ -45,7 +45,7 @@ Pre-aborted, oversized, and over-capacity submissions do not read execution tool
 Registry access failures reject with host-only `SandboxExecutionError` diagnostics,
 start no worker, and release admission. Tool snapshotting is outside execution deadlines.
 
-Requires Bun **1.4.2**. Import the package root; runtime deep imports are unsupported.
+Requires Bun **1.4.3**. Import the package root; runtime deep imports are unsupported.
 Run [the complete example](../../examples/basic.ts) with `bun run example` from
 the workspace root.
 

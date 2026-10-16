@@ -1,0 +1,1921 @@
+{
+  "baseCommit": "9ce90ed",
+  "date": "2026-10-16",
+  "measuredOperations": 40000,
+  "hosts": {
+    "bun-default": {
+      "phase": "environment",
+      "footprint": true,
+      "versions": {
+        "node": "26.3.0",
+        "bun": "1.4.2",
+        "boringssl": "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
+        "openssl": "1.1.0",
+        "llhttp": "9.3.0",
+        "libarchive": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+        "mimalloc": "6a64e1ba7f5b2130d4efccb67ec87fd0003f0f6a",
+        "picohttpparser": "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
+        "uwebsockets": "744846f844374847c902b5e7fd59b4342a51ef99",
+        "webkit": "2e2aa2290fac856d6f451ceacb58f7f5b44dd057",
+        "zig": "04e7f6ac1e009525bc00934f20199c68f04e0a24",
+        "zlib": "12731092979c6d07f42da27da673a9f6c7b13586",
+        "tinycc": "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
+        "lolhtml": "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
+        "ares": "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
+        "libdeflate": "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+        "usockets": "744846f844374847c902b5e7fd59b4342a51ef99",
+        "lshpack": "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+        "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "v8": "14.6.202.34-node.20",
+        "uv": "1.48.0",
+        "napi": "10",
+        "icu": "78.1",
+        "unicode": "17.0",
+        "sqlite": "3.51.0",
+        "modules": "147"
+      },
+      "host": "bun",
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "25.6.0",
+      "cpu": "Apple M3 Pro",
+      "fastMemory": "default",
+      "warmup": 10,
+      "rssSampleIntervalMs": 5,
+      "idleMs": 1000,
+      "gc": "automatic",
+      "exports": "compiled",
+      "osRss": "ps -o rss= -p PID; KiB converted to bytes"
+    },
+    "bun-no-fast-memory": {
+      "phase": "environment",
+      "footprint": true,
+      "versions": {
+        "node": "26.3.0",
+        "bun": "1.4.2",
+        "boringssl": "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
+        "openssl": "1.1.0",
+        "llhttp": "9.3.0",
+        "libarchive": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+        "mimalloc": "6a64e1ba7f5b2130d4efccb67ec87fd0003f0f6a",
+        "picohttpparser": "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
+        "uwebsockets": "744846f844374847c902b5e7fd59b4342a51ef99",
+        "webkit": "2e2aa2290fac856d6f451ceacb58f7f5b44dd057",
+        "zig": "04e7f6ac1e009525bc00934f20199c68f04e0a24",
+        "zlib": "12731092979c6d07f42da27da673a9f6c7b13586",
+        "tinycc": "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
+        "lolhtml": "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
+        "ares": "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
+        "libdeflate": "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+        "usockets": "744846f844374847c902b5e7fd59b4342a51ef99",
+        "lshpack": "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+        "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "v8": "14.6.202.34-node.20",
+        "uv": "1.48.0",
+        "napi": "10",
+        "icu": "78.1",
+        "unicode": "17.0",
+        "sqlite": "3.51.0",
+        "modules": "147"
+      },
+      "host": "bun",
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "25.6.0",
+      "cpu": "Apple M3 Pro",
+      "fastMemory": "false",
+      "warmup": 10,
+      "rssSampleIntervalMs": 5,
+      "idleMs": 1000,
+      "gc": "automatic",
+      "exports": "compiled",
+      "osRss": "ps -o rss= -p PID; KiB converted to bytes"
+    },
+    "bun-candidate": {
+      "phase": "environment",
+      "footprint": true,
+      "versions": {
+        "node": "26.3.0",
+        "bun": "1.4.3",
+        "boringssl": "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
+        "openssl": "1.1.0",
+        "llhttp": "9.4.2",
+        "libarchive": "27cbc7827172698143e440801fc0ba39ccb4f1f5",
+        "mimalloc": "92ef6587c57b262f6e6abf513f7776a2f8d12aeb",
+        "picohttpparser": "f4d94b48b31e0abae029ebeafcfd9ca0680ede58",
+        "uwebsockets": "c6da4a4d3010e5553438c60f6bd76d981976867c",
+        "webkit": "0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f",
+        "zig": "04e7f6ac1e009525bc00934f20199c68f04e0a24",
+        "zlib": "12731092979c6d07f42da27da673a9f6c7b13586",
+        "tinycc": "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
+        "lolhtml": "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
+        "ares": "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
+        "libdeflate": "92e6a0db9fa848d742f9eb286c92afc60f2c3dda",
+        "usockets": "c6da4a4d3010e5553438c60f6bd76d981976867c",
+        "lshpack": "cf0f70dd10b352194c97448eb5d00b4aa484f531",
+        "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "v8": "14.6.202.34-node.20",
+        "uv": "1.48.0",
+        "napi": "10",
+        "icu": "78.1",
+        "unicode": "17.0",
+        "sqlite": "3.51.0",
+        "typescript": "7.0.2",
+        "modules": "147"
+      },
+      "host": "bun",
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "25.6.0",
+      "cpu": "Apple M3 Pro",
+      "fastMemory": "default",
+      "warmup": 10,
+      "rssSampleIntervalMs": 5,
+      "idleMs": 1000,
+      "gc": "automatic",
+      "exports": "compiled",
+      "osRss": "ps -o rss= -p PID; KiB converted to bytes"
+    },
+    "node": {
+      "phase": "environment",
+      "footprint": true,
+      "versions": {
+        "node": "24.15.0",
+        "acorn": "8.16.0",
+        "ada": "3.4.4",
+        "amaro": "1.1.8",
+        "ares": "1.34.6",
+        "brotli": "1.2.0",
+        "cldr": "48.0",
+        "icu": "78.2",
+        "llhttp": "9.3.1",
+        "merve": "1.2.2",
+        "modules": "137",
+        "napi": "10",
+        "nbytes": "0.1.3",
+        "ncrypto": "0.0.1",
+        "nghttp2": "1.68.0",
+        "openssl": "3.5.5",
+        "simdjson": "4.5.0",
+        "simdutf": "6.4.0",
+        "sqlite": "3.51.3",
+        "tz": "2026a",
+        "undici": "7.24.4",
+        "unicode": "17.0",
+        "uv": "1.51.0",
+        "uvwasi": "0.0.23",
+        "v8": "13.6.233.17-node.48",
+        "zlib": "1.3.1-e00f703",
+        "zstd": "1.5.7"
+      },
+      "host": "node",
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "25.6.0",
+      "cpu": "Apple M3 Pro",
+      "fastMemory": "default",
+      "warmup": 10,
+      "rssSampleIntervalMs": 5,
+      "idleMs": 1000,
+      "gc": "automatic",
+      "exports": "compiled",
+      "osRss": "ps -o rss= -p PID; KiB converted to bytes"
+    }
+  },
+  "runs": [
+    {
+      "host": "bun-default",
+      "scenario": "scalar",
+      "runs": 10000,
+      "batch": 1000,
+      "concurrency": 1,
+      "observations": [
+        {
+          "phase": "before",
+          "completed": 0,
+          "memory": {
+            "rss": 33193984,
+            "heapTotal": 2623488,
+            "heapUsed": 2623488,
+            "external": 103,
+            "arrayBuffers": 103
+          },
+          "osRssBytes": 32915456,
+          "footprint": {
+            "currentBytes": 18694792,
+            "peakBytes": 18694792
+          },
+          "peakRss": 32079872,
+          "allocator": {
+            "current": 33308672,
+            "peak": 33308672,
+            "currentCommit": 80625664,
+            "peakCommit": 80625664,
+            "pageFaults": 48
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "warmup",
+          "completed": 0,
+          "memory": {
+            "rss": 103972864,
+            "heapTotal": 3408896,
+            "heapUsed": 3408896,
+            "external": 1597,
+            "arrayBuffers": 1597
+          },
+          "osRssBytes": 103972864,
+          "footprint": {
+            "currentBytes": 63013752,
+            "peakBytes": 68010896
+          },
+          "peakRss": 104300544,
+          "allocator": {
+            "current": 104054784,
+            "peak": 104300544,
+            "currentCommit": 356794368,
+            "peakCommit": 4668538880,
+            "pageFaults": 53
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 1000,
+          "elapsedMs": 26086.710709000003,
+          "latencyMs": {
+            "p50": 25.160250000000133,
+            "p95": 32.184666000001016,
+            "max": 61.169832999999926
+          },
+          "memory": {
+            "rss": 323420160,
+            "heapTotal": 3805184,
+            "heapUsed": 3162587,
+            "external": 1646558,
+            "arrayBuffers": 55103
+          },
+          "osRssBytes": 323420160,
+          "footprint": {
+            "currentBytes": 55708192,
+            "peakBytes": 72583064
+          },
+          "peakRss": 323616768,
+          "allocator": {
+            "current": 323420160,
+            "peak": 323616768,
+            "currentCommit": 645545984,
+            "peakCommit": 4957290496,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 2000,
+          "elapsedMs": 29591.542291000005,
+          "latencyMs": {
+            "p50": 28.900792000000365,
+            "p95": 33.62270799999533,
+            "max": 61.405875000004016
+          },
+          "memory": {
+            "rss": 414105600,
+            "heapTotal": 3662848,
+            "heapUsed": 2705571,
+            "external": 1326270,
+            "arrayBuffers": 30603
+          },
+          "osRssBytes": 414105600,
+          "footprint": {
+            "currentBytes": 67014736,
+            "peakBytes": 72583064
+          },
+          "peakRss": 414384128,
+          "allocator": {
+            "current": 414105600,
+            "peak": 414384128,
+            "currentCommit": 744833024,
+            "peakCommit": 5056577536,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 3000,
+          "elapsedMs": 29732.180375000004,
+          "latencyMs": {
+            "p50": 28.965250000008382,
+            "p95": 34.27166600000055,
+            "max": 58.794333999998344
+          },
+          "memory": {
+            "rss": 437125120,
+            "heapTotal": 3646464,
+            "heapUsed": 2712736,
+            "external": 1338283,
+            "arrayBuffers": 33003
+          },
+          "osRssBytes": 437125120,
+          "footprint": {
+            "currentBytes": 84268624,
+            "peakBytes": 84973184
+          },
+          "peakRss": 437452800,
+          "allocator": {
+            "current": 437125120,
+            "peak": 437452800,
+            "currentCommit": 810631168,
+            "peakCommit": 5122375680,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 4000,
+          "elapsedMs": 29158.378666000004,
+          "latencyMs": {
+            "p50": 28.718500000002678,
+            "p95": 33.229292000003625,
+            "max": 77.60175000000163
+          },
+          "memory": {
+            "rss": 459898880,
+            "heapTotal": 4067328,
+            "heapUsed": 3134465,
+            "external": 1460120,
+            "arrayBuffers": 133497
+          },
+          "osRssBytes": 459898880,
+          "footprint": {
+            "currentBytes": 102161512,
+            "peakBytes": 102866072
+          },
+          "peakRss": 460226560,
+          "allocator": {
+            "current": 459898880,
+            "peak": 460226560,
+            "currentCommit": 876494848,
+            "peakCommit": 5188239360,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 5000,
+          "elapsedMs": 29244.68691599999,
+          "latencyMs": {
+            "p50": 28.510292000006302,
+            "p95": 33.897750000003725,
+            "max": 68.63141699999687
+          },
+          "memory": {
+            "rss": 487604224,
+            "heapTotal": 3477504,
+            "heapUsed": 2608487,
+            "external": 1284582,
+            "arrayBuffers": 11403
+          },
+          "osRssBytes": 487604224,
+          "footprint": {
+            "currentBytes": 119251584,
+            "peakBytes": 121168512
+          },
+          "peakRss": 487882752,
+          "allocator": {
+            "current": 487604224,
+            "peak": 487931904,
+            "currentCommit": 942424064,
+            "peakCommit": 5254168576,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 6000,
+          "elapsedMs": 29069.51341699998,
+          "latencyMs": {
+            "p50": 28.391208000015467,
+            "p95": 32.88279099998181,
+            "max": 52.29108299998916
+          },
+          "memory": {
+            "rss": 505315328,
+            "heapTotal": 3959808,
+            "heapUsed": 3011934,
+            "external": 1400617,
+            "arrayBuffers": 111900
+          },
+          "osRssBytes": 505315328,
+          "footprint": {
+            "currentBytes": 136784024,
+            "peakBytes": 137423048
+          },
+          "peakRss": 505643008,
+          "allocator": {
+            "current": 505315328,
+            "peak": 505643008,
+            "currentCommit": 1008418816,
+            "peakCommit": 5320163328,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 7000,
+          "elapsedMs": 26410.589041,
+          "latencyMs": {
+            "p50": 25.25800000000163,
+            "p95": 30.096500000014203,
+            "max": 44.99358399998164
+          },
+          "memory": {
+            "rss": 521961472,
+            "heapTotal": 3739648,
+            "heapUsed": 2737584,
+            "external": 1336571,
+            "arrayBuffers": 39103
+          },
+          "osRssBytes": 521961472,
+          "footprint": {
+            "currentBytes": 153890000,
+            "peakBytes": 154512616
+          },
+          "peakRss": 522272768,
+          "allocator": {
+            "current": 521961472,
+            "peak": 522272768,
+            "currentCommit": 1074413568,
+            "peakCommit": 5386158080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 8000,
+          "elapsedMs": 25723.77341699999,
+          "latencyMs": {
+            "p50": 25.334958000021288,
+            "p95": 27.989000000001397,
+            "max": 40.848334000009345
+          },
+          "memory": {
+            "rss": 538525696,
+            "heapTotal": 4146176,
+            "heapUsed": 3108383,
+            "external": 1441378,
+            "arrayBuffers": 139600
+          },
+          "osRssBytes": 538525696,
+          "footprint": {
+            "currentBytes": 169979136,
+            "peakBytes": 170618136
+          },
+          "peakRss": 538836992,
+          "allocator": {
+            "current": 538525696,
+            "peak": 538853376,
+            "currentCommit": 1139949568,
+            "peakCommit": 5451694080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 9000,
+          "elapsedMs": 25728.09170800002,
+          "latencyMs": {
+            "p50": 25.370374999998603,
+            "p95": 27.575665999989724,
+            "max": 39.97712500000489
+          },
+          "memory": {
+            "rss": 555171840,
+            "heapTotal": 3867648,
+            "heapUsed": 2888158,
+            "external": 1372561,
+            "arrayBuffers": 68003
+          },
+          "osRssBytes": 555171840,
+          "footprint": {
+            "currentBytes": 186527024,
+            "peakBytes": 187084104
+          },
+          "peakRss": 555483136,
+          "allocator": {
+            "current": 555171840,
+            "peak": 555499520,
+            "currentCommit": 1205485568,
+            "peakCommit": 5517230080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 10000,
+          "elapsedMs": 25983.331000000006,
+          "latencyMs": {
+            "p50": 25.391499999997905,
+            "p95": 29.08720799998264,
+            "max": 62.5034169999999
+          },
+          "memory": {
+            "rss": 571588608,
+            "heapTotal": 3479552,
+            "heapUsed": 2669680,
+            "external": 1314179,
+            "arrayBuffers": 5503
+          },
+          "osRssBytes": 571588608,
+          "footprint": {
+            "currentBytes": 202763616,
+            "peakBytes": 203304312
+          },
+          "peakRss": 571916288,
+          "allocator": {
+            "current": 571588608,
+            "peak": 571916288,
+            "currentCommit": 1271021568,
+            "peakCommit": 5582766080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "complete",
+          "completed": 10000,
+          "elapsedMs": 277229.03312499996,
+          "executionsPerSecond": 36.07125807595734,
+          "latencyMs": {
+            "p50": 27.86912499999744,
+            "p95": 32.123749999998836,
+            "max": 77.60175000000163
+          },
+          "cpuMicroseconds": {
+            "user": 405803407,
+            "system": 120327922
+          },
+          "memory": {
+            "rss": 571604992,
+            "heapTotal": 3479552,
+            "heapUsed": 2669680,
+            "external": 1314676,
+            "arrayBuffers": 6000
+          },
+          "osRssBytes": 571604992,
+          "footprint": {
+            "currentBytes": 202501472,
+            "peakBytes": 203304312
+          },
+          "peakRss": 571916288,
+          "allocator": {
+            "current": 571604992,
+            "peak": 571916288,
+            "currentCommit": 1271021568,
+            "peakCommit": 5582766080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "idle",
+          "completed": 10000,
+          "memory": {
+            "rss": 571621376,
+            "heapTotal": 3319808,
+            "heapUsed": 2685644,
+            "external": 1322675,
+            "arrayBuffers": 6497
+          },
+          "osRssBytes": 571621376,
+          "footprint": {
+            "currentBytes": 202403168,
+            "peakBytes": 203304312
+          },
+          "peakRss": 571916288,
+          "allocator": {
+            "current": 571621376,
+            "peak": 571916288,
+            "currentCommit": 1271021568,
+            "peakCommit": 5582766080,
+            "pageFaults": 55
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        }
+      ]
+    },
+    {
+      "host": "bun-no-fast-memory",
+      "scenario": "scalar",
+      "runs": 10000,
+      "batch": 1000,
+      "concurrency": 1,
+      "observations": [
+        {
+          "phase": "before",
+          "completed": 0,
+          "memory": {
+            "rss": 41746432,
+            "heapTotal": 2623488,
+            "heapUsed": 2623488,
+            "external": 103,
+            "arrayBuffers": 103
+          },
+          "osRssBytes": 41467904,
+          "footprint": {
+            "currentBytes": 27116168,
+            "peakBytes": 27116168
+          },
+          "peakRss": 40648704,
+          "allocator": {
+            "current": 41877504,
+            "peak": 41877504,
+            "currentCommit": 117850112,
+            "peakCommit": 117850112,
+            "pageFaults": 97
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "warmup",
+          "completed": 0,
+          "memory": {
+            "rss": 102875136,
+            "heapTotal": 3408896,
+            "heapUsed": 3408896,
+            "external": 1597,
+            "arrayBuffers": 1597
+          },
+          "osRssBytes": 102875136,
+          "footprint": {
+            "currentBytes": 53265200,
+            "peakBytes": 62423856
+          },
+          "peakRss": 102989824,
+          "allocator": {
+            "current": 102957056,
+            "peak": 102989824,
+            "currentCommit": 365510656,
+            "peakCommit": 365510656,
+            "pageFaults": 107
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 1000,
+          "elapsedMs": 22858.922375000002,
+          "latencyMs": {
+            "p50": 22.62620799999786,
+            "p95": 24.150041000000783,
+            "max": 33.7488749999975
+          },
+          "memory": {
+            "rss": 281083904,
+            "heapTotal": 3873792,
+            "heapUsed": 3139265,
+            "external": 1644884,
+            "arrayBuffers": 53403
+          },
+          "osRssBytes": 281083904,
+          "footprint": {
+            "currentBytes": 38503336,
+            "peakBytes": 67224440
+          },
+          "peakRss": 284082176,
+          "allocator": {
+            "current": 281083904,
+            "peak": 284082176,
+            "currentCommit": 538722304,
+            "peakCommit": 538722304,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 2000,
+          "elapsedMs": 26710.78275,
+          "latencyMs": {
+            "p50": 25.827582999998413,
+            "p95": 34.85883399999875,
+            "max": 60.94854199999827
+          },
+          "memory": {
+            "rss": 376700928,
+            "heapTotal": 3519488,
+            "heapUsed": 2644597,
+            "external": 1313584,
+            "arrayBuffers": 17903
+          },
+          "osRssBytes": 376700928,
+          "footprint": {
+            "currentBytes": 32998408,
+            "peakBytes": 67224440
+          },
+          "peakRss": 383107072,
+          "allocator": {
+            "current": 376700928,
+            "peak": 383107072,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 3000,
+          "elapsedMs": 23163.769625,
+          "latencyMs": {
+            "p50": 22.58350000000064,
+            "p95": 27.34504200000083,
+            "max": 43.22437499999796
+          },
+          "memory": {
+            "rss": 376700928,
+            "heapTotal": 4080640,
+            "heapUsed": 3018884,
+            "external": 1433575,
+            "arrayBuffers": 118397
+          },
+          "osRssBytes": 376700928,
+          "footprint": {
+            "currentBytes": 32506888,
+            "peakBytes": 67224440
+          },
+          "peakRss": 389545984,
+          "allocator": {
+            "current": 376700928,
+            "peak": 389545984,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 4000,
+          "elapsedMs": 23159.297833000004,
+          "latencyMs": {
+            "p50": 22.660875000001397,
+            "p95": 27.1622500000085,
+            "max": 40.709333000006154
+          },
+          "memory": {
+            "rss": 393756672,
+            "heapTotal": 4015104,
+            "heapUsed": 2906608,
+            "external": 1405923,
+            "arrayBuffers": 87603
+          },
+          "osRssBytes": 393756672,
+          "footprint": {
+            "currentBytes": 32834568,
+            "peakBytes": 67224440
+          },
+          "peakRss": 393871360,
+          "allocator": {
+            "current": 393756672,
+            "peak": 393871360,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 5000,
+          "elapsedMs": 25037.869625000007,
+          "latencyMs": {
+            "p50": 24.014207999993232,
+            "p95": 30.51020900000003,
+            "max": 54.04241599999659
+          },
+          "memory": {
+            "rss": 410124288,
+            "heapTotal": 3782656,
+            "heapUsed": 2713464,
+            "external": 1317171,
+            "arrayBuffers": 42403
+          },
+          "osRssBytes": 410124288,
+          "footprint": {
+            "currentBytes": 32867336,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 410124288,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 6000,
+          "elapsedMs": 23531.95812499999,
+          "latencyMs": {
+            "p50": 22.7762910000165,
+            "p95": 26.462459000002127,
+            "max": 35.71441699999559
+          },
+          "memory": {
+            "rss": 401833984,
+            "heapTotal": 3603456,
+            "heapUsed": 2633416,
+            "external": 1290211,
+            "arrayBuffers": 16703
+          },
+          "osRssBytes": 401833984,
+          "footprint": {
+            "currentBytes": 32556040,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 401833984,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 7000,
+          "elapsedMs": 22970.386375000002,
+          "latencyMs": {
+            "p50": 22.639290999999503,
+            "p95": 25.002040999999736,
+            "max": 31.664125000010245
+          },
+          "memory": {
+            "rss": 403226624,
+            "heapTotal": 3522560,
+            "heapUsed": 2609044,
+            "external": 1294451,
+            "arrayBuffers": 4003
+          },
+          "osRssBytes": 403226624,
+          "footprint": {
+            "currentBytes": 34980872,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 403226624,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 8000,
+          "elapsedMs": 23081.662332999986,
+          "latencyMs": {
+            "p50": 22.644000000000233,
+            "p95": 25.84129199999734,
+            "max": 42.19162500000675
+          },
+          "memory": {
+            "rss": 400965632,
+            "heapTotal": 4070400,
+            "heapUsed": 2954866,
+            "external": 1399237,
+            "arrayBuffers": 104497
+          },
+          "osRssBytes": 400965632,
+          "footprint": {
+            "currentBytes": 32982024,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 400965632,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 9000,
+          "elapsedMs": 23067.456000000006,
+          "latencyMs": {
+            "p50": 22.634665999998106,
+            "p95": 25.620916000014404,
+            "max": 46.82608299999265
+          },
+          "memory": {
+            "rss": 400293888,
+            "heapTotal": 4435968,
+            "heapUsed": 3330839,
+            "external": 1517846,
+            "arrayBuffers": 204991
+          },
+          "osRssBytes": 400293888,
+          "footprint": {
+            "currentBytes": 32850952,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 400293888,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 10000,
+          "elapsedMs": 24204.429583999998,
+          "latencyMs": {
+            "p50": 22.667167000006884,
+            "p95": 29.77254200002062,
+            "max": 124.15345799998613
+          },
+          "memory": {
+            "rss": 404602880,
+            "heapTotal": 3870720,
+            "heapUsed": 2851924,
+            "external": 1374891,
+            "arrayBuffers": 56803
+          },
+          "osRssBytes": 404602880,
+          "footprint": {
+            "currentBytes": 31818760,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 404602880,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "complete",
+          "completed": 10000,
+          "elapsedMs": 238142.611875,
+          "executionsPerSecond": 41.9916449276577,
+          "latencyMs": {
+            "p50": 22.717666000011377,
+            "p95": 28.747292000000016,
+            "max": 124.15345799998613
+          },
+          "cpuMicroseconds": {
+            "user": 357048705,
+            "system": 94611769
+          },
+          "memory": {
+            "rss": 404619264,
+            "heapTotal": 3870720,
+            "heapUsed": 2851924,
+            "external": 1375385,
+            "arrayBuffers": 57297
+          },
+          "osRssBytes": 404619264,
+          "footprint": {
+            "currentBytes": 31818760,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 404619264,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "idle",
+          "completed": 10000,
+          "memory": {
+            "rss": 404635648,
+            "heapTotal": 3731456,
+            "heapUsed": 2867355,
+            "external": 1383378,
+            "arrayBuffers": 57791
+          },
+          "osRssBytes": 404635648,
+          "footprint": {
+            "currentBytes": 31343624,
+            "peakBytes": 67224440
+          },
+          "peakRss": 414302208,
+          "allocator": {
+            "current": 404635648,
+            "peak": 414302208,
+            "currentCommit": 668024832,
+            "peakCommit": 668024832,
+            "pageFaults": 111
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        }
+      ]
+    },
+    {
+      "host": "bun-candidate",
+      "scenario": "scalar",
+      "runs": 10000,
+      "batch": 1000,
+      "concurrency": 1,
+      "observations": [
+        {
+          "phase": "before",
+          "completed": 0,
+          "memory": {
+            "rss": 27165416,
+            "heapTotal": 2549760,
+            "heapUsed": 2549760,
+            "external": 103,
+            "arrayBuffers": 103
+          },
+          "osRssBytes": 39550976,
+          "footprint": {
+            "currentBytes": 27198184,
+            "peakBytes": 27198184
+          },
+          "peakRss": 26804968,
+          "allocator": {
+            "current": 27198184,
+            "peak": 27198184,
+            "currentCommit": 123994112,
+            "peakCommit": 123994112,
+            "pageFaults": 98
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "warmup",
+          "completed": 0,
+          "memory": {
+            "rss": 79070048,
+            "heapTotal": 3325952,
+            "heapUsed": 3325952,
+            "external": 1596,
+            "arrayBuffers": 1596
+          },
+          "osRssBytes": 105742336,
+          "footprint": {
+            "currentBytes": 79070048,
+            "peakBytes": 79807352
+          },
+          "peakRss": 79807352,
+          "allocator": {
+            "current": 79070048,
+            "peak": 79807352,
+            "currentCommit": 340459520,
+            "peakCommit": 4652204032,
+            "pageFaults": 110
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 1000,
+          "elapsedMs": 21480.289459,
+          "latencyMs": {
+            "p50": 21.260167000000365,
+            "p95": 22.47083399999974,
+            "max": 32.311750000000075
+          },
+          "memory": {
+            "rss": 83313624,
+            "heapTotal": 3521536,
+            "heapUsed": 2835939,
+            "external": 1383870,
+            "arrayBuffers": 4903
+          },
+          "osRssBytes": 226213888,
+          "footprint": {
+            "currentBytes": 83231704,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 83231704,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 121
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 2000,
+          "elapsedMs": 21646.239124999996,
+          "latencyMs": {
+            "p50": 21.309916999998677,
+            "p95": 23.492708999998285,
+            "max": 30.452916999998706
+          },
+          "memory": {
+            "rss": 71205848,
+            "heapTotal": 4188160,
+            "heapUsed": 3075449,
+            "external": 1403500,
+            "arrayBuffers": 7303
+          },
+          "osRssBytes": 233832448,
+          "footprint": {
+            "currentBytes": 71205848,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 71205848,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 127
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 3000,
+          "elapsedMs": 21537.991875,
+          "latencyMs": {
+            "p50": 21.259084000004805,
+            "p95": 23.36479099999997,
+            "max": 37.90537499999482
+          },
+          "memory": {
+            "rss": 68322264,
+            "heapTotal": 4434944,
+            "heapUsed": 3276366,
+            "external": 1421113,
+            "arrayBuffers": 9803
+          },
+          "osRssBytes": 244187136,
+          "footprint": {
+            "currentBytes": 68322264,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 68322264,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 138
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 4000,
+          "elapsedMs": 21506.360042,
+          "latencyMs": {
+            "p50": 21.285375000006752,
+            "p95": 22.50350000000617,
+            "max": 30.675541999997222
+          },
+          "memory": {
+            "rss": 68305880,
+            "heapTotal": 3930112,
+            "heapUsed": 2650625,
+            "external": 1215700,
+            "arrayBuffers": 5703
+          },
+          "osRssBytes": 253181952,
+          "footprint": {
+            "currentBytes": 68305880,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 68305880,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 141
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 5000,
+          "elapsedMs": 21700.980207999994,
+          "latencyMs": {
+            "p50": 21.363165999995545,
+            "p95": 23.468041000000085,
+            "max": 32.83808300000965
+          },
+          "memory": {
+            "rss": 66241496,
+            "heapTotal": 3647488,
+            "heapUsed": 2528618,
+            "external": 1193437,
+            "arrayBuffers": 4103
+          },
+          "osRssBytes": 257490944,
+          "footprint": {
+            "currentBytes": 66241496,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 66241496,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 141
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 6000,
+          "elapsedMs": 21461.70395899999,
+          "latencyMs": {
+            "p50": 21.203708000000915,
+            "p95": 23.09158400000888,
+            "max": 33.69687499999418
+          },
+          "memory": {
+            "rss": 68109272,
+            "heapTotal": 3756032,
+            "heapUsed": 2572585,
+            "external": 1195172,
+            "arrayBuffers": 5303
+          },
+          "osRssBytes": 262930432,
+          "footprint": {
+            "currentBytes": 68109272,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 67863512,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 141
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 7000,
+          "elapsedMs": 21528.73695800001,
+          "latencyMs": {
+            "p50": 21.27691600000253,
+            "p95": 22.92300000000978,
+            "max": 30.206999999994878
+          },
+          "memory": {
+            "rss": 64652248,
+            "heapTotal": 4134912,
+            "heapUsed": 2813618,
+            "external": 1230289,
+            "arrayBuffers": 4303
+          },
+          "osRssBytes": 274006016,
+          "footprint": {
+            "currentBytes": 64652248,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 64652248,
+            "peak": 97305560,
+            "currentCommit": 483852288,
+            "peakCommit": 4795596800,
+            "pageFaults": 144
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 8000,
+          "elapsedMs": 21888.891082999995,
+          "latencyMs": {
+            "p50": 21.333708999998635,
+            "p95": 24.81500000000233,
+            "max": 36.609416000021156
+          },
+          "memory": {
+            "rss": 63226840,
+            "heapTotal": 3790848,
+            "heapUsed": 2629795,
+            "external": 1203626,
+            "arrayBuffers": 2403
+          },
+          "osRssBytes": 278773760,
+          "footprint": {
+            "currentBytes": 63226840,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 63226840,
+            "peak": 97305560,
+            "currentCommit": 499056640,
+            "peakCommit": 4810801152,
+            "pageFaults": 146
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 9000,
+          "elapsedMs": 21426.672083000012,
+          "latencyMs": {
+            "p50": 21.2064160000009,
+            "p95": 22.98187499999767,
+            "max": 31.87512500002049
+          },
+          "memory": {
+            "rss": 65766360,
+            "heapTotal": 4487168,
+            "heapUsed": 2815740,
+            "external": 1222755,
+            "arrayBuffers": 5703
+          },
+          "osRssBytes": 295845888,
+          "footprint": {
+            "currentBytes": 65766360,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 65766360,
+            "peak": 97305560,
+            "currentCommit": 500105216,
+            "peakCommit": 4811849728,
+            "pageFaults": 148
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 10000,
+          "elapsedMs": 21602.13708300001,
+          "latencyMs": {
+            "p50": 21.29304200000479,
+            "p95": 24.092541999998502,
+            "max": 30.769209000020055
+          },
+          "memory": {
+            "rss": 57820120,
+            "heapTotal": 3827712,
+            "heapUsed": 2618645,
+            "external": 1213280,
+            "arrayBuffers": 5303
+          },
+          "osRssBytes": 304398336,
+          "footprint": {
+            "currentBytes": 57820120,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 57820120,
+            "peak": 97305560,
+            "currentCommit": 500105216,
+            "peakCommit": 4811849728,
+            "pageFaults": 149
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "complete",
+          "completed": 10000,
+          "elapsedMs": 216156.00237499998,
+          "executionsPerSecond": 46.262883704942965,
+          "latencyMs": {
+            "p50": 21.279333999998926,
+            "p95": 23.419583000002604,
+            "max": 37.90537499999482
+          },
+          "cpuMicroseconds": {
+            "user": 328279431,
+            "system": 73938571
+          },
+          "memory": {
+            "rss": 57820120,
+            "heapTotal": 3827712,
+            "heapUsed": 2618645,
+            "external": 1213773,
+            "arrayBuffers": 5796
+          },
+          "osRssBytes": 304398336,
+          "footprint": {
+            "currentBytes": 56296408,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 56296408,
+            "peak": 97305560,
+            "currentCommit": 500105216,
+            "peakCommit": 4811849728,
+            "pageFaults": 149
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "idle",
+          "completed": 10000,
+          "memory": {
+            "rss": 29737944,
+            "heapTotal": 3665920,
+            "heapUsed": 2631463,
+            "external": 1214078,
+            "arrayBuffers": 803
+          },
+          "osRssBytes": 304398336,
+          "footprint": {
+            "currentBytes": 29737944,
+            "peakBytes": 97305560
+          },
+          "peakRss": 97207256,
+          "allocator": {
+            "current": 29737944,
+            "peak": 97305560,
+            "currentCommit": 500105216,
+            "peakCommit": 4811849728,
+            "pageFaults": 149
+          },
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        }
+      ]
+    },
+    {
+      "host": "node",
+      "scenario": "scalar",
+      "runs": 10000,
+      "batch": 1000,
+      "concurrency": 1,
+      "observations": [
+        {
+          "phase": "before",
+          "completed": 0,
+          "memory": {
+            "rss": 87523328,
+            "heapTotal": 15646720,
+            "heapUsed": 12387472,
+            "external": 8257841,
+            "arrayBuffers": 81603
+          },
+          "osRssBytes": 87490560,
+          "footprint": {
+            "currentBytes": 42208088,
+            "peakBytes": 42208088
+          },
+          "peakRss": 87359488,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "warmup",
+          "completed": 0,
+          "memory": {
+            "rss": 112214016,
+            "heapTotal": 20889600,
+            "heapUsed": 12638328,
+            "external": 8278130,
+            "arrayBuffers": 31046
+          },
+          "osRssBytes": 112214016,
+          "footprint": {
+            "currentBytes": 67067944,
+            "peakBytes": 72049064
+          },
+          "peakRss": 116932608,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 1000,
+          "elapsedMs": 36129.531375,
+          "latencyMs": {
+            "p50": 35.65308399999958,
+            "p95": 39.160457999999835,
+            "max": 52.218166000000565
+          },
+          "memory": {
+            "rss": 127909888,
+            "heapTotal": 31637504,
+            "heapUsed": 17193304,
+            "external": 8269918,
+            "arrayBuffers": 22998
+          },
+          "osRssBytes": 127909888,
+          "footprint": {
+            "currentBytes": 91615000,
+            "peakBytes": 109556152
+          },
+          "peakRss": 140247040,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 2000,
+          "elapsedMs": 36043.226584000004,
+          "latencyMs": {
+            "p50": 35.65070800000103,
+            "p95": 38.86804100000154,
+            "max": 46.95154199999524
+          },
+          "memory": {
+            "rss": 144326656,
+            "heapTotal": 50249728,
+            "heapUsed": 19581528,
+            "external": 8269918,
+            "arrayBuffers": 23162
+          },
+          "osRssBytes": 144326656,
+          "footprint": {
+            "currentBytes": 101234088,
+            "peakBytes": 109556152
+          },
+          "peakRss": 150585344,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 3000,
+          "elapsedMs": 35986.68125000001,
+          "latencyMs": {
+            "p50": 35.61974999999802,
+            "p95": 38.20387499999197,
+            "max": 49.69391600000381
+          },
+          "memory": {
+            "rss": 148701184,
+            "heapTotal": 53919744,
+            "heapUsed": 26669792,
+            "external": 8269918,
+            "arrayBuffers": 23266
+          },
+          "osRssBytes": 148701184,
+          "footprint": {
+            "currentBytes": 105903864,
+            "peakBytes": 112802224
+          },
+          "peakRss": 154861568,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 4000,
+          "elapsedMs": 36122.442500000005,
+          "latencyMs": {
+            "p50": 35.663083000006736,
+            "p95": 39.241957999998704,
+            "max": 52.138208999997005
+          },
+          "memory": {
+            "rss": 164069376,
+            "heapTotal": 80396288,
+            "heapUsed": 16835008,
+            "external": 8269918,
+            "arrayBuffers": 22926
+          },
+          "osRssBytes": 164069376,
+          "footprint": {
+            "currentBytes": 122716296,
+            "peakBytes": 128910144
+          },
+          "peakRss": 169787392,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 5000,
+          "elapsedMs": 35968.82504200001,
+          "latencyMs": {
+            "p50": 35.64383300000918,
+            "p95": 37.61337499998626,
+            "max": 47.51175000000512
+          },
+          "memory": {
+            "rss": 175915008,
+            "heapTotal": 86425600,
+            "heapUsed": 22714472,
+            "external": 8269918,
+            "arrayBuffers": 22906
+          },
+          "osRssBytes": 175915008,
+          "footprint": {
+            "currentBytes": 134939312,
+            "peakBytes": 141034832
+          },
+          "peakRss": 181534720,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 6000,
+          "elapsedMs": 36077.72904199999,
+          "latencyMs": {
+            "p50": 35.63337500000489,
+            "p95": 39.02979199998663,
+            "max": 45.14537499999278
+          },
+          "memory": {
+            "rss": 169295872,
+            "heapTotal": 79413248,
+            "heapUsed": 32981544,
+            "external": 8269918,
+            "arrayBuffers": 24886
+          },
+          "osRssBytes": 169295872,
+          "footprint": {
+            "currentBytes": 128041288,
+            "peakBytes": 142919088
+          },
+          "peakRss": 183287808,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 7000,
+          "elapsedMs": 36083.10629199998,
+          "latencyMs": {
+            "p50": 35.67475000000559,
+            "p95": 38.96104199998081,
+            "max": 45.98512500000652
+          },
+          "memory": {
+            "rss": 170950656,
+            "heapTotal": 80199680,
+            "heapUsed": 36459352,
+            "external": 8269918,
+            "arrayBuffers": 24630
+          },
+          "osRssBytes": 170950656,
+          "footprint": {
+            "currentBytes": 129745296,
+            "peakBytes": 142919088
+          },
+          "peakRss": 183287808,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 8000,
+          "elapsedMs": 35953.561625,
+          "latencyMs": {
+            "p50": 35.609625000011874,
+            "p95": 37.84458299999824,
+            "max": 49.17675000001327
+          },
+          "memory": {
+            "rss": 185237504,
+            "heapTotal": 148357120,
+            "heapUsed": 29196584,
+            "external": 8266388,
+            "arrayBuffers": 24574
+          },
+          "osRssBytes": 185237504,
+          "footprint": {
+            "currentBytes": 148413104,
+            "peakBytes": 153853000
+          },
+          "peakRss": 190398464,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 9000,
+          "elapsedMs": 36177.514333,
+          "latencyMs": {
+            "p50": 35.65299999999115,
+            "p95": 39.1822079999838,
+            "max": 51.478000000002794
+          },
+          "memory": {
+            "rss": 209993728,
+            "heapTotal": 148357120,
+            "heapUsed": 30029568,
+            "external": 8266388,
+            "arrayBuffers": 24074
+          },
+          "osRssBytes": 209993728,
+          "footprint": {
+            "currentBytes": 172972432,
+            "peakBytes": 180051040
+          },
+          "peakRss": 216580096,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "batch",
+          "completed": 10000,
+          "elapsedMs": 35948.56949999998,
+          "latencyMs": {
+            "p50": 35.64654099999461,
+            "p95": 37.53049999999348,
+            "max": 45.60441599995829
+          },
+          "memory": {
+            "rss": 232669184,
+            "heapTotal": 151502848,
+            "heapUsed": 35913904,
+            "external": 8266388,
+            "arrayBuffers": 24062
+          },
+          "osRssBytes": 232669184,
+          "footprint": {
+            "currentBytes": 195828376,
+            "peakBytes": 203119976
+          },
+          "peakRss": 239468544,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "complete",
+          "completed": 10000,
+          "elapsedMs": 360887.22658300004,
+          "executionsPerSecond": 27.709487239776582,
+          "latencyMs": {
+            "p50": 35.64412499999162,
+            "p95": 38.886916999996174,
+            "max": 52.218166000000565
+          },
+          "cpuMicroseconds": {
+            "user": 561713345,
+            "system": 33964218
+          },
+          "memory": {
+            "rss": 232685568,
+            "heapTotal": 151502848,
+            "heapUsed": 38336624,
+            "external": 8266693,
+            "arrayBuffers": 24367
+          },
+          "osRssBytes": 232685568,
+          "footprint": {
+            "currentBytes": 195828376,
+            "peakBytes": 203119976
+          },
+          "peakRss": 239468544,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        },
+        {
+          "phase": "idle",
+          "completed": 10000,
+          "memory": {
+            "rss": 232357888,
+            "heapTotal": 147832832,
+            "heapUsed": 7494344,
+            "external": 8266388,
+            "arrayBuffers": 22794
+          },
+          "osRssBytes": 232357888,
+          "footprint": {
+            "currentBytes": 195500696,
+            "peakBytes": 203119976
+          },
+          "peakRss": 239468544,
+          "workersStarted": 0,
+          "workerReplies": 0,
+          "workerExits": 0
+        }
+      ]
+    }
+  ]
+}

@@ -13,7 +13,7 @@ bun run cmg examples/cmg.json
 bun run example:server
 ```
 
-Requires Bun **1.4.2**. `cmg` speaks MCP on stdin/stdout, so it waits for a client;
+Requires Bun **1.4.3**. `cmg` speaks MCP on stdin/stdout, so it waits for a client;
 it is not a JavaScript REPL. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 Stdout is exclusively MCP traffic; diagnostics and upstream stderr use stderr.
