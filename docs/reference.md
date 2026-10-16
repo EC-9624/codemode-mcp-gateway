@@ -748,11 +748,13 @@ changing the executor report. Server shutdown awaits the callback as well as the
 executor; its shutdown guard prevents late SDK-validated requests from starting work.
 Unexpected formatting errors produce a controlled output-delivery error and private
 diagnostics, never a script replay.
+An optional host `onClose()` releases presentation resources after execution and
+formatting have drained. Close awaits it and preserves cleanup failures host-side.
 
 The gateway supplies pi-style spilling above 40,000 UTF-8 bytes: it saves complete
 rendered output and returns a UTF-8-safe head/tail preview with a full local path.
 Files use exclusive creation and owner-only permissions in a private temp directory;
-shutdown removes that directory only after tracked requests/presentation finish.
+session retirement removes that session's directory only after tracked requests/presentation finish.
 The harness reads the file with its native tools on the shared filesystem. No custom
 artifact tool, TTL, aggregate storage quota, or crash-leftover sweep is provided.
 Save errors keep the preview and original success/failure outcome with a save-failure
@@ -781,6 +783,14 @@ requests session deletion when a session ID exists, then closes the transport.
 The DELETE request is bounded at 5 seconds, and an upstream that declines session
 termination with HTTP 405 is handled by the SDK.
 
+`gw serve` also hosts authenticated loopback Streamable HTTP MCP. One daemon owns
+the gateway; its independent MCP sessions share that gateway's executor and upstreams.
+Native Codex/Claude clients use the `/mcp` URL directly, without a bridge. A client
+DELETE retires only its own session; open HTTP requests/event streams retain the
+session, and disconnected sessions receive a 60-second grace. Closing clients does
+not stop the daemon. `gw service` manages the macOS LaunchAgent; see
+[local service installation](local-installation.md).
+
 Startup budgets are separate from execution budgets. The gateway uses the same
 `SandboxLimits` upper bounds as constructor and worker-boundary validation, with
 different default execution deadlines. Configuration files are read once; named
@@ -792,7 +802,8 @@ Separate gateways/processes remain independent.
 
 The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`,
 otherwise `~/.config/codemode-mcp-gateway/config.json`) and never implicitly loads cwd configuration.
-`check` validates offline, `doctor` opens fresh diagnostic connections, and named
+`check` validates offline, `doctor` reads the actual daemon (`doctor --stdio` explicitly
+opens fresh diagnostic connections), and named
 `login`/`logout` manage OS credentials. A running named gateway detects newly saved
 authorized credentials and recreates affected upstream sessions without restarting
 the agent-facing connection. Unchanged failed grants are not refreshed repeatedly.
@@ -800,7 +811,7 @@ Pre-exchange setup failures retry with backoff; transient credential-read failur
 on active sessions leave those sessions usable by subsequent executions. Failed
 token exchanges or persistence after rotation are not retried with unchanged grants.
 An established HTTP session returning 404 is retired and reinitialized for later
-executions without replaying the failed call. Doctor emits its final report only
+executions without replaying the failed call. An explicit fresh doctor probe emits its final report only
 after connection cleanup succeeds; cleanup errors produce a single failure result.
 See the [gateway guide](../packages/gateway/README.md#named-upstreams-and-hot-recovery)
 for recovery timing and status.

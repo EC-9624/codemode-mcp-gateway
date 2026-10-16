@@ -60,6 +60,9 @@ An optional `formatOutput(text): Promise<string>` callback supplies host-owned
 presentation, such as the gateway's temp-file spilling. Closing the server waits
 for presentation as well as execution. Unexpected formatter errors produce a
 controlled delivery error, without replaying the script.
+An optional host `onClose(): Promise<void>` releases presentation resources only
+after those requests drain. Close awaits it, runs it once, and preserves host-side
+cleanup failures. It does not dispose the borrowed executor or upstreams.
 
 Catalog setup failures reject before an executor is used. Omitted tool arguments
 normalize to `{}`; non-object or schema-invalid arguments fail before upstream

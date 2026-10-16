@@ -22,4 +22,6 @@ export type CodemodeServerOptions = {
    * errors; execution is never replayed. Recoverable save failures should return a preview.
    */
   formatOutput?: (text: string) => Promise<string>;
+  /** Release host-owned presentation resources after this server's requests have drained. */
+  onClose?: () => Promise<void>;
 };

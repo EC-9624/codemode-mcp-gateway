@@ -24,6 +24,7 @@ export function createCodemodeServer(options: CodemodeServerOptions): McpServer 
 class CodemodeServer extends McpServer {
   private readonly execute: CodemodeServerOptions["execute"];
   private readonly formatOutput: CodemodeServerOptions["formatOutput"];
+  private readonly onClose: CodemodeServerOptions["onClose"];
   private readonly shutdown = new AbortController();
   private readonly executions = new Set<Promise<CallToolResult>>();
   private closing: Promise<void> | undefined;
@@ -32,6 +33,7 @@ class CodemodeServer extends McpServer {
     super({ name: "codemode-mcp-gateway", version: "0.0.0" });
     this.execute = options.execute;
     this.formatOutput = options.formatOutput;
+    this.onClose = options.onClose;
 
     this.registerTool(
       "execute",
@@ -49,18 +51,31 @@ when a script fails; do not blindly replay scripts that may have performed write
   }
 
   override close(): Promise<void> {
-    this.closing ??= this.stop();
+    this.shutdown.abort();
+    this.closing ??= Promise.resolve().then(() => this.stop());
 
     return this.closing;
   }
 
   private async stop(): Promise<void> {
     this.shutdown.abort();
+    const errors: unknown[] = [];
     try {
       await super.close();
-    } finally {
-      await Promise.allSettled(this.executions);
+    } catch (cause) {
+      errors.push(cause);
     }
+
+    await Promise.allSettled(this.executions);
+    try {
+      await this.onClose?.();
+    } catch (cause) {
+      errors.push(cause);
+    }
+
+    if (errors.length === 1) throw errors[0];
+
+    if (errors.length > 1) throw new AggregateError(errors, "MCP server cleanup failed.");
   }
 
   private async executeCode(code: string, requestSignal: AbortSignal): Promise<CallToolResult> {

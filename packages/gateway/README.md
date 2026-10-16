@@ -1,6 +1,6 @@
 # codemode-mcp-gateway
 
-A Bun stdio gateway that lets coding agents discover and compose multiple upstream
+A Bun MCP gateway that lets coding agents discover and compose multiple upstream
 MCP servers' tools through JavaScript. This product package provides both a
 programmatic API and the `gw` executable, composing `@codemode-mcp-gateway/codemode` and `@codemode-mcp-gateway/mcp`.
 The package remains private while its API matures.
@@ -9,18 +9,22 @@ The package remains private while its API matures.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-bun run gw examples/cmg.json
+bun run gw serve --config examples/cmg.json
 bun run example:server
 ```
 
-Requires Bun **1.4.3**. `gw` speaks MCP on stdin/stdout, so it waits for a client;
-it is not a JavaScript REPL. `example:server` starts a client and the gateway,
+Requires Bun **1.4.3**. `gw serve` hosts authenticated MCP on loopback HTTP;
+it automatically registers native Codex/Claude access in private user configs.
+No separate setup script, dotfiles, Python, launch wrapper, or token environment
+variable is required. Existing upstream definitions and explicit OAuth login remain.
+`gw serve --stdio` explicitly selects direct stdio. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
-Stdout is exclusively MCP traffic; diagnostics and upstream stderr use stderr.
+In stdio mode stdout is exclusively MCP traffic; diagnostics use stderr.
 
 ## CLI and default configuration
 
-Once installed, clients can launch `gw` without arguments. Configuration resolves
+`gw` without arguments shows help. Native clients connect directly to the running
+service's `/mcp` URL; configuration resolves
 from `--config <path>` (or a positional path), then
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise `~/.config/codemode-mcp-gateway/config.json`.
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
@@ -33,8 +37,10 @@ package link is required. The CLI/default config path changed from `cmg` to `gw`
 and `codemode-mcp-gateway/config.json`; OAuth identity and lock storage are unchanged.
 
 ```sh
-gw                         # Same as gw serve
-gw --config ./cmg.json
+gw service install         # Register/start the macOS LaunchAgent
+gw service status --json
+gw serve                   # Foreground HTTP service (not an extra daemon)
+gw serve --stdio --config ./cmg.json
 gw check --json
 gw doctor --server notion --json
 gw login --server notion
@@ -43,17 +49,25 @@ gw --help
 gw --version
 ```
 
-All commands accept `--config` or an optional positional configuration path.
-`check` validates without connecting. `doctor` opens fresh diagnostic connections,
-closes them, then reports each selected server; it does not query another running
-CMG process. Both support JSON output. Login/logout select a named server; the name
+Commands accept `--config` or an optional positional configuration path.
+`check` validates without connecting. `doctor` reads authenticated status from the
+actual daemon; `doctor --stdio` explicitly opens/closes fresh diagnostic connections.
+Service actions are install/start/stop/restart/status/uninstall. Service status
+distinguishes launchd process state, authenticated readiness, startup client
+registration outcomes, and upstream health. `gw serve` reuses an authenticated
+matching daemon and refreshes native registration; unrelated occupied ports are
+left alone. No-op registration leaves files untouched. Symlinked destinations,
+paths inside Git checkouts, and malformed configs are reported without replacement. Registration
+failure in one client does not prevent the other from working. See the
+[client/security contract](../../docs/local-installation.md#service-lifetime-security-and-clients).
+Login/logout select a named server; the name
 can be omitted when exactly one OAuth connection is configured. Logout removes
 local credentials, not the upstream grant.
 
 Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
 failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
 The gateway remains running with failed upstreams; a failed doctor check
-returns 1. `--json` is accepted only by check/doctor so it cannot pollute MCP stdout.
+returns 1. `--json` is accepted by check/doctor/service, never stdio serving.
 
 ## Named upstreams and hot recovery
 
@@ -230,10 +244,13 @@ Use the harness's native file or shell tools to inspect it; there is no artifact
 retrieval tool. Long single-line JSON may need shell-based parsing or filtering.
 The harness and gateway must share filesystem access and permission to read the path.
 
-Each gateway lazily creates a `0700` OS temp directory and writes random filenames
+Each MCP session lazily creates a `0700` OS temp directory and writes random filenames
 exclusively with `0600` permissions. Files remain available across executions until
-gateway shutdown, which waits for writes before removing its directory. Crashes can
-leave files behind. This slice has no TTL, storage quota, or startup sweep; repeated
+that session closes, after execution/presentation drains. HTTP DELETE closes one
+session without affecting another; abandoned sessions retire after a 60-second
+disconnect grace, while open requests/event streams keep their session alive.
+Gateway shutdown closes all sessions. Crashes can leave files behind.
+There is no per-file TTL, storage quota, or startup sweep; repeated
 large output can accumulate disk usage. Save failures retain the preview and original
 execution outcome, add `[Full output could not be saved.]`, and report diagnostics
 host-side. Scripts are never automatically replayed.
@@ -489,8 +506,10 @@ tarball installation, saved-credential reuse, and OpenCode V2 integration.
 
 ## Current scope
 
-Named upstreams with partial availability and hot credential recovery. Agent-facing transport is stdio; HTTP refers
-to upstream connections. There is no model loop, remote agent hosting, or Node support. Cancellation cannot roll back
+Named upstreams with partial availability and hot credential recovery. Agent-facing
+transports are authenticated loopback Streamable HTTP and explicit direct stdio.
+macOS launchd can own the shared service; other platforms can run `gw serve` in the
+foreground. There is no model loop, remote network hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
 are recorded; longer soak testing and aggregate/payload resource hardening remain
 future work. Local OAuth serves one

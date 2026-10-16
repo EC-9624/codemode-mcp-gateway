@@ -41,6 +41,8 @@ describe("gw executable", () => {
     { name: "competing paths", args: ["check", "one.json", "--config", "two.json"] },
     { name: "JSON protocol pollution", args: ["serve", "--json"] },
     { name: "unknown option", args: ["--unknown"] },
+    { name: "missing service action", args: ["service"] },
+    { name: "unknown service action", args: ["service", "unknown"] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);
 
@@ -57,6 +59,14 @@ describe("gw executable", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("gw login --server <name>");
     expect(result.stdout).toContain("XDG_CONFIG_HOME");
+  });
+
+  test("no arguments shows help instead of starting a client-owned gateway", async () => {
+    const result = await runProcess([cli]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("configure native Codex/Claude access");
+    expect(result.stderr).toBe("");
   });
 
   test("prints the installed version without connecting", async () => {
@@ -88,12 +98,12 @@ describe("gw executable", () => {
     expect(result.stderr).toBe("");
   });
 
-  test("doctor reports a failed connection without leaking private diagnostics", async () => {
+  test("explicit fresh doctor reports a failed connection without leaking private diagnostics", async () => {
     await using file = await configurationDocument({
       mcp: { servers: { missing: { type: "local", command: ["missing-cmg-private-command"] } } },
     });
 
-    const result = await runProcess([cli, "doctor", "--config", file.path, "--json"]);
+    const result = await runProcess([cli, "doctor", "--stdio", "--config", file.path, "--json"]);
 
     expect(result.code).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -121,6 +131,7 @@ describe("gw executable", () => {
     const result = await runProcess([
       cli,
       "doctor",
+      "--stdio",
       "--config",
       file.path,
       "--server",
@@ -150,6 +161,7 @@ describe("gw executable", () => {
     const result = await runProcess([
       cli,
       "doctor",
+      "--stdio",
       "--config",
       file.path,
       "--server",
@@ -197,7 +209,7 @@ describe("gw executable", () => {
       },
     });
 
-    const result = await runProcess([cli, "doctor", "--config", file.path, "--json"]);
+    const result = await runProcess([cli, "doctor", "--stdio", "--config", file.path, "--json"]);
 
     expect(result.code).toBe(1);
     expect(JSON.parse(result.stdout)).toEqual({

@@ -233,6 +233,25 @@ describe("application configuration", () => {
 });
 
 describe("configuration path resolution", () => {
+  test("defaults the local service to its stable client port", () => {
+    const config = Configuration.parse({
+      mcp: { servers: { notes: { type: "local", command: ["unused"], disabled: true } } },
+    });
+
+    expect(config.service.port).toBe(4791);
+  });
+
+  test.each([
+    { name: "ephemeral", port: 0 },
+    { name: "out of range", port: 65536 },
+  ])("rejects a $name persistent service port", ({ port }) => {
+    const result = Configuration.safeParse({
+      service: { port },
+      mcp: { servers: { notes: { type: "local", command: ["unused"] } } },
+    });
+
+    expect(result.success).toBe(false);
+  });
   test("uses XDG configuration independently of the working directory", () => {
     expect(configurationPath(undefined, { XDG_CONFIG_HOME: "/config" }, "/home/test")).toBe(
       "/config/codemode-mcp-gateway/config.json",

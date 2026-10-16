@@ -63,7 +63,6 @@ export class Gateway implements AsyncDisposable {
   private readonly shutdown = new AbortController();
   private readonly entries: Entry[];
   private readonly executor: CodeExecutor;
-  private readonly output = new OutputFiles();
   private readonly leases = new Set<Lease>();
   private readonly attempts = new Map<string, Promise<void>>();
   private readonly servers = new Set<McpServer>();
@@ -131,10 +130,19 @@ export class Gateway implements AsyncDisposable {
   createServer(): McpServer {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
+    const output = new OutputFiles();
+
     const server = createCodemodeServer({
       execute: (code, options) => this.execute(code, options),
       description: executionInstructions,
-      formatOutput: (text) => this.output.format(text, (error) => server.server.onerror?.(error)),
+      formatOutput: (text) => output.format(text, (error) => server.server.onerror?.(error)),
+      onClose: async () => {
+        try {
+          await output.close();
+        } finally {
+          this.servers.delete(server);
+        }
+      },
     });
 
     this.servers.add(server);
@@ -552,12 +560,6 @@ export class Gateway implements AsyncDisposable {
     // could race a formatter still writing its result.
     const results = await Promise.allSettled([...this.servers].map((server) => server.close()));
     for (const result of results) if (result.status === "rejected") errors.push(result.reason);
-
-    try {
-      await this.output.close();
-    } catch (cause) {
-      errors.push(cause);
-    }
 
     const attempts = await Promise.allSettled([
       ...(this.starting === undefined ? [] : [this.starting]),

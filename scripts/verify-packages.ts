@@ -135,6 +135,7 @@ await Bun.write(
 for (const [source, target] of [
   ["packages/gateway/tests/fixtures/packaged-consumer.ts", "consumer.ts"],
   ["packages/gateway/tests/fixtures/import-gateway.ts", "import-gateway.ts"],
+  ["packages/gateway/tests/fixtures/packaged-service.ts", "service.ts"],
   ["examples/mcp-server.ts", "upstream/mcp-server.ts"],
   ["examples/mcp-tools.ts", "upstream/mcp-tools.ts"],
 ] as const) {
@@ -164,8 +165,9 @@ await run(
   ],
   consumer,
 );
+await run([process.execPath, "service.ts", join(consumer, "node_modules/.bin/gw")], consumer);
 console.log(
-  "Packed packages verified: declarations, worker execution/cancellation, MCP adapter, and CLI.",
+  "Packed packages verified: declarations, worker execution/cancellation, MCP adapter, CLI, and automatic native HTTP registration.",
 );
 
 /** A timeout bounds regressions that leave workers or child processes running. */

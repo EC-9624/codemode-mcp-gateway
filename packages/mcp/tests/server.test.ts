@@ -427,6 +427,9 @@ describe("agent-facing MCP server", () => {
     const events: string[] = [];
 
     const server = createCodemodeServer({
+      onClose: async () => {
+        events.push("released presentation resources");
+      },
       execute: async (_code, { signal }) => {
         using listeners = new DisposableStack();
 
@@ -476,6 +479,6 @@ describe("agent-facing MCP server", () => {
     release.resolve();
     await observedClose;
     await request;
-    expect(events).toEqual(["aborted", "cleaned up", "closed"]);
+    expect(events).toEqual(["aborted", "cleaned up", "released presentation resources", "closed"]);
   });
 });

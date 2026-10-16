@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SandboxLimits } from "@codemode-mcp-gateway/codemode";
 import { GatewayError } from "./errors.ts";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
 
 const local = z.strictObject({
@@ -88,10 +89,21 @@ const sandbox = z
   })
   .prefault({});
 
-export const Configuration = z.strictObject({ mcp: z.strictObject({ servers }), sandbox });
+export const Configuration = z.strictObject({
+  mcp: z.strictObject({ servers }),
+  sandbox,
+  service: z.strictObject({ port: z.number().int().min(1).max(65535).default(4791) }).prefault({}),
+});
 
 export type Configuration = z.infer<typeof Configuration>;
 export type ConfigurationInput = z.input<typeof Configuration>;
+
+/** Private endpoint identity; relative upstream paths are scoped to their configuration directory. */
+export function configurationIdentity(config: Configuration, directory: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ config, directory: resolve(directory) }))
+    .digest("hex");
+}
 
 /** Explicit paths win. XDG paths must be absolute; cwd is never searched implicitly. */
 export function configurationPath(

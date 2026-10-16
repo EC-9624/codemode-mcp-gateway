@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { responseText, responseValue } from "./support/output.ts";
 
 describe("CMG stdio application", () => {
-  test("serves a named upstream from XDG configuration with no CLI arguments", async () => {
+  test("serves a named upstream from XDG configuration in explicit stdio mode", async () => {
     await using file = await configurationDocument({});
     const directory = dirname(file.path);
     await Bun.write(
@@ -28,7 +28,7 @@ describe("CMG stdio application", () => {
     );
 
     await using app = await gatewayProcess({
-      args: [],
+      args: ["serve", "--stdio"],
       environment: { XDG_CONFIG_HOME: directory },
     });
 

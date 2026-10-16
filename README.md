@@ -26,14 +26,21 @@ these examples do not require a build.
 ## Agent-facing service
 
 ```sh
-bun run gw examples/multi.json
+bun run gw serve --config examples/multi.json
 bun run gw check examples/multi.json --json
-bun run gw doctor examples/multi.json --json
+bun run gw doctor --stdio examples/multi.json --json
 bun run gw login examples/multi.json --server notion
 ```
 
-`gw` speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`; it waits
-for an MCP client, not interactive JavaScript input. Diagnostics use stderr.
+`gw serve` runs the authenticated loopback HTTP MCP service; Codex and Claude connect
+directly to its `/mcp` URL. `gw service install` registers the persistent macOS
+LaunchAgent. Both paths automatically configure native client authentication in
+private user configs; no external setup script, dotfiles dependency, wrapper, or
+token environment variable is needed. No per-client gateway or bridge is needed.
+Already-running clients may need to reload. `gw` alone shows help.
+Explicit `gw serve --stdio` and legacy positional-config invocations retain direct
+stdio for development and examples. Both transports expose `execute({ code })`.
+Diagnostics use stderr.
 Configure named upstreams under `mcp.servers`:
 
 ```json
@@ -49,10 +56,11 @@ Configure named upstreams under `mcp.servers`:
 
 Local paths resolve from the configuration directory. The included
 [`examples/multi.json`](examples/multi.json) supplies the math script and longer
-Notion deadlines. Once installed, launch `gw` without arguments to use
+Notion deadlines. Serving and management commands use
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
 or a positional path overrides it. `check` validates without connecting; `doctor`
-opens fresh diagnostic connections. Login is explicit and interactive; serving
+queries the actual running service (`doctor --stdio` explicitly probes fresh connections).
+Login is explicit and interactive; serving
 uses saved OS credentials and noninteractive refresh. Logout removes local
 credentials, not the upstream grant.
 
@@ -102,8 +110,10 @@ Above **40,000 UTF-8 bytes**, the gateway returns a UTF-8-safe head/tail preview
 an absolute path to the full output in a private local file. Use native harness
 file/shell tools on the shared filesystem; there is no custom artifact tool.
 Long single-line JSON may require shell parsing rather than a line-based reader.
-Files last until gateway shutdown; crashes can leave them behind. There is no TTL,
-total storage quota, or startup sweep. A failed save preserves the preview and
+Files last until their MCP session is retired; closing one client never deletes
+another client's output. HTTP DELETE retires immediately, and sessions without
+open requests/event streams retire after a 60-second grace. Crashes can leave files
+behind. There is no total storage quota or startup sweep. A failed save preserves the preview and
 execution outcome and reports that full output could not be saved.
 
 The hard final-output default is **16 MiB** in the gateway, **256 KiB** in the

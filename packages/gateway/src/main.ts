@@ -12,13 +12,18 @@ import {
   type Configuration,
 } from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
+import { serveDaemon } from "./daemon.ts";
+import { daemonStatus, serviceCommand } from "./local-service.ts";
 
-const help = `Usage: gw [serve|check|doctor|login|logout] [configuration.json] [options]
+const help = `Usage: gw [serve|service|check|doctor|login|logout] [configuration.json] [options]
 
-  gw                         Serve MCP using the XDG configuration
-  gw <configuration.json>    Serve MCP using an explicit configuration
+  gw                         Show this help
+  gw serve                   Run HTTP MCP and configure native Codex/Claude access
+  gw serve --stdio           Run an explicit direct stdio gateway
+  gw service <action>        install, start, stop, restart, status, uninstall
+  gw <configuration.json>    Legacy explicit-path stdio mode
   gw check                   Validate configuration without connecting
-  gw doctor                  Check upstream connections and authentication
+  gw doctor                  Read the running service's upstream status
   gw login --server <name>   Authorize a named upstream
   gw logout --server <name>  Remove its local credentials
 
@@ -26,14 +31,18 @@ Options:
   -c, --config <path>  Override configuration for any command
       --server <name>  Select an upstream for doctor, login, or logout
       --json           Machine-readable check/doctor output
+      --stdio          Explicit direct stdio serving or fresh doctor probe
   -h, --help           Show this help
   -v, --version        Show the installed version
 
 Default: $XDG_CONFIG_HOME/codemode-mcp-gateway/config.json, or ~/.config/codemode-mcp-gateway/config.json.
-Serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
+Serving configures installed Codex/Claude clients using private native HTTP headers.
+No setup script, launch wrapper, or token environment variable is required.
+Clients connect directly to the HTTP /mcp URL; no bridge is required.
+Stdio serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
 running multi-upstream gateways recover automatically after credentials change.`;
 
-type Command = "serve" | "check" | "doctor" | "login" | "logout";
+type Command = "serve" | "service" | "check" | "doctor" | "login" | "logout";
 
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
@@ -51,6 +60,7 @@ export async function main(
         json: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
+        stdio: { type: "boolean" },
       },
     });
   } catch {
@@ -59,7 +69,7 @@ export async function main(
     return 2;
   }
 
-  if (parsed.values.help) {
+  if (parsed.values.help || args.length === 0) {
     console.log(help);
 
     return 0;
@@ -80,6 +90,7 @@ export async function main(
   let command: Command = "serve";
   if (
     first === "serve" ||
+    first === "service" ||
     first === "check" ||
     first === "doctor" ||
     first === "login" ||
@@ -89,6 +100,7 @@ export async function main(
     positionals.shift();
   }
 
+  const action = command === "service" ? positionals.shift() : undefined;
   const explicit = parsed.values.config ?? positionals[0];
   const server = parsed.values.server;
   if (
@@ -97,7 +109,11 @@ export async function main(
     (explicit !== undefined && !explicit.trim()) ||
     (server !== undefined && !server.trim()) ||
     (server !== undefined && command !== "doctor" && command !== "login" && command !== "logout") ||
-    (parsed.values.json && command !== "check" && command !== "doctor")
+    (parsed.values.json && command !== "check" && command !== "doctor" && command !== "service") ||
+    (parsed.values.stdio && command !== "serve" && command !== "doctor") ||
+    (command === "service" &&
+      (action === undefined ||
+        !["install", "start", "stop", "restart", "status", "uninstall"].includes(action)))
   ) {
     console.error("Invalid arguments. Run gw --help for usage.");
 
@@ -116,6 +132,15 @@ export async function main(
 
   try {
     const path = configurationPath(explicit);
+    if (command === "service" && action !== undefined) {
+      const result = await serviceCommand(action, path);
+      if (shutdown.signal.aborted) return 130;
+
+      console.log(parsed.values.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+
+      return 0;
+    }
+
     if (command === "login" || command === "logout") {
       const selected = { ...options, ...(server === undefined ? {} : { server }) };
 
@@ -155,7 +180,7 @@ export async function main(
       const config = selectServer(await readConfiguration(path), server);
 
       let statuses: ServerStatus[];
-      {
+      if (parsed.values.stdio) {
         await using gateway = new Gateway(config, dirname(path), {
           ...options,
           signal: shutdown.signal,
@@ -163,6 +188,11 @@ export async function main(
 
         await gateway.start();
         statuses = gateway.status();
+      } else {
+        const remote = await daemonStatus(path, shutdown.signal);
+        statuses = remote.upstreams.filter(
+          (status) => server === undefined || status.name === server,
+        );
       }
 
       if (shutdown.signal.aborted) return 130;
@@ -181,7 +211,8 @@ export async function main(
       return healthy ? 0 : 1;
     }
 
-    await serve(path, options);
+    if (parsed.values.stdio || first !== "serve") await serve(path, options);
+    else await serveDaemon(path, options);
 
     return 0;
   } catch (error) {
@@ -204,5 +235,9 @@ function selectServer(config: Configuration, name: string | undefined): Configur
 
   const selected = configuredServer(config, name);
 
-  return { sandbox: config.sandbox, mcp: { servers: { [name]: selected } } };
+  return {
+    service: config.service,
+    sandbox: config.sandbox,
+    mcp: { servers: { [name]: selected } },
+  };
 }

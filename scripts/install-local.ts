@@ -112,7 +112,7 @@ await symlink(relative(home, installation), pending);
 await rename(pending, current);
 activated = true;
 console.log(
-  `Installed gw: ${installation}\nActive installation: ${current}\nRestart client-owned gateways to adopt this build.`,
+  `Installed gw: ${installation}\nActive installation: ${current}\nRun gw service install for first setup, or gw service restart to adopt this build.`,
 );
 
 async function run(command: string[], cwd: string) {
