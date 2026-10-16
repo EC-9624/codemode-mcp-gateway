@@ -19,6 +19,8 @@
     "baseline:memory": "bun --conditions=development run scripts/memory-baseline.ts",
     "baseline:concurrency": "bun --conditions=development run scripts/concurrency-baseline.ts",
     "baseline:reliability": "bun --conditions=development run scripts/reliability-baseline.ts",
+    "validate:agents": "bun --conditions=development run scripts/agent-validation.ts",
+    "baseline:gateway": "bun --conditions=development run scripts/gateway-soak.ts",
     "typecheck": "bun run --cwd packages/codemode typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/gateway typecheck && tsc --noEmit",
     "test": "bun run --cwd packages/codemode test && bun run --cwd packages/mcp test && bun run --cwd packages/gateway test",
     "lint": "oxlint --deny-warnings .",

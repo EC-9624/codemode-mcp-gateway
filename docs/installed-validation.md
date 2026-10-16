@@ -1,6 +1,6 @@
 # Installed-package validation
 
-Use Bun 1.4.2. These packages are unpublished; local tarballs and overrides stand
+Use Bun 1.4.3. These packages are unpublished; local tarballs and overrides stand
 in for registry versions. `bun run verify:packages` remains the automated,
 synthetic distribution check. The opt-in workflow below additionally exercises
 saved OS credentials and a real upstream from outside the repository.

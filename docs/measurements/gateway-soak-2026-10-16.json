@@ -1,0 +1,71 @@
+{
+  "source": {
+    "revision": "149cf22597c7872ad2a3cc90373eb4cec71eeee0",
+    "uncommittedDiagnostics": true,
+    "sha256": {
+      "scripts/gateway-soak.ts": "d5fc1e697785d57a1f8b682fb060ba8276fa59d37e528f0afa67a77e085f889a",
+      "scripts/fixtures/gateway-soak-upstream.ts": "c1d873133cb516a4640fb96a80175898b7c78c88b167433b96d7e06a72968522"
+    }
+  },
+  "command": "bun run baseline:gateway --minutes 30",
+  "startedAt": "2026-10-16T00:56:12.324Z",
+  "environment": {
+    "bun": "1.4.3",
+    "bunRevision": "c6da4a4d3010e5553438c60f6bd76d981976867c",
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "25.6.0",
+    "cpu": "Apple M3 Pro",
+    "gc": "automatic"
+  },
+  "topology": "managed Gateway; in-memory agent edge; actual stdio child and loopback HTTP upstreams",
+  "requestedTrafficMs": 1800000,
+  "summaryElapsedMs": 1820413.788166,
+  "counts": {
+    "requests": 3192,
+    "completed": 3011,
+    "expectedFailed": 90,
+    "cancelled": 90,
+    "shutdownDisconnected": 1,
+    "cycles": 180,
+    "reconnects": 90,
+    "spills": 2
+  },
+  "connectionsIncludingInitial": { "stdio": 46, "http": 46 },
+  "peakRequests": 4,
+  "activeRequestsAtSummary": 0,
+  "allCycleCountersBalanced": true,
+  "shutdownMs": 5.998208000091836,
+  "exit": { "code": 0, "signal": null, "watchdogForced": false },
+  "memory": {
+    "metric": "Bun 1.4.3 macOS process.memoryUsage().rss: physical footprint, not common OS RSS",
+    "scope": "diagnostic child: Gateway, workers, HTTP fixture, SDK; excludes stdio child",
+    "sampleIntervalMs": 10000,
+    "observationsIncludingCheckpoints": 366,
+    "warmupBytes": 113083256,
+    "sampledPeakBytes": 139887576,
+    "finalBytes": 99288120,
+    "cycleCheckpoints": [
+      { "cycle": 1, "elapsedMs": 669.459833, "bytes": 139887576 },
+      { "cycle": 30, "elapsedMs": 290745.530125, "bytes": 80413704 },
+      { "cycle": 60, "elapsedMs": 595794.801166, "bytes": 94290952 },
+      { "cycle": 90, "elapsedMs": 890672.153083, "bytes": 87229472 },
+      { "cycle": 120, "elapsedMs": 1196464.475541, "bytes": 89949216 },
+      { "cycle": 150, "elapsedMs": 1490676.196541, "bytes": 95323168 },
+      { "cycle": 180, "elapsedMs": 1796211.566541, "bytes": 101188664 }
+    ]
+  },
+  "stderrWarnings": [
+    "warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
+  ],
+  "externalEvidenceSha256": {
+    "gateway-30m.jsonl": "c704610dfb458c645e09662b226ed78836e2108c7151f9cc1a4b89ad2a9dd3ee",
+    "gateway-30m.stderr": "4d9a4eade47c39278aee02e490ff17c5bc5df5c7199524f12c764cebe5e11aee"
+  },
+  "limitations": [
+    "One finite synthetic local run, not actual LLM-agent or live-provider traffic.",
+    "Assertion success and natural exit do not prove individual VM disposal, leak freedom, or a hard memory bound.",
+    "Request totals vary with observational polling.",
+    "The single HTTP idle-timeout warning was not isolated; this was not a warning-free run."
+  ]
+}
