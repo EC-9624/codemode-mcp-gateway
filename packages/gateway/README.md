@@ -507,7 +507,10 @@ request timeout. The agent-facing transport opens during upstream setup, so EOF
 can also cancel a stalled handshake or discovery.
 
 [`cli.ts`](src/cli.ts) is the executable entry; [`main.ts`](src/main.ts) handles
-arguments and exit status. [`gateway.ts`](src/gateway.ts) owns connections and the executor;
+arguments and exit status. [`gateway.ts`](src/gateway.ts) composes catalog snapshots and the executor;
+[`upstream.ts`](src/upstream.ts) owns each server's recovery state and retained connections,
+while [`connection.ts`](src/connection.ts) opens and cleans up one transport/OAuth session.
+Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
 [`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed

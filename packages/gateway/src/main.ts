@@ -13,7 +13,7 @@ import {
 } from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
 import { serveDaemon } from "./daemon.ts";
-import { daemonStatus, serviceCommand } from "./local-service.ts";
+import { daemonStatus, serviceCommand, ServiceAction } from "./local-service.ts";
 
 const help = `Usage: gw [serve|service|check|doctor|login|logout] [configuration.json] [options]
 
@@ -100,7 +100,7 @@ export async function main(
     positionals.shift();
   }
 
-  const action = command === "service" ? positionals.shift() : undefined;
+  const action = command === "service" ? ServiceAction.safeParse(positionals.shift()) : undefined;
   const explicit = parsed.values.config ?? positionals[0];
   const server = parsed.values.server;
   if (
@@ -111,9 +111,7 @@ export async function main(
     (server !== undefined && command !== "doctor" && command !== "login" && command !== "logout") ||
     (parsed.values.json && command !== "check" && command !== "doctor" && command !== "service") ||
     (parsed.values.stdio && command !== "serve" && command !== "doctor") ||
-    (command === "service" &&
-      (action === undefined ||
-        !["install", "start", "stop", "restart", "status", "uninstall"].includes(action)))
+    (command === "service" && action?.success !== true)
   ) {
     console.error("Invalid arguments. Run gw --help for usage.");
 
@@ -132,8 +130,8 @@ export async function main(
 
   try {
     const path = configurationPath(explicit);
-    if (command === "service" && action !== undefined) {
-      const result = await serviceCommand(action, path);
+    if (command === "service" && action?.success) {
+      const result = await serviceCommand(action.data, path);
       if (shutdown.signal.aborted) return 130;
 
       console.log(parsed.values.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));

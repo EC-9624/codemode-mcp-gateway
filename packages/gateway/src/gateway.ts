@@ -10,45 +10,15 @@ import {
 } from "@codemode-mcp-gateway/codemode";
 import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
-import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { type Configuration, type ServerConfiguration } from "./config.ts";
-import { connectUpstream, UpstreamError } from "./upstream.ts";
+import { type Configuration } from "./config.ts";
+import { Upstream, type ConnectionSnapshot, type ServerStatus } from "./upstream.ts";
 import { executionInstructions } from "./instructions.ts";
 import { OutputFiles } from "./output.ts";
 import { GatewayError } from "./errors.ts";
-import { AuthorizationError } from "./auth/result.ts";
-import {
-  credentialStore,
-  credentialVersion,
-  oauthConnection,
-  type CredentialStore,
-} from "./auth/credentials.ts";
 import { type CredentialOptions } from "./auth/login.ts";
+import { toolDefinitions } from "./catalog.ts";
 
-type PublicFailure = { kind: string; message: string };
-export type ServerStatus = { name: string; updatedAt: string } & (
-  | { state: "connected"; toolCount: number }
-  | { state: "disabled" | "connecting"; toolCount: 0 }
-  | { state: "needs-auth" | "failed"; toolCount: 0; error: PublicFailure }
-);
-type Connection = Awaited<ReturnType<typeof connectUpstream>>;
-type Lease = { connection: Connection; users: number; retired: boolean; disposal?: Promise<void> };
-type State =
-  | { kind: "disabled" | "connecting" }
-  | { kind: "connected"; lease: Lease }
-  | { kind: "needs-auth"; error: PublicFailure }
-  | { kind: "failed"; error: PublicFailure; retryAt: number };
-type Entry = {
-  name: string;
-  config: ServerConfiguration;
-  state: State;
-  updatedAt: string;
-  store: CredentialStore | undefined;
-  version: string;
-  blocked: Map<string, AuthorizationError>;
-  attempt: number;
-  failures: number;
-};
+export { type ServerStatus } from "./upstream.ts";
 
 export type GatewayOptions = CredentialOptions & {
   signal?: AbortSignal;
@@ -61,14 +31,14 @@ export type GatewayOptions = CredentialOptions & {
 /** Owns upstream lifetimes and one executor, supplying a catalog snapshot for each execution. */
 export class Gateway implements AsyncDisposable {
   private readonly shutdown = new AbortController();
-  private readonly entries: Entry[];
+  private readonly upstreams: Upstream[];
   private readonly executor: CodeExecutor;
-  private readonly leases = new Set<Lease>();
-  private readonly attempts = new Map<string, Promise<void>>();
   private readonly servers = new Set<McpServer>();
   private readonly failed = Promise.withResolvers<unknown>();
   private fatal: { cause: unknown } | undefined;
-  private cached: { tools: Readonly<Record<string, SandboxTool>>; leases: Lease[] } | undefined;
+  private cached:
+    | { tools: Readonly<Record<string, SandboxTool>>; connections: ConnectionSnapshot[] }
+    | undefined;
   private starting: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -77,7 +47,7 @@ export class Gateway implements AsyncDisposable {
 
   constructor(
     config: Configuration,
-    private readonly directory: string,
+    directory: string,
     private readonly options: GatewayOptions = {},
   ) {
     const snapshot = structuredClone(config);
@@ -87,21 +57,16 @@ export class Gateway implements AsyncDisposable {
       ...(onToolException === undefined ? {} : { onToolException }),
     });
 
-    this.entries = Object.entries(snapshot.mcp.servers).map(([name, entry]) => {
-      const oauth = oauthConnection(name, entry);
-
-      return {
-        name,
-        config: entry,
-        state: { kind: entry.disabled ? "disabled" : "connecting" },
-        updatedAt: new Date().toISOString(),
-        store: oauth.ok ? (options.store ?? credentialStore)(oauth.value) : undefined,
-        version: credentialVersion(undefined),
-        blocked: new Map(),
-        attempt: 0,
-        failures: 0,
-      };
-    });
+    this.upstreams = Object.entries(snapshot.mcp.servers).map(
+      ([name, entry]) =>
+        new Upstream(name, entry, directory, this.shutdown.signal, options, {
+          changed: () => {
+            this.cached = undefined;
+          },
+          status: (status) => options.onStatus?.(status),
+          failed: (cause) => this.fail(cause),
+        }),
+    );
     options.signal?.addEventListener("abort", this.abort, { once: true });
     if (options.signal?.aborted) this.abort();
   }
@@ -123,7 +88,7 @@ export class Gateway implements AsyncDisposable {
   }
 
   status(): ServerStatus[] {
-    return this.entries.map((entry) => this.describe(entry));
+    return this.upstreams.map((upstream) => upstream.status());
   }
 
   /** All MCP instances share connections and execution admission. */
@@ -164,14 +129,7 @@ export class Gateway implements AsyncDisposable {
   private async initialize() {
     if (this.shutdown.signal.aborted) return;
 
-    for (const entry of this.entries) {
-      if (entry.config.disabled) this.report(entry);
-    }
-
-    const results = await Promise.allSettled(
-      this.entries.filter((entry) => !entry.config.disabled).map((entry) => this.connect(entry)),
-    );
-
+    const results = await Promise.allSettled(this.upstreams.map((upstream) => upstream.start()));
     for (const result of results) {
       if (result.status === "rejected") {
         this.fail(result.reason);
@@ -195,283 +153,23 @@ export class Gateway implements AsyncDisposable {
     this.timer.unref();
   }
 
-  private connect(entry: Entry): Promise<void> {
-    const pending = this.attempts.get(entry.name);
-    if (pending !== undefined) return pending;
-
-    const attempt = Promise.resolve()
-      .then(() => this.open(entry))
-      .finally(() => {
-        this.attempts.delete(entry.name);
-      });
-
-    this.attempts.set(entry.name, attempt);
-
-    return attempt;
-  }
-
-  private async open(entry: Entry) {
-    if (this.shutdown.signal.aborted) return;
-
-    const attempt = ++entry.attempt;
-    this.update(entry, { kind: "connecting" });
-    let connection: Connection;
-    try {
-      if (entry.store !== undefined) {
-        const loaded = await entry.store.load();
-        if (!loaded.ok) throw AuthorizationError.beforeExchange(loaded.error);
-
-        entry.version = credentialVersion(loaded.value);
-        const blocked = entry.blocked.get(entry.version);
-        if (blocked !== undefined) throw blocked;
-      }
-
-      this.shutdown.signal.throwIfAborted();
-      const store = entry.store;
-
-      // A terminal exchange failure belongs to the grant, not the transport. Old
-      // leased connections can report it after a replacement attempt has started.
-      const guarded =
-        store === undefined
-          ? undefined
-          : ({
-              async load() {
-                const loaded = await store.load();
-                if (loaded.ok) {
-                  const failure = entry.blocked.get(credentialVersion(loaded.value));
-                  if (failure !== undefined) throw failure;
-                }
-
-                return loaded;
-              },
-              save: (value) => store.save(value),
-              clear: () => store.clear(),
-            } satisfies CredentialStore);
-
-      connection = await connectUpstream(
-        entry.name,
-        entry.config,
-        this.directory,
-        this.shutdown.signal,
-        {
-          ...this.options,
-          ...(guarded === undefined ? {} : { store: () => guarded }),
-        },
-        {
-          closed: () => {
-            if (
-              this.shutdown.signal.aborted ||
-              entry.attempt !== attempt ||
-              entry.state.kind !== "connected"
-            )
-              return;
-
-            this.unavailable(entry, {
-              kind: "connection",
-              message:
-                "Upstream connection closed or session expired; reconnection will be attempted automatically.",
-            });
-          },
-          authorization: {
-            failed: (error) => {
-              // A pre-exchange read/lock failure leaves this session usable. Keeping
-              // it also preserves any concurrent refresh's terminal-failure latch.
-              if (error.recovery === "retry") return;
-
-              if (!this.shutdown.signal.aborted) this.authorizationFailed(entry, error, attempt);
-            },
-            message: (error) =>
-              error.recovery === "retry" ? error.message : this.authMessage(entry, error),
-          },
-        },
-      );
-    } catch (cause) {
-      if (isCancellation(cause, this.shutdown.signal)) return;
-
-      // In particular, SuppressedError from setup disposal must survive shutdown.
-      if (this.shutdown.signal.aborted) throw cause;
-
-      if (cause instanceof AuthorizationError) {
-        this.authorizationFailed(entry, cause);
-
-        return;
-      }
-
-      if (cause instanceof GatewayError) {
-        this.unavailable(entry, {
-          kind: cause instanceof UpstreamError ? cause.stage : "connection",
-          message: cause.message,
-        });
-
-        return;
-      }
-
-      throw cause;
-    }
-
-    if (this.shutdown.signal.aborted || !connection.connected) {
-      await connection[Symbol.asyncDispose]();
-      if (!this.shutdown.signal.aborted)
-        this.unavailable(entry, {
-          kind: "connection",
-          message: "Upstream closed during discovery.",
-        });
-
-      return;
-    }
-
-    const version = connection.credentialVersion;
-    const blocked = version === undefined ? undefined : entry.blocked.get(version);
-    if (blocked !== undefined) {
-      await connection[Symbol.asyncDispose]();
-      this.authorizationFailed(entry, blocked);
-
-      return;
-    }
-
-    const lease: Lease = { connection, users: 0, retired: false };
-    this.leases.add(lease);
-    if (version !== undefined) entry.version = version;
-
-    entry.failures = 0;
-    this.update(entry, { kind: "connected", lease });
-  }
-
   private async recover() {
-    const results = await Promise.allSettled(
-      this.entries.map(async (entry) => {
-        if (this.shutdown.signal.aborted) return;
-
-        if (entry.state.kind === "needs-auth" && entry.store !== undefined) {
-          const loaded = await entry.store.load();
-          if (!loaded.ok || loaded.value?.authorization.status !== "authorized") return;
-
-          if (credentialVersion(loaded.value) === entry.version) return;
-
-          await this.connect(entry);
-        } else if (entry.state.kind === "failed" && Date.now() >= entry.state.retryAt) {
-          await this.connect(entry);
-        }
-      }),
-    );
-
+    const results = await Promise.allSettled(this.upstreams.map((upstream) => upstream.recover()));
     for (const result of results) if (result.status === "rejected") throw result.reason;
-  }
-
-  private unavailable(entry: Entry, error: PublicFailure) {
-    const delay = Math.min(60_000, 5000 * 2 ** Math.min(entry.failures++, 4));
-    this.update(entry, { kind: "failed", error, retryAt: Date.now() + delay });
-  }
-
-  private update(entry: Entry, state: State) {
-    const previous = entry.state;
-    entry.state = state;
-    entry.updatedAt = new Date().toISOString();
-    this.cached = undefined;
-    if (previous.kind === "connected") {
-      previous.lease.retired = true;
-      this.release(previous.lease);
-    }
-
-    this.report(entry);
-  }
-
-  private report(entry: Entry) {
-    try {
-      this.options.onStatus?.(this.describe(entry));
-    } catch (cause) {
-      // A reporting callback can run on a transport event stack. Surface its failure
-      // through the owner's failure/close channels instead of an uncaught event throw.
-      this.fail(cause);
-    }
-  }
-
-  private describe(entry: Entry): ServerStatus {
-    const base = { name: entry.name, updatedAt: entry.updatedAt };
-    const state = entry.state;
-    if (state.kind === "connected")
-      return {
-        ...base,
-        state: "connected",
-        toolCount: Object.keys(state.lease.connection.catalog.tools).length,
-      };
-
-    if (state.kind === "needs-auth" || state.kind === "failed")
-      return { ...base, state: state.kind, toolCount: 0, error: { ...state.error } };
-
-    return { ...base, state: state.kind, toolCount: 0 };
-  }
-
-  private authorizationFailed(entry: Entry, cause: AuthorizationError, attempt = entry.attempt) {
-    if (cause.recovery === "login" && cause.credentialVersion !== undefined)
-      entry.blocked.set(cause.credentialVersion, cause);
-
-    // A replacement using the same grant is affected too; a newer grant is not.
-    if (
-      attempt !== entry.attempt &&
-      (cause.recovery !== "login" ||
-        entry.state.kind !== "connected" ||
-        cause.credentialVersion === undefined ||
-        entry.state.lease.connection.credentialVersion !== cause.credentialVersion)
-    )
-      return;
-
-    if (cause.credentialVersion !== undefined) entry.version = cause.credentialVersion;
-
-    const error = { kind: cause.failure.kind, message: this.authMessage(entry, cause) };
-    if (cause.recovery === "retry") {
-      this.unavailable(entry, error);
-
-      return;
-    }
-
-    this.update(
-      entry,
-      cause.recovery === "reopen"
-        ? { kind: "failed", error: { ...error, kind: "credentials-changed" }, retryAt: Date.now() }
-        : { kind: "needs-auth", error },
-    );
-  }
-
-  private authMessage(entry: Entry, cause: AuthorizationError): string {
-    if (cause.recovery === "reopen")
-      return `Server ${JSON.stringify(entry.name)} credentials changed; its connection is recovering automatically. Use a subsequent execution.`;
-
-    if (cause.recovery === "retry")
-      return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}; reconnection will be attempted automatically.`;
-
-    return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}. Run gw login --server=${entry.name} with the same configuration; recovery is automatic after credentials change.`;
   }
 
   private snapshot() {
     if (this.cached !== undefined) return this.cached;
 
-    const definitions = new Map<string, ToolDefinition>();
-    const leases: Lease[] = [];
-    const groups = new Map<string, ToolCatalog>();
-    for (const entry of this.entries) {
-      const members = new Map<string, ToolDefinition>();
-      if (entry.state.kind === "connected") {
-        const lease = entry.state.lease;
-        leases.push(lease);
-        for (const [original, execute] of Object.entries(lease.connection.catalog.tools)) {
-          const metadata = lease.connection.catalog.describe(original);
-          if (metadata === undefined) throw new Error("Missing upstream catalog metadata.");
+    const definitions: Array<[string, ToolDefinition]> = [];
+    const connections: ConnectionSnapshot[] = [];
+    for (const upstream of this.upstreams) {
+      const connection = upstream.snapshot();
+      if (connection === undefined) continue;
 
-          const name = `${entry.name}.${original}`;
-
-          const definition = {
-            description: metadata.description,
-            ...(metadata.inputSchema === undefined ? {} : { inputSchema: metadata.inputSchema }),
-            execute,
-          };
-
-          definitions.set(name, definition);
-          members.set(name, definition);
-        }
-      }
-
-      groups.set(entry.name, ToolCatalog.create(Object.fromEntries(members)));
+      connections.push(connection);
+      for (const [name, definition] of toolDefinitions(connection.catalog))
+        definitions.push([`${upstream.name}.${name}`, definition]);
     }
 
     const catalog = ToolCatalog.create(Object.fromEntries(definitions));
@@ -493,11 +191,16 @@ export class Gateway implements AsyncDisposable {
           if (typeof args.server !== "string")
             return ToolResult.failure("searchTools server must be a server name string.");
 
-          const group = groups.get(args.server);
-          if (group === undefined) return ToolResult.failure("Unknown server in this gateway.");
+          const name = args.server;
+          servers = statuses.filter((status) => status.name === name);
+          if (servers.length === 0) return ToolResult.failure("Unknown server in this gateway.");
 
-          selected = createDiscoveryTools(group);
-          servers = statuses.filter((status) => status.name === args.server);
+          // Filtering ranked matches before pagination preserves server-local offsets.
+          selected = createDiscoveryTools({
+            ...catalog,
+            search: (query) =>
+              catalog.search(query).filter((tool) => tool.name.startsWith(`${name}.`)),
+          });
         }
 
         const result = selected.searchTools(args);
@@ -507,7 +210,7 @@ export class Gateway implements AsyncDisposable {
       },
     };
 
-    this.cached = { tools, leases };
+    this.cached = { tools, connections };
 
     return this.cached;
   }
@@ -516,9 +219,8 @@ export class Gateway implements AsyncDisposable {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
     const snapshot = this.snapshot();
-    // Recovery may replace connections mid-execution. Keep this snapshot's upstreams
-    // alive until executor cleanup finishes, even after they retire from discovery.
-    for (const lease of snapshot.leases) lease.users++;
+    // Recovery may replace connections mid-execution. Retain this revision until executor cleanup.
+    for (const connection of snapshot.connections) connection.retain();
 
     try {
       return await this.executor.execute(code, {
@@ -529,19 +231,8 @@ export class Gateway implements AsyncDisposable {
         ]),
       });
     } finally {
-      for (const lease of snapshot.leases) {
-        lease.users--;
-        this.release(lease);
-      }
+      for (const connection of snapshot.connections) connection.release();
     }
-  }
-
-  private release(lease: Lease) {
-    if (!lease.retired || lease.users !== 0 || lease.disposal !== undefined) return;
-
-    lease.disposal = lease.connection[Symbol.asyncDispose]()
-      .catch((cause) => this.fail(cause))
-      .finally(() => this.leases.delete(lease));
   }
 
   private fail(cause: unknown) {
@@ -556,45 +247,20 @@ export class Gateway implements AsyncDisposable {
     if (this.timer !== undefined) clearInterval(this.timer);
 
     const errors: unknown[] = [];
-    // Server close drains execution and presentation; deleting output files earlier
-    // could race a formatter still writing its result.
+    // Drain execution and presentation before retiring connections or deleting session output.
     const results = await Promise.allSettled([...this.servers].map((server) => server.close()));
     for (const result of results) if (result.status === "rejected") errors.push(result.reason);
 
     const attempts = await Promise.allSettled([
       ...(this.starting === undefined ? [] : [this.starting]),
-      ...this.attempts.values(),
       ...(this.maintenance === undefined ? [] : [this.maintenance]),
     ]);
 
     for (const result of attempts) if (result.status === "rejected") errors.push(result.reason);
 
-    for (const lease of this.leases) {
-      lease.retired = true;
-      this.release(lease);
-    }
-
-    await Promise.all(
-      [...this.leases].flatMap((lease) => (lease.disposal === undefined ? [] : [lease.disposal])),
-    );
+    await Promise.all(this.upstreams.map((upstream) => upstream.close()));
     if (this.fatal !== undefined) errors.push(this.fatal.cause);
 
     if (errors.length > 0) throw new AggregateError(errors, "Gateway cleanup failed.");
   }
-}
-
-function isCancellation(cause: unknown, signal: AbortSignal): boolean {
-  if (!signal.aborted) return false;
-
-  if (cause === signal.reason) return true;
-
-  if (cause instanceof AuthorizationError) return cause.failure.kind === "cancelled";
-
-  if (cause instanceof UpstreamError)
-    return (
-      cause.cause === signal.reason ||
-      (cause.cause instanceof SdkError && cause.cause.code === SdkErrorCode.RequestTimeout)
-    );
-
-  return false;
 }

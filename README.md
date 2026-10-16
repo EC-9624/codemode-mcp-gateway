@@ -162,7 +162,7 @@ console.log(report.result); // { ok: true, value: 42 }
   latency caps; host work and cleanup can delay completion.
 - Cancellation is cooperative for host callbacks and cannot roll back upstream
   side effects. No remote agent hosting, model loop, or team credential management
-  is implemented. HTTP support is for upstreams; the agent-facing CLI is stdio.
+  is implemented. The agent-facing CLI defaults to loopback HTTP; explicit stdio remains available.
 
 ## Testing and distribution
 

@@ -24,7 +24,7 @@
     "baseline:gateway": "bun --conditions=development run scripts/gateway-soak.ts",
     "validate:http-idle": "bun run scripts/http-idle.ts",
     "validate:models": "bun run scripts/model-validation.ts",
-    "typecheck": "bun run --cwd packages/codemode typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/gateway typecheck && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun run --cwd packages/codemode test && bun run --cwd packages/mcp test && bun run --cwd packages/gateway test",
     "lint": "oxlint --deny-warnings .",
     "format": "oxfmt --write .",

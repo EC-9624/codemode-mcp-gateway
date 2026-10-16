@@ -14,6 +14,7 @@ import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/s
 import { readConfiguration } from "./config.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 import { Gateway } from "./gateway.ts";
+import { reportToolException } from "./diagnostics.ts";
 
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
@@ -52,24 +53,7 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
           }),
         );
       },
-      onToolException: (exception) => {
-        const cause = exception.cause;
-
-        console.error(
-          JSON.stringify({
-            tool: exception.name,
-            callId: exception.callId,
-            error:
-              cause instanceof Error
-                ? {
-                    name: cause.name,
-                    message: cause.message,
-                    ...("code" in cause ? { code: cause.code } : {}),
-                  }
-                : { name: typeof cause },
-          }),
-        );
-      },
+      onToolException: reportToolException,
     }),
   );
 

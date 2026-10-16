@@ -8,6 +8,7 @@ import { reportClients, synchronizeClients } from "./clients.ts";
 import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 import { ServiceAuthentication } from "./service-auth.ts";
+import { reportToolException } from "./diagnostics.ts";
 
 /** Foreground process owned by launchd; client sessions never own this lifetime. */
 export async function serveDaemon(path: string, options: CredentialOptions = {}) {
@@ -38,6 +39,7 @@ export async function serveDaemon(path: string, options: CredentialOptions = {})
       ...options,
       signal: shutdown.signal,
       onStatus: (status) => console.error(JSON.stringify(status)),
+      onToolException: reportToolException,
     }),
   );
 

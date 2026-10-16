@@ -1,11 +1,177 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { responseText } from "./support/output.ts";
+import { main } from "../src/main.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+
+test("HTTP serving logs protocol failures without exposing upstream response data", async () => {
+  await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: {
+        servers: {
+          test: {
+            type: "local",
+            command: [
+              process.execPath,
+              fileURLToPath(new URL("./fixtures/gateway-upstream.ts", import.meta.url)),
+              "malformed",
+            ],
+          },
+        },
+      },
+    }),
+  );
+  const app = await start(files, {}, '"state":"connected"');
+  const token = await files.readToken();
+  const client = new Client({ name: "daemon-diagnostics", version: "1" });
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => client.close());
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${files.origin}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    }),
+  );
+
+  const response = await client.callTool({
+    name: "execute",
+    arguments: { code: 'return await tools["test.malformed"]({});' },
+  });
+
+  await app.stop();
+  const logs = await app.logs;
+
+  expect(response.isError).toBe(true);
+  expect(responseText(response)).toBe(
+    "MCP tool \"malformed\" failed (code -32602): Structured content does not match the tool's output schema: data must have required property 'sum'",
+  );
+  expect(logs).toContain('"tool":"test.malformed","callId":1');
+  expect(logs).toContain('"name":"ProtocolError"');
+  expect(logs + JSON.stringify(response)).not.toContain("upstream-private-detail");
+  expect(logs).not.toContain(token);
+});
+
+test("service start reuses a matching daemon and reads one configuration snapshot", async () => {
+  await using files = await fixture();
+  const app = await start(files);
+  await Bun.write(
+    join(files.directory, "Library/LaunchAgents/dev.codemode-mcp-gateway.plist"),
+    "synthetic service definition\n",
+  );
+  using cleanup = serviceEnvironment(files);
+  const nativeSpawn = Bun.spawn;
+  const operations: unknown[] = [];
+
+  cleanup.use(
+    spyOn(Bun, "spawn").mockImplementation((...args) => {
+      const command = args[0];
+      if (!Array.isArray(command) || command[0] !== "/bin/launchctl")
+        throw new Error("Expected a launchctl operation");
+
+      operations.push(command[1]);
+
+      return nativeSpawn([process.execPath, "-e", `console.log("pid = ${app.child.pid}")`], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    }),
+  );
+
+  const file = Bun.file(files.config);
+  const reading = cleanup.use(spyOn(file, "json"));
+  cleanup.use(spyOn(Bun, "file").mockReturnValue(file));
+  const output = cleanup.use(spyOn(console, "log").mockImplementation(() => {}));
+  cleanup.use(spyOn(console, "error").mockImplementation(() => {}));
+
+  const code = await main(["service", "start", "--config", files.config, "--json"]);
+
+  expect(code).toBe(0);
+  expect(reading).toHaveBeenCalledTimes(1);
+  expect(new Set(operations)).toEqual(new Set(["print"]));
+  expect(output).toHaveBeenCalledWith(
+    JSON.stringify({
+      action: "start",
+      completed: true,
+      clients: [
+        { client: "codex", state: "unchanged", path: files.codex },
+        { client: "claude", state: "unchanged", path: files.claude },
+      ],
+    }),
+  );
+  await app.stop();
+});
+
+test("service stop waits for owned process exit without requiring a configuration file", async () => {
+  await using files = await fixture();
+  using environment = serviceEnvironment(files);
+  const nativeSpawn = Bun.spawn;
+
+  const owned = nativeSpawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(async () => {
+    owned.kill("SIGTERM");
+    await owned.exited;
+  });
+  const waiting = Promise.withResolvers<void>();
+  const kill = process.kill.bind(process);
+  environment.use(
+    spyOn(process, "kill").mockImplementation((pid, signal) => {
+      const result = kill(pid, signal);
+      if (pid === owned.pid && signal === 0) waiting.resolve();
+
+      return result;
+    }),
+  );
+
+  environment.use(
+    spyOn(Bun, "spawn").mockImplementation((...args) => {
+      const command = args[0];
+      if (!Array.isArray(command) || command[0] !== "/bin/launchctl")
+        throw new Error("Expected a launchctl operation");
+
+      return nativeSpawn([process.execPath, "-e", `console.log("pid = ${owned.pid}")`], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    }),
+  );
+  const output = environment.use(spyOn(console, "log").mockImplementation(() => {}));
+  let settled = false;
+
+  const stopping = main([
+    "service",
+    "stop",
+    "--config",
+    join(files.directory, "missing.json"),
+    "--json",
+  ]).then((code) => {
+    settled = true;
+
+    return code;
+  });
+
+  await waiting.promise;
+  expect(settled).toBe(false);
+  owned.kill("SIGTERM");
+  await owned.exited;
+
+  expect(await stopping).toBe(0);
+  expect(output).toHaveBeenCalledWith('{"action":"stop","completed":true}');
+});
 
 test("serve registers private native headers while preserving unrelated client settings", async () => {
   await using files = await fixture();
@@ -689,9 +855,30 @@ async function fixture() {
   };
 }
 
+/** Management runs in-process to intercept launchctl; keep every client/state path private to this test. */
+function serviceEnvironment(files: Awaited<ReturnType<typeof fixture>>) {
+  const cleanup = new DisposableStack();
+  for (const [key, value] of Object.entries({
+    HOME: files.directory,
+    CODEX_HOME: join(files.directory, ".codex"),
+    CLAUDE_CONFIG_DIR: join(files.directory, ".claude"),
+    XDG_STATE_HOME: files.directory,
+  })) {
+    const previous = process.env[key];
+    cleanup.defer(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+    process.env[key] = value;
+  }
+
+  return cleanup;
+}
+
 async function start(
   files: Awaited<ReturnType<typeof fixture>>,
   environment: Record<string, string> = {},
+  marker = '"event":"listening"',
 ) {
   const child = files.spawn(["serve", "--config", files.config], environment);
   const ready = Promise.withResolvers<void>();
@@ -711,7 +898,7 @@ async function start(
         if (chunk.done) break;
 
         text += decoder.decode(chunk.value, { stream: true });
-        if (text.includes('"event":"listening"')) ready.resolve();
+        if (text.includes(marker)) ready.resolve();
       }
 
       ready.reject(new Error("Daemon exited before readiness"));

@@ -7,7 +7,7 @@ const INLINE_BYTES = 40_000;
 const MARKER = "\n\n… output truncated …\n\n";
 
 /**
- * Private output files live until gateway shutdown; native harness tools read their paths.
+ * Private output files live until their MCP session closes; native harness tools read their paths.
  * The owner must drain format() calls before close() so late writes cannot outlive cleanup.
  */
 export class OutputFiles {

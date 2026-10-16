@@ -4,12 +4,18 @@ import { chmod, lstat, mkdir, open, rename, rm, writeFile } from "node:fs/promis
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { configurationIdentity, readConfiguration } from "./config.ts";
+import { configurationIdentity, readConfiguration, type Configuration } from "./config.ts";
 import { GatewayError } from "./errors.ts";
 import { ClientRegistration, reportClients, synchronizeClients } from "./clients.ts";
 import { ServiceAuthentication } from "./service-auth.ts";
+import { ServerStatus } from "./upstream.ts";
 
 const label = "dev.codemode-mcp-gateway";
+
+export const ServiceAction = z.enum(["install", "start", "stop", "restart", "status", "uninstall"]);
+export type ServiceAction = z.infer<typeof ServiceAction>;
+
+type Service = { domain: string; target: string; paths: ReturnType<typeof servicePaths> };
 
 const secret = z
   .string()
@@ -21,7 +27,6 @@ const credential = z.discriminatedUnion("version", [
   z.strictObject({ version: z.literal(2), key: secret }),
 ]);
 
-const upstreamBase = { name: z.string(), updatedAt: z.string() };
 export const daemonStatusSchema = z.object({
   service: z.object({
     ready: z.literal(true),
@@ -32,29 +37,7 @@ export const daemonStatusSchema = z.object({
   }),
   sessions: z.number().int().nonnegative(),
   clients: z.array(ClientRegistration).default([]),
-  upstreams: z.array(
-    z.discriminatedUnion("state", [
-      z.object({
-        ...upstreamBase,
-        state: z.literal("connected"),
-        toolCount: z.number().int().nonnegative(),
-      }),
-      z.object({ ...upstreamBase, state: z.literal("disabled"), toolCount: z.literal(0) }),
-      z.object({ ...upstreamBase, state: z.literal("connecting"), toolCount: z.literal(0) }),
-      z.object({
-        ...upstreamBase,
-        state: z.literal("needs-auth"),
-        toolCount: z.literal(0),
-        error: z.object({ kind: z.string(), message: z.string() }),
-      }),
-      z.object({
-        ...upstreamBase,
-        state: z.literal("failed"),
-        toolCount: z.literal(0),
-        error: z.object({ kind: z.string(), message: z.string() }),
-      }),
-    ]),
-  ),
+  upstreams: z.array(ServerStatus),
 });
 
 export function servicePaths() {
@@ -164,6 +147,11 @@ export async function upgradeServiceCredential(previous: string, key: string): P
 
 export async function daemonStatus(configuration: string, signal?: AbortSignal) {
   const config = await readConfiguration(configuration);
+
+  return queryStatus(config.service.port, signal);
+}
+
+async function queryStatus(port: number, signal?: AbortSignal) {
   const saved = await serviceCredential();
   if (saved === undefined)
     throw new GatewayError("The local service is not prepared. Run gw service install.");
@@ -173,7 +161,7 @@ export async function daemonStatus(configuration: string, signal?: AbortSignal) 
       "The local service credential needs upgrading. Stop the service, then run gw serve or gw service restart.",
     );
 
-  const url = new URL(`http://127.0.0.1:${config.service.port}/status`);
+  const url = new URL(`http://127.0.0.1:${port}/status`);
   const authentication = new ServiceAuthentication(saved.key);
   const authorization = authentication.request(url);
   let response: Response;
@@ -228,7 +216,7 @@ export async function daemonStatus(configuration: string, signal?: AbortSignal) 
   return parsed.data;
 }
 
-export async function serviceCommand(action: string, configuration: string) {
+export async function serviceCommand(action: ServiceAction, configuration: string) {
   if (process.platform !== "darwin")
     throw new GatewayError(
       "Service management currently supports macOS launchd only. Run gw serve in the foreground on other platforms.",
@@ -238,89 +226,105 @@ export async function serviceCommand(action: string, configuration: string) {
   if (uid === undefined)
     throw new GatewayError("Could not determine the current user for launchd.");
 
-  const target = `gui/${uid}/${label}`;
-  const paths = servicePaths();
-  if (action === "status") {
-    const registered = await exists(paths.plist);
-    const job = await launchctl(["print", target]);
-    const pid = job.stdout.match(/\bpid\s*=\s*(\d+)/)?.[1];
+  const domain = `gui/${uid}`;
+  const service: Service = { domain, target: `${domain}/${label}`, paths: servicePaths() };
+  switch (action) {
+    case "status":
+      return serviceStatus(service, configuration);
+    case "stop":
+      await stopService(service.target);
 
-    const endpoint = await daemonStatus(configuration).then(
-      (status) => ({ ok: true, status }) as const,
-      (cause: unknown) => {
-        if (cause instanceof GatewayError) return { ok: false, message: cause.message } as const;
+      return { action, completed: true };
+    case "uninstall":
+      await stopService(service.target);
+      await rm(service.paths.plist, { force: true });
 
-        throw cause;
-      },
+      return { action, completed: true };
+    case "install":
+    case "restart":
+    case "start": {
+      const config = await readConfiguration(configuration);
+      if (action === "install") await installService(service.paths, configuration);
+
+      if (action !== "start") await stopService(service.target);
+
+      const clients = await startService(service, config, dirname(configuration), action);
+
+      return { action, completed: true, clients };
+    }
+  }
+}
+
+async function serviceStatus(service: Service, configuration: string) {
+  const registered = await exists(service.paths.plist);
+  const job = await serviceJob(service.target);
+
+  const endpoint = await daemonStatus(configuration).then(
+    (status) => ({ ok: true, status }) as const,
+    (cause: unknown) => {
+      if (cause instanceof GatewayError) return { ok: false, message: cause.message } as const;
+
+      throw cause;
+    },
+  );
+
+  return {
+    registered,
+    running: job.loaded && job.pid !== undefined,
+    pid: job.pid ?? null,
+    ready:
+      job.loaded && job.pid !== undefined && endpoint.ok && endpoint.status.service.pid === job.pid,
+    endpoint,
+  };
+}
+
+async function installService(paths: Service["paths"], configuration: string) {
+  await serviceCredential(true);
+  const bun = join(homedir(), ".bun/bin/bun");
+
+  const cli = join(
+    homedir(),
+    ".local/share/codemode-mcp-gateway/current/node_modules/codemode-mcp-gateway/dist/cli.js",
+  );
+
+  if (!(await exists(bun)) || !(await exists(cli)))
+    throw new GatewayError(
+      "The installed runtime is missing. Run bun run install:local before installing the service.",
     );
 
-    return {
-      registered,
-      running: job.code === 0 && pid !== undefined,
-      pid: pid === undefined ? null : Number(pid),
-      ready:
-        job.code === 0 &&
-        pid !== undefined &&
-        endpoint.ok &&
-        endpoint.status.service.pid === Number(pid),
-      endpoint,
-    };
+  for (const name of ["stdout.log", "stderr.log"]) {
+    const file = await open(
+      join(paths.directory, name),
+      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+      0o600,
+    );
+
+    try {
+      await file.chmod(0o600);
+    } finally {
+      await file.close();
+    }
   }
 
-  if (!["install", "start", "stop", "restart", "uninstall"].includes(action))
-    throw new GatewayError(
-      "Unknown service action. Use install, start, stop, restart, status, or uninstall.",
-    );
-
-  if (action !== "stop" && action !== "uninstall") await readConfiguration(configuration);
-
-  if (action === "install") {
-    await serviceCredential(true);
-    const bun = join(homedir(), ".bun/bin/bun");
-
-    const cli = join(
-      homedir(),
-      ".local/share/codemode-mcp-gateway/current/node_modules/codemode-mcp-gateway/dist/cli.js",
-    );
-
-    if (!(await exists(bun)) || !(await exists(cli)))
-      throw new GatewayError(
-        "The installed runtime is missing. Run bun run install:local before installing the service.",
-      );
-
-    for (const name of ["stdout.log", "stderr.log"]) {
-      const file = await open(
-        join(paths.directory, name),
-        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
-        0o600,
-      );
-
-      try {
-        await file.chmod(0o600);
-      } finally {
-        await file.close();
-      }
-    }
-
-    const env = {
-      HOME: homedir(),
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      XDG_STATE_HOME: process.env.XDG_STATE_HOME || join(homedir(), ".local/state"),
-      ...Object.fromEntries(
-        ["CODEX_HOME", "CLAUDE_CONFIG_DIR"].flatMap((key) =>
-          process.env[key] ? [[key, process.env[key]]] : [],
-        ),
+  const env = {
+    HOME: homedir(),
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    XDG_STATE_HOME: process.env.XDG_STATE_HOME || join(homedir(), ".local/state"),
+    ...Object.fromEntries(
+      ["CODEX_HOME", "CLAUDE_CONFIG_DIR"].flatMap((key) =>
+        process.env[key] ? [[key, process.env[key]]] : [],
       ),
-    };
+    ),
+  };
 
-    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>${label}</string>
 <key>ProgramArguments</key><array>${[bun, cli, "serve", "--config", configuration].map((arg) => `<string>${xml(arg)}</string>`).join("")}</array>
 <key>EnvironmentVariables</key><dict>${Object.entries(env)
-      .map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`)
-      .join("")}</dict>
+    .map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`)
+    .join("")}</dict>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>ThrottleInterval</key><integer>5</integer><key>ExitTimeOut</key><integer>20</integer>
 <key>ProcessType</key><string>Background</string>
@@ -329,68 +333,71 @@ export async function serviceCommand(action: string, configuration: string) {
 <key>StandardErrorPath</key><string>${xml(join(paths.directory, "stderr.log"))}</string>
 </dict></plist>\n`;
 
-    await mkdir(join(homedir(), "Library/LaunchAgents"), { recursive: true });
+  await mkdir(join(homedir(), "Library/LaunchAgents"), { recursive: true });
 
-    const existing = await lstat(paths.plist).catch((cause: unknown) => {
-      if (isCode(cause, "ENOENT")) return undefined;
+  const existing = await lstat(paths.plist).catch((cause: unknown) => {
+    if (isCode(cause, "ENOENT")) return undefined;
 
-      throw cause;
-    });
+    throw cause;
+  });
 
-    if (existing?.isSymbolicLink())
-      throw new GatewayError("Refusing to replace a symlinked LaunchAgent definition.");
+  if (existing?.isSymbolicLink())
+    throw new GatewayError("Refusing to replace a symlinked LaunchAgent definition.");
 
-    // Keep a failed write from corrupting the previous service definition.
-    const pending = `${paths.plist}.${crypto.randomUUID()}.tmp`;
+  // Keep a failed write from corrupting the previous service definition.
+  const pending = `${paths.plist}.${crypto.randomUUID()}.tmp`;
 
-    const file = await open(
-      pending,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-      0o600,
-    );
+  const file = await open(
+    pending,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600,
+  );
 
+  try {
     try {
-      try {
-        await file.writeFile(plist);
-      } finally {
-        await file.close();
-      }
-
-      await rename(pending, paths.plist);
+      await file.writeFile(plist);
     } finally {
-      await rm(pending, { force: true });
+      await file.close();
     }
+
+    await rename(pending, paths.plist);
+  } finally {
+    await rm(pending, { force: true });
   }
+}
 
-  const job = await launchctl(["print", target]);
-  const loaded = job.code === 0;
-  const previousPid = job.stdout.match(/\bpid\s*=\s*(\d+)/)?.[1];
-  if (["install", "stop", "restart", "uninstall"].includes(action) && loaded) {
-    await checked(["bootout", target]);
-    const deadline = performance.now() + 20_000;
-    while (previousPid !== undefined && alive(Number(previousPid))) {
-      if (performance.now() >= deadline)
-        throw new GatewayError(
-          "The service did not stop within 20 seconds. Inspect its private logs before restarting.",
-        );
+async function stopService(target: string) {
+  const job = await serviceJob(target);
+  if (!job.loaded) return;
 
-      await Bun.sleep(100);
-    }
+  await checked(["bootout", target]);
+  const deadline = performance.now() + 20_000;
+  while (job.pid !== undefined && alive(job.pid)) {
+    if (performance.now() >= deadline)
+      throw new GatewayError(
+        "The service did not stop within 20 seconds. Inspect its private logs before restarting.",
+      );
+
+    await Bun.sleep(100);
   }
+}
 
-  if (action === "uninstall") await rm(paths.plist, { force: true });
+async function startService(
+  service: Service,
+  config: Configuration,
+  directory: string,
+  action: "install" | "start" | "restart",
+) {
+  const job = await serviceJob(service.target);
+  if (!(await exists(service.paths.plist)))
+    throw new GatewayError("The service is not installed. Run gw service install.");
 
-  if (["install", "start", "restart"].includes(action)) {
-    if (!(await exists(paths.plist)))
-      throw new GatewayError("The service is not installed. Run gw service install.");
-
-    if (action === "start" && loaded && (await ownedReady(configuration, target))) {
-      const config = await readConfiguration(configuration);
+  if (action === "start" && job.loaded) {
+    const status = await ownedStatus(service.target, config, directory);
+    if (status !== undefined) {
       const saved = await serviceCredential();
       if (saved === undefined || saved.version !== 2)
         throw new GatewayError("The running service credential is missing; it was not rotated.");
-
-      const status = await daemonStatus(configuration);
 
       const clients = await synchronizeClients(
         new URL(`http://127.0.0.1:${config.service.port}/mcp`),
@@ -399,40 +406,34 @@ export async function serviceCommand(action: string, configuration: string) {
 
       reportClients(clients);
 
-      return { action, completed: true, clients };
+      return clients;
     }
 
-    if (action === "start" && loaded && previousPid !== undefined)
+    if (job.pid !== undefined)
       throw new GatewayError(
         "The running service is not ready for this configuration/build. Run gw service restart to replace the owned service explicitly.",
       );
 
-    if (action === "start" && loaded) await checked(["kickstart", target]);
-    else {
-      await checked(["enable", target]);
-      await checked(["bootstrap", `gui/${uid}`, paths.plist]);
-    }
-
-    const deadline = performance.now() + 20_000;
-    while (!(await ownedReady(configuration, target))) {
-      if (performance.now() >= deadline) {
-        await checked(["bootout", target]);
-        throw new GatewayError(
-          `The registered service did not become ready and was stopped. Inspect ${join(paths.directory, "stderr.log")}; no upstream login was started.`,
-        );
-      }
-
-      await Bun.sleep(100);
-    }
+    await checked(["kickstart", service.target]);
+  } else {
+    await checked(["enable", service.target]);
+    await checked(["bootstrap", service.domain, service.paths.plist]);
   }
 
-  return {
-    action,
-    completed: true,
-    ...(["install", "start", "restart"].includes(action)
-      ? { clients: (await daemonStatus(configuration)).clients }
-      : {}),
-  };
+  const deadline = performance.now() + 20_000;
+  while (true) {
+    const status = await ownedStatus(service.target, config, directory);
+    if (status !== undefined) return status.clients;
+
+    if (performance.now() >= deadline) {
+      await checked(["bootout", service.target]);
+      throw new GatewayError(
+        `The registered service did not become ready and was stopped. Inspect ${join(service.paths.directory, "stderr.log")}; no upstream login was started.`,
+      );
+    }
+
+    await Bun.sleep(100);
+  }
 }
 
 function alive(pid: number) {
@@ -447,25 +448,33 @@ function alive(pid: number) {
   }
 }
 
-async function ownedReady(configuration: string, target: string) {
-  const job = await launchctl(["print", target]);
-  const pid = job.stdout.match(/\bpid\s*=\s*(\d+)/)?.[1];
-  if (job.code !== 0 || pid === undefined) return false;
+async function ownedStatus(target: string, config: Configuration, directory: string) {
+  const job = await serviceJob(target);
+  if (!job.loaded || job.pid === undefined) return undefined;
 
   try {
-    const config = await readConfiguration(configuration);
-    const status = await daemonStatus(configuration);
+    const status = await queryStatus(config.service.port);
 
-    return (
-      status.service.pid === Number(pid) &&
-      status.service.configurationId === configurationIdentity(config, dirname(configuration)) &&
+    if (
+      status.service.pid === job.pid &&
+      status.service.configurationId === configurationIdentity(config, directory) &&
       status.clients.length === 2
-    );
+    )
+      return status;
+
+    return undefined;
   } catch (cause) {
-    if (cause instanceof GatewayError) return false;
+    if (cause instanceof GatewayError) return undefined;
 
     throw cause;
   }
+}
+
+async function serviceJob(target: string) {
+  const job = await launchctl(["print", target]);
+  const pid = job.stdout.match(/\bpid\s*=\s*(\d+)/)?.[1];
+
+  return { loaded: job.code === 0, pid: pid === undefined ? undefined : Number(pid) };
 }
 
 async function exists(path: string) {

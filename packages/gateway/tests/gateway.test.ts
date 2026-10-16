@@ -989,6 +989,47 @@ describe("multi-upstream gateway", () => {
     },
   );
 
+  test("paginates server-filtered discovery independently of other upstream matches", async () => {
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            "notes-backup": { type: "local", command: localCommand },
+            notes: { type: "local", command: localCommand },
+          },
+        },
+      }),
+      ".",
+    );
+
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: {
+        code: `const first = await tools.searchTools({ query: "Return", server: "notes", limit: 1 });
+          const second = await tools.searchTools({ query: "Return", server: "notes", limit: 1, offset: first.nextOffset });
+          return { first, second };`,
+      },
+    });
+
+    expect(responseValue(response)).toMatchObject({
+      first: {
+        tools: [{ name: "notes.dataset" }],
+        total: 2,
+        nextOffset: 1,
+        servers: [{ name: "notes", state: "connected" }],
+      },
+      second: {
+        tools: [{ name: "notes.fail" }],
+        total: 2,
+        nextOffset: null,
+        servers: [{ name: "notes", state: "connected" }],
+      },
+    });
+  });
+
   test("namespaces duplicate tool names across stdio and HTTP without changing their schemas", async () => {
     const received: unknown[] = [];
 

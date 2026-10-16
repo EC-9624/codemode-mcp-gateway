@@ -28,7 +28,8 @@ Each package owns its `tests/`, support helpers, fixtures, and `test`/`check` co
 | `packages/gateway`  | Configuration, `Gateway`, `login`, `logout`, serving/CLI | Composition, partial availability, credential recovery, fixed policy, upstream/process lifetime |
 
 Root scripts coordinate package commands and packed-install verification. There
-is no root test suite. Tests can import another package's public API, but not its
+is no root test suite. Root `typecheck` checks the whole workspace once; package-local
+typechecks remain available for focused work. Tests can import another package's public API, but not its
 internals or test files. Small mechanical helpers may be repeated locally rather
 than creating a shared test-framework package.
 
