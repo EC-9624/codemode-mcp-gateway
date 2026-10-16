@@ -19,6 +19,7 @@ import {
 } from "./credentials.ts";
 import { listenForCallback } from "./loopback.ts";
 import { AuthResult, AuthorizationError } from "./result.ts";
+import { oauthEndpoint } from "./network.ts";
 
 export type OAuthDiscovery = {
   issuer: string;
@@ -26,6 +27,7 @@ export type OAuthDiscovery = {
   metadata: AuthorizationServerMetadata;
   resource: string | null;
   resourceScopes: string[] | undefined;
+  challengeScope: string | undefined;
 };
 
 /** Prepare one browser authorization attempt. The caller owns it and saves its completed grant. */
@@ -44,7 +46,9 @@ export async function authorize(
   const previous = stored.value;
 
   const scopes = new Set(
-    connection.scope?.split(/\s+/).filter(Boolean) ?? discovery.resourceScopes ?? [],
+    (connection.scope ?? discovery.challengeScope)?.split(/\s+/).filter(Boolean) ??
+      discovery.resourceScopes ??
+      [],
   );
 
   if (
@@ -100,7 +104,7 @@ export async function authorize(
           token_endpoint_auth_method: "none",
         },
         ...(scope === undefined ? {} : { scope }),
-        fetchFn: authFetch(signal),
+        fetchFn: authFetch(signal, connection.url),
       });
     } catch (cause) {
       return oauthFailure(cause, signal);
@@ -231,7 +235,7 @@ async function exchangeCallback(
       codeVerifier: verifier,
       redirectUri: record.redirectUri,
       ...(discovery.resource === null ? {} : { resource: discovery.resource }),
-      fetchFn: authFetch(signal),
+      fetchFn: authFetch(signal, record.upstreamUrl),
     });
   } catch (cause) {
     return oauthFailure(cause, signal);
@@ -269,9 +273,10 @@ export async function discoverOAuth(
   signal: AbortSignal,
 ): Promise<AuthResult<OAuthDiscovery>> {
   let discoveryFailure: AuthResult<never> | undefined;
+  let challengeScope: string | undefined;
   let info;
   try {
-    const request = authFetch(signal);
+    const request = authFetch(signal, connection.url);
 
     const fetchFn: FetchLike = async (url, init) => {
       let response: Response;
@@ -295,16 +300,13 @@ export async function discoverOAuth(
     // A successful probe may open an SSE stream; discovery only needs the headers.
     await response.body?.cancel();
 
-    const resourceMetadataUrl =
-      response.status === 401
-        ? extractWWWAuthenticateParams(response).resourceMetadataUrl
-        : undefined;
+    const challenge = response.status === 401 ? extractWWWAuthenticateParams(response) : {};
+    const resourceMetadataUrl = challenge.resourceMetadataUrl;
+    challengeScope = challenge.scope;
 
-    if (resourceMetadataUrl !== undefined && !secureEndpoint(resourceMetadataUrl)) {
-      return AuthResult.failure(
-        "invalid",
-        "OAuth resource metadata URL must use HTTPS or loopback HTTP without embedded credentials.",
-      );
+    if (resourceMetadataUrl !== undefined) {
+      const permitted = await oauthEndpoint(resourceMetadataUrl, connection.url, signal);
+      if (!permitted.ok) return permitted;
     }
 
     info = await discoverOAuthServerInfo(connection.url, {
@@ -327,15 +329,15 @@ export async function discoverOAuth(
     );
   }
 
-  if (
-    [metadata.authorization_endpoint, metadata.token_endpoint, metadata.registration_endpoint].some(
-      (endpoint) => endpoint !== undefined && !secureEndpoint(endpoint),
-    )
-  ) {
-    return AuthResult.failure(
-      "invalid",
-      "OAuth metadata contains an insecure authorization, registration, or token endpoint.",
-    );
+  for (const endpoint of [
+    metadata.authorization_endpoint,
+    metadata.token_endpoint,
+    metadata.registration_endpoint,
+  ]) {
+    if (endpoint === undefined) continue;
+
+    const permitted = await oauthEndpoint(endpoint, connection.url, signal);
+    if (!permitted.ok) return permitted;
   }
 
   const resource = info.resourceMetadata?.resource ?? null;
@@ -363,26 +365,35 @@ export async function discoverOAuth(
     metadata,
     resource,
     resourceScopes: info.resourceMetadata?.scopes_supported,
+    challengeScope,
   });
 }
 
 /** OAuth requests have no resource-server headers and cannot redirect credentials. */
-export function authFetch(signal: AbortSignal): FetchLike {
+export function authFetch(signal: AbortSignal, upstream: string): FetchLike {
   return async (input, init) => {
-    if (!secureEndpoint(input)) {
-      throw new AuthorizationError({
-        kind: "invalid",
-        message: "OAuth endpoints must use HTTPS or loopback HTTP without embedded credentials.",
-      });
-    }
-
     const combined = AbortSignal.any([
       signal,
       AbortSignal.timeout(15_000),
       ...(init?.signal ? [init.signal] : []),
     ]);
 
-    return fetch(input, { ...init, signal: combined, redirect: "error" });
+    const destination = await oauthEndpoint(input, upstream, combined);
+    if (!destination.ok) throw new AuthorizationError(destination.error);
+
+    const headers = new Headers(init?.headers);
+    headers.set("host", destination.value.host);
+
+    // Connect to the checked address, but retain the original HTTP authority and TLS
+    // identity. A second hostname lookup here would reopen the DNS-rebinding window.
+    return fetch(destination.value.url, {
+      ...init,
+      headers,
+      signal: combined,
+      redirect: "error",
+      keepalive: false,
+      tls: { serverName: destination.value.hostname, rejectUnauthorized: true },
+    });
   };
 }
 
@@ -433,20 +444,5 @@ export function isInvalidClient(cause: unknown): boolean {
     cause instanceof OAuthError &&
     (cause.code === OAuthErrorCode.InvalidClient ||
       cause.code === OAuthErrorCode.UnauthorizedClient)
-  );
-}
-
-function secureEndpoint(input: string | URL): boolean {
-  const value = typeof input === "string" ? input : input.href;
-  if (!URL.canParse(value)) return false;
-
-  const url = new URL(value);
-
-  return (
-    url.username === "" &&
-    url.password === "" &&
-    url.hash === "" &&
-    (url.protocol === "https:" ||
-      (url.protocol === "http:" && ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname)))
   );
 }

@@ -7,16 +7,19 @@ import { z } from "zod";
 import { configurationIdentity, readConfiguration } from "./config.ts";
 import { GatewayError } from "./errors.ts";
 import { ClientRegistration, reportClients, synchronizeClients } from "./clients.ts";
+import { ServiceAuthentication } from "./service-auth.ts";
 
 const label = "dev.codemode-mcp-gateway";
 
-const credential = z.strictObject({
-  version: z.literal(1),
-  token: z
-    .string()
-    .length(43)
-    .regex(/^[A-Za-z0-9_-]+$/),
-});
+const secret = z
+  .string()
+  .length(43)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
+const credential = z.discriminatedUnion("version", [
+  z.strictObject({ version: z.literal(1), token: secret }),
+  z.strictObject({ version: z.literal(2), key: secret }),
+]);
 
 const upstreamBase = { name: z.string(), updatedAt: z.string() };
 export const daemonStatusSchema = z.object({
@@ -67,8 +70,10 @@ export function servicePaths() {
   };
 }
 
-/** Local endpoint credential, separate from upstream OAuth. Never render this value. */
-export async function serviceToken(create = false): Promise<string | undefined> {
+/** Local endpoint key, separate from upstream OAuth. Never render this value. */
+export async function serviceCredential(
+  create = false,
+): Promise<z.infer<typeof credential> | undefined> {
   const paths = servicePaths();
   if (create) {
     await mkdir(paths.directory, { recursive: true, mode: 0o700 });
@@ -91,14 +96,14 @@ export async function serviceToken(create = false): Promise<string | undefined> 
     if (isCode(cause, "ENOENT")) {
       if (!create) return undefined;
 
-      const value = { version: 1, token: randomBytes(32).toString("base64url") };
+      const value = { version: 2, key: randomBytes(32).toString("base64url") };
       try {
         await writeFile(paths.token, JSON.stringify(value) + "\n", { flag: "wx", mode: 0o600 });
       } catch (writing) {
         if (!isCode(writing, "EEXIST")) throw writing;
       }
 
-      return serviceToken(false);
+      return serviceCredential(false);
     }
 
     if (isCode(cause, "ELOOP"))
@@ -132,22 +137,49 @@ export async function serviceToken(create = false): Promise<string | undefined> 
     if (!parsed.success)
       throw new GatewayError("The service credential file is invalid; it was not rotated.");
 
-    return parsed.data.token;
+    return parsed.data;
   } finally {
     await file.close();
   }
 }
 
+/** Upgrade only after binding: a probe against an occupied port must never replace its key. */
+export async function upgradeServiceCredential(previous: string, key: string): Promise<void> {
+  const paths = servicePaths();
+  const current = await serviceCredential();
+  if (current?.version !== 1 || current.token !== previous)
+    throw new GatewayError("Service credentials changed during startup. Retry gw serve.");
+
+  const pending = join(paths.directory, `.auth-${crypto.randomUUID()}.tmp`);
+  try {
+    await writeFile(pending, JSON.stringify({ version: 2, key }) + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await rename(pending, paths.token);
+  } finally {
+    await rm(pending, { force: true });
+  }
+}
+
 export async function daemonStatus(configuration: string, signal?: AbortSignal) {
   const config = await readConfiguration(configuration);
-  const token = await serviceToken();
-  if (token === undefined)
+  const saved = await serviceCredential();
+  if (saved === undefined)
     throw new GatewayError("The local service is not prepared. Run gw service install.");
 
+  if (saved.version === 1)
+    throw new GatewayError(
+      "The local service credential needs upgrading. Stop the service, then run gw serve or gw service restart.",
+    );
+
+  const url = new URL(`http://127.0.0.1:${config.service.port}/status`);
+  const authentication = new ServiceAuthentication(saved.key);
+  const authorization = authentication.request(url);
   let response: Response;
   try {
-    response = await fetch(`http://127.0.0.1:${config.service.port}/status`, {
-      headers: { authorization: `Bearer ${token}` },
+    response = await fetch(url, {
+      headers: { authorization },
       redirect: "error",
       signal:
         signal === undefined
@@ -169,9 +201,22 @@ export async function daemonStatus(configuration: string, signal?: AbortSignal) 
   if (!response.ok)
     throw new GatewayError(`Local service status failed with HTTP ${response.status}.`);
 
+  const text = await response.text();
+  if (
+    !authentication.verifies(
+      url,
+      authorization,
+      text,
+      response.headers.get("x-cmg-status-signature"),
+    )
+  )
+    throw new GatewayError(
+      "Could not authenticate the local service status. No bearer credential was sent; verify the service port and restart the owned service.",
+    );
+
   let payload: unknown;
   try {
-    payload = await response.json();
+    payload = JSON.parse(text);
   } catch (cause) {
     throw new GatewayError("The service port did not return a valid gateway status.", { cause });
   }
@@ -230,7 +275,7 @@ export async function serviceCommand(action: string, configuration: string) {
   if (action !== "stop" && action !== "uninstall") await readConfiguration(configuration);
 
   if (action === "install") {
-    await serviceToken(true);
+    await serviceCredential(true);
     const bun = join(homedir(), ".bun/bin/bun");
 
     const cli = join(
@@ -341,13 +386,15 @@ export async function serviceCommand(action: string, configuration: string) {
 
     if (action === "start" && loaded && (await ownedReady(configuration, target))) {
       const config = await readConfiguration(configuration);
-      const token = await serviceToken();
-      if (token === undefined)
+      const saved = await serviceCredential();
+      if (saved === undefined || saved.version !== 2)
         throw new GatewayError("The running service credential is missing; it was not rotated.");
+
+      const status = await daemonStatus(configuration);
 
       const clients = await synchronizeClients(
         new URL(`http://127.0.0.1:${config.service.port}/mcp`),
-        token,
+        ServiceAuthentication.bearer(saved.key, status.service.instanceId),
       );
 
       reportClients(clients);

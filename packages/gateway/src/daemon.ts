@@ -2,18 +2,21 @@ import { dirname } from "node:path";
 import { configurationIdentity, readConfiguration } from "./config.ts";
 import { Gateway } from "./gateway.ts";
 import { GatewayHttpServer } from "./http.ts";
-import { daemonStatus, serviceToken } from "./local-service.ts";
+import { randomBytes } from "node:crypto";
+import { daemonStatus, serviceCredential, upgradeServiceCredential } from "./local-service.ts";
 import { reportClients, synchronizeClients } from "./clients.ts";
 import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/login.ts";
+import { ServiceAuthentication } from "./service-auth.ts";
 
 /** Foreground process owned by launchd; client sessions never own this lifetime. */
 export async function serveDaemon(path: string, options: CredentialOptions = {}) {
   const config = await readConfiguration(path);
-  const bearerToken = await serviceToken(true);
-  if (bearerToken === undefined)
+  const saved = await serviceCredential(true);
+  if (saved === undefined)
     throw new GatewayError("Could not prepare the local service credential.");
 
+  const key = saved.version === 2 ? saved.key : randomBytes(32).toString("base64url");
   await using cleanup = new AsyncDisposableStack();
   const shutdown = new AbortController();
   const stopped = Promise.withResolvers<void>();
@@ -40,7 +43,7 @@ export async function serveDaemon(path: string, options: CredentialOptions = {})
 
   const opened = await GatewayHttpServer.listen(gateway, {
     port: config.service.port,
-    bearerToken,
+    serviceKey: key,
     configurationId: configurationIdentity(config, dirname(path)),
   });
 
@@ -55,7 +58,7 @@ export async function serveDaemon(path: string, options: CredentialOptions = {})
       if (running?.service.configurationId === configurationIdentity(config, dirname(path))) {
         const results = await synchronizeClients(
           new URL(`http://127.0.0.1:${config.service.port}/mcp`),
-          bearerToken,
+          ServiceAuthentication.bearer(key, running.service.instanceId),
         );
 
         reportClients(results);
@@ -80,6 +83,9 @@ export async function serveDaemon(path: string, options: CredentialOptions = {})
   }
 
   cleanup.use(opened.server);
+  if (saved.version === 1) await upgradeServiceCredential(saved.token, key);
+
+  const bearerToken = ServiceAuthentication.bearer(key, opened.server.instanceId);
   const clients = await synchronizeClients(opened.server.url, bearerToken);
   opened.server.setClientRegistrations(clients);
   reportClients(clients);

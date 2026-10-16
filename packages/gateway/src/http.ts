@@ -6,20 +6,27 @@ import {
 import { z } from "zod";
 import { type Gateway } from "./gateway.ts";
 import { type ClientRegistration } from "./clients.ts";
+import { ServiceAuthentication } from "./service-auth.ts";
 
-const optionsSchema = z.strictObject({
+const credential = z
+  .string()
+  .min(32)
+  .max(256)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
+const baseOptions = z.strictObject({
   port: z.number().int().min(0).max(65535),
-  bearerToken: z
-    .string()
-    .min(32)
-    .max(256)
-    .regex(/^[A-Za-z0-9_-]+$/),
   orphanGraceMs: z.number().int().positive().default(60_000),
   configurationId: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
 });
+
+const optionsSchema = z.union([
+  baseOptions.extend({ bearerToken: credential }),
+  baseOptions.extend({ serviceKey: credential }),
+]);
 
 export type HttpOptions = z.input<typeof optionsSchema>;
 export type HttpListenResult =
@@ -40,13 +47,14 @@ type Session = {
 /** Borrows the gateway; owns only the HTTP listener and its MCP sessions. */
 export class GatewayHttpServer implements AsyncDisposable {
   readonly url: URL;
+  readonly instanceId = crypto.randomUUID();
   private readonly listener: Bun.Server<undefined>;
   private readonly sessions = new Map<string, Session>();
   private readonly owned = new Set<Session>();
   private readonly retiring = new Set<Promise<void>>();
   private readonly tokenHash: Buffer;
+  private readonly authentication: ServiceAuthentication | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
-  private readonly instanceId = crypto.randomUUID();
   private readonly started = performance.now();
   private readonly configurationId: string | undefined;
   private clients: ClientRegistration[] = [];
@@ -58,7 +66,13 @@ export class GatewayHttpServer implements AsyncDisposable {
     private readonly gateway: Gateway,
     options: z.output<typeof optionsSchema>,
   ) {
-    this.tokenHash = digest(options.bearerToken);
+    this.authentication =
+      "serviceKey" in options ? new ServiceAuthentication(options.serviceKey) : undefined;
+    this.tokenHash = digest(
+      "serviceKey" in options
+        ? ServiceAuthentication.bearer(options.serviceKey, this.instanceId)
+        : options.bearerToken,
+    );
     this.configurationId = options.configurationId;
     this.listener = Bun.serve({
       hostname: "127.0.0.1",
@@ -157,11 +171,18 @@ export class GatewayHttpServer implements AsyncDisposable {
 
     if (url.pathname === "/health" && request.method === "GET") return new Response("ok");
 
-    const submitted = request.headers
-      .get("authorization")
-      ?.match(/^Bearer +([A-Za-z0-9_-]+)$/i)?.[1];
+    const authorization = request.headers.get("authorization");
+    const submitted = authorization?.match(/^Bearer +([A-Za-z0-9_-]+)$/i)?.[1];
 
-    if (submitted === undefined || !timingSafeEqual(digest(submitted), this.tokenHash)) {
+    const signed =
+      url.pathname === "/status" &&
+      request.method === "GET" &&
+      this.authentication?.accepts(url, authorization) === true;
+
+    if (
+      !signed &&
+      (submitted === undefined || !timingSafeEqual(digest(submitted), this.tokenHash))
+    ) {
       return new Response("Unauthorized", {
         status: 401,
         headers: { "www-authenticate": 'Bearer realm="codemode-mcp-gateway"' },
@@ -171,7 +192,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     if (this.stopped) return new Response("Service is stopping", { status: 503 });
 
     if (url.pathname === "/status" && request.method === "GET") {
-      return Response.json({
+      const body = JSON.stringify({
         service: {
           ready: true,
           pid: process.pid,
@@ -182,6 +203,15 @@ export class GatewayHttpServer implements AsyncDisposable {
         sessions: this.sessions.size,
         upstreams: this.gateway.status(),
         clients: this.clients,
+      });
+
+      return new Response(body, {
+        headers: {
+          "content-type": "application/json",
+          ...(signed && authorization !== null && this.authentication !== undefined
+            ? { "x-cmg-status-signature": this.authentication.response(url, authorization, body) }
+            : {}),
+        },
       });
     }
 

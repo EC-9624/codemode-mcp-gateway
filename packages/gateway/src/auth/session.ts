@@ -239,7 +239,7 @@ export class OAuthSession implements AsyncDisposable {
         clientInformation: record.client,
         refreshToken: authorization.tokens.refresh_token,
         ...(this.discovery.resource === null ? {} : { resource: this.discovery.resource }),
-        fetchFn: authFetch(AbortSignal.any([this.signal, lease.signal])),
+        fetchFn: authFetch(AbortSignal.any([this.signal, lease.signal]), this.connection.url),
       });
     } catch (cause) {
       const held = lease.check();

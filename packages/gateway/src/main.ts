@@ -178,9 +178,10 @@ export async function main(
 
     if (command === "doctor") {
       const config = selectServer(await readConfiguration(path), server);
+      const remote = parsed.values.stdio ? undefined : await daemonStatus(path, shutdown.signal);
 
       let statuses: ServerStatus[];
-      if (parsed.values.stdio) {
+      if (remote === undefined) {
         await using gateway = new Gateway(config, dirname(path), {
           ...options,
           signal: shutdown.signal,
@@ -189,7 +190,6 @@ export async function main(
         await gateway.start();
         statuses = gateway.status();
       } else {
-        const remote = await daemonStatus(path, shutdown.signal);
         statuses = remote.upstreams.filter(
           (status) => server === undefined || status.name === server,
         );
@@ -201,7 +201,16 @@ export async function main(
         (status) => status.state === "connected" || status.state === "disabled",
       );
 
-      if (parsed.values.json) console.log(JSON.stringify({ ok: healthy, servers: statuses }));
+      if (parsed.values.json)
+        console.log(
+          JSON.stringify({
+            ok: healthy,
+            servers: statuses,
+            ...(remote === undefined
+              ? {}
+              : { service: remote.service, clients: remote.clients, sessions: remote.sessions }),
+          }),
+        );
       else
         for (const status of statuses)
           console.log(

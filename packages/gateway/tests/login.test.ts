@@ -67,6 +67,22 @@ describe("login", () => {
 
   test.each([
     {
+      name: "challenge scopes instead of broader resource scopes",
+      resourceScopes: ["read", "write", "offline_access"],
+      authorizationScopes: [],
+      challengeScope: "read",
+      oauth: {},
+      expectedScope: "read offline_access",
+    },
+    {
+      name: "explicit scopes instead of narrower challenge scopes",
+      resourceScopes: ["read", "write", "offline_access"],
+      authorizationScopes: [],
+      challengeScope: "read",
+      oauth: { scope: "write" },
+      expectedScope: "write offline_access",
+    },
+    {
       name: "resource scopes when no explicit scope is configured",
       resourceScopes: ["read:jira-work", "offline_access"],
       authorizationScopes: [],
@@ -98,6 +114,7 @@ describe("login", () => {
     await using upstream = await oauthFixture({
       ...(scenario.resourceScopes === undefined ? {} : { resourceScopes: scenario.resourceScopes }),
       authorizationScopes: scenario.authorizationScopes,
+      ...(scenario.challengeScope === undefined ? {} : { challengeScope: scenario.challengeScope }),
     });
 
     await using config = await configuration({

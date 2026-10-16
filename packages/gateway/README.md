@@ -60,6 +60,11 @@ left alone. No-op registration leaves files untouched. Symlinked destinations,
 paths inside Git checkouts, and malformed configs are reported without replacement. Registration
 failure in one client does not prevent the other from working. See the
 [client/security contract](../../docs/local-installation.md#service-lifetime-security-and-clients).
+Each new HTTP service instance rotates native bearer tokens; running clients must
+reload/restart after a service restart. Reusing a running instance retains its token.
+CLI status checks use signed requests/responses without sending the private service
+key or native bearer. Native HTTP clients still do not authenticate the server itself;
+port impersonation can expose arguments and forge responses while the service is down.
 Login/logout select a named server; the name
 can be omitted when exactly one OAuth connection is configured. Logout removes
 local credentials, not the upstream grant.
@@ -340,7 +345,8 @@ protect the code exchange. Login uses the SDK's metadata, registration, and toke
 helpers, not a Notion-specific OAuth implementation. Discovery probes the upstream
 without credentials for a `WWW-Authenticate` metadata URL, falling back to well-known
 discovery when none is advertised. Optional `oauth.scope` requests an explicit
-space-delimited scope. Otherwise, login requests the protected resource's advertised
+space-delimited scope. Otherwise, login requests the initial `WWW-Authenticate`
+challenge's scopes, falling back to the protected resource's advertised
 scopes, not every scope supported by the authorization server. `offline_access` is
 added when either advertises it. Registration and browser consent request the same
 scopes. To replace an existing incorrectly scoped registration, run
@@ -390,6 +396,14 @@ credential snapshot in that process. A newly saved grant permits recovery.
 Remote rotation and local persistence are not transactional: interrupted/lost
 responses can require reauthorization. Auth network requests have a 15-second
 timeout, use HTTPS except for loopback development, and reject HTTP redirects.
+Remote discovery cannot delegate requests to loopback/private/reserved addresses.
+An explicitly configured loopback upstream permits loopback development endpoints;
+an explicitly configured private IP permits endpoints at that same origin. Private
+hostnames and cross-origin private authorization servers are rejected. DNS answers
+are checked in full and each request is pinned to one approved address (IPv4 preferred),
+preserving the original HTTP Host and TLS certificate identity. Failed exchanges
+are not retried at alternate addresses. Browser authorization endpoints are checked
+before opening, but the external browser owns its own subsequent DNS resolution.
 Tool payloads and aggregate memory remain subject to the existing documented limitations.
 
 `logout` removes local credentials and registration details; it does **not** revoke
@@ -527,7 +541,7 @@ bun run --cwd packages/gateway check
 
 This package owns configuration, composition, CLI, end-to-end gateway, and
 stdio/HTTP shutdown tests in a flat `tests/` directory, grouped by public subject.
-`login.test.ts`, `login-callback.test.ts`, and `logout.test.ts` specify authorization
+`login.test.ts`, `login-callback.test.ts`, `login-network.test.ts`, and `logout.test.ts` specify authorization
 workflows through public login/logout; `credentials.test.ts` specifies the exported schema.
 `authorization.test.ts` exercises running gateways through real SDK clients.
 Only `credential-ownership.test.ts` retains internal session/lease probes, for

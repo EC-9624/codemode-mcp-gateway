@@ -118,20 +118,24 @@ test.each([
   await app.stop();
 });
 
-test("serve leaves correct registrations and the credential unchanged across restarts", async () => {
+test("serve rotates native bearer tokens across restarts without replacing its private signing key", async () => {
   await using files = await fixture();
   const first = await start(files);
+  const previous = await files.readToken();
   await first.stop();
-  const token = await Bun.file(files.token).text();
-  const codex = await lstat(files.codex);
-  const claude = await lstat(files.claude);
+  const key = await Bun.file(files.token).text();
 
   const second = await start(files);
+  const current = await files.readToken();
 
-  expect(second.status.clients.map((client) => client.state)).toEqual(["unchanged", "unchanged"]);
-  expect((await lstat(files.codex)).ino).toBe(codex.ino);
-  expect((await lstat(files.claude)).ino).toBe(claude.ino);
-  expect(await Bun.file(files.token).text()).toBe(token);
+  const rejected = await fetch(`${files.origin}/status`, {
+    headers: { authorization: `Bearer ${previous}` },
+  });
+
+  expect(second.status.clients.map((client) => client.state)).toEqual(["configured", "configured"]);
+  expect(current).not.toBe(previous);
+  expect(rejected.status).toBe(401);
+  expect(await Bun.file(files.token).text()).toBe(key);
   await second.stop();
 });
 
@@ -275,11 +279,16 @@ test("serve reports a client filesystem failure without preventing the other reg
 
 test("an unrelated occupied port does not change native registrations", async () => {
   await using files = await fixture();
+  const authorizations: (string | null)[] = [];
 
   const listener = Bun.serve({
     hostname: "127.0.0.1",
     port: files.port,
-    fetch: () => new Response("unrelated"),
+    fetch: (request) => {
+      authorizations.push(request.headers.get("authorization"));
+
+      return new Response("unrelated");
+    },
   });
 
   await using cleanup = new AsyncDisposableStack();
@@ -294,6 +303,134 @@ test("an unrelated occupied port does not change native registrations", async ()
   expect(await logs).toContain("already in use");
   expect(await Bun.file(files.codex).text()).toBe(original);
   expect(await Bun.file(files.claude).exists()).toBe(false);
+
+  const saved = z
+    .object({ version: z.literal(2), key: z.string() })
+    .parse(await Bun.file(files.token).json());
+
+  expect(authorizations).toHaveLength(1);
+  expect(authorizations[0]).toStartWith("CMG-Status ");
+  expect(authorizations[0]).not.toContain(saved.key);
+});
+
+test("doctor rejects a forged status without sending its private key or native bearer", async () => {
+  await using files = await fixture();
+  const app = await start(files);
+  const token = await files.readToken();
+  const saved = z.object({ key: z.string() }).parse(await Bun.file(files.token).json());
+  await app.stop();
+  const authorizations: (string | null)[] = [];
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: files.port,
+    fetch: (request) => {
+      authorizations.push(request.headers.get("authorization"));
+
+      return Response.json(app.status);
+    },
+  });
+
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => listener.stop(true));
+  const child = files.spawn(["doctor", "--config", files.config, "--json"]);
+  const output = new Response(child.stdout).text();
+
+  expect(await child.exited).toBe(1);
+  expect(await output).toContain("Could not authenticate the local service status");
+  expect(authorizations).toHaveLength(1);
+  expect(authorizations[0]).toStartWith("CMG-Status ");
+  expect(authorizations[0]).not.toContain(token);
+  expect(authorizations[0]).not.toContain(saved.key);
+});
+
+test("a captured status proof cannot authorize MCP requests after the daemon restarts", async () => {
+  await using files = await fixture();
+  const first = await start(files);
+  await first.stop();
+  const authorizations: string[] = [];
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: files.port,
+    fetch: (request) => {
+      const authorization = request.headers.get("authorization");
+      if (authorization !== null) authorizations.push(authorization);
+
+      return new Response(null, { status: 401 });
+    },
+  });
+
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => listener.stop(true));
+  const child = files.spawn(["doctor", "--config", files.config, "--json"]);
+  const output = new Response(child.stdout).text();
+  expect(await child.exited).toBe(1);
+  await output;
+  await listener.stop(true);
+  const second = await start(files);
+  const captured = authorizations[0];
+  if (captured === undefined)
+    throw new Error("The synthetic listener did not receive a status proof");
+
+  const response = await fetch(`${files.origin}/mcp`, {
+    method: "POST",
+    headers: { authorization: captured },
+  });
+
+  expect(authorizations).toHaveLength(1);
+  expect(response.status).toBe(401);
+  await second.stop();
+});
+
+test("serve replaces a legacy bearer credential only after binding its listener", async () => {
+  await using files = await fixture();
+  const legacy = "a".repeat(43);
+  await mkdir(files.state, { recursive: true, mode: 0o700 });
+  await writeFile(files.token, JSON.stringify({ version: 1, token: legacy }), { mode: 0o600 });
+
+  const app = await start(files);
+
+  const saved = z
+    .object({ version: z.literal(2), key: z.string() })
+    .parse(await Bun.file(files.token).json());
+
+  const response = await fetch(`${files.origin}/status`, {
+    headers: { authorization: `Bearer ${legacy}` },
+  });
+
+  expect(saved.key).not.toBe(legacy);
+  expect(await files.readToken()).not.toBe(legacy);
+  expect(response.status).toBe(401);
+  await app.stop();
+});
+
+test("serve does not upgrade legacy credentials while an unrelated listener owns its port", async () => {
+  await using files = await fixture();
+  const original = JSON.stringify({ version: 1, token: "a".repeat(43) });
+  await mkdir(files.state, { recursive: true, mode: 0o700 });
+  await writeFile(files.token, original, { mode: 0o600 });
+  const authorizations: (string | null)[] = [];
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: files.port,
+    fetch: (request) => {
+      authorizations.push(request.headers.get("authorization"));
+
+      return new Response("unrelated");
+    },
+  });
+
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => listener.stop(true));
+  const child = files.spawn(["serve", "--config", files.config]);
+  const logs = new Response(child.stderr).text();
+
+  expect(await child.exited).toBe(1);
+  expect(await logs).toContain("already in use");
+  expect(await Bun.file(files.token).text()).toBe(original);
+  expect(authorizations).toEqual([]);
 });
 
 test("serve refreshes registrations against the same running daemon without restarting it", async () => {
@@ -400,6 +537,7 @@ test("foreground HTTP daemon survives stdin EOF and doctor reads its actual stat
   });
   const deadline = performance.now() + 5_000;
   while (
+    !(await Bun.file(files.codex).exists()) ||
     !(await fetch(`${files.origin}/health`).then(
       (response) => response.ok,
       () => false,
@@ -412,9 +550,7 @@ test("foreground HTTP daemon survives stdin EOF and doctor reads its actual stat
     await Bun.sleep(10);
   }
 
-  const token = z
-    .object({ token: z.string().length(43) })
-    .parse(await Bun.file(files.token).json()).token;
+  const token = await files.readToken();
 
   expect((await stat(files.token)).mode & 0o777).toBe(0o600);
   expect((await stat(files.state)).mode & 0o777).toBe(0o700);
@@ -485,24 +621,34 @@ async function fixture() {
     codex: join(directory, ".codex/config.toml"),
     claude: join(directory, ".claude/.claude.json"),
     async readToken() {
-      return z.object({ token: z.string() }).parse(await Bun.file(join(state, "auth.json")).json())
-        .token;
+      const native = z
+        .object({
+          mcp_servers: z.object({
+            "codemode-mcp-gateway": z.object({
+              http_headers: z.object({ Authorization: z.string() }),
+            }),
+          }),
+        })
+        .parse(Bun.TOML.parse(await Bun.file(join(directory, ".codex/config.toml")).text()));
+
+      const server = native.mcp_servers["codemode-mcp-gateway"];
+
+      return server.http_headers.Authorization.slice(7);
     },
     async status() {
-      const token = z
-        .object({ token: z.string() })
-        .parse(await Bun.file(join(state, "auth.json")).json()).token;
+      const child = this.spawn(["doctor", "--config", config, "--json"]);
+      const output = new Response(child.stdout).json();
+      const error = new Response(child.stderr).text();
+      if ((await child.exited) !== 0) throw new Error(await error);
 
-      const response = await fetch(`http://127.0.0.1:${port}/status`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
+      await error;
 
       return z
         .object({
           service: z.object({ pid: z.number(), instanceId: z.string() }),
           clients: z.array(z.object({ client: z.string(), state: z.string() }).passthrough()),
         })
-        .parse(await response.json());
+        .parse(await output);
     },
     spawn(args: string[], environment: Record<string, string> = {}) {
       const child = Bun.spawn([process.execPath, "--conditions=development", cli, ...args], {

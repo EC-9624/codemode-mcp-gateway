@@ -45,6 +45,7 @@ export async function oauthFixture(
     refresh?: (fields: URLSearchParams) => Promise<Response | undefined>;
     deny?: boolean;
     challenge?: boolean;
+    challengeScope?: string;
     resourceScopes?: readonly string[];
     authorizationScopes?: readonly string[];
     mcp?: (request: Request) => Promise<Response | undefined>;
@@ -190,7 +191,7 @@ export async function oauthFixture(
           return new Response("private resource detail", {
             status: 401,
             headers: {
-              "WWW-Authenticate": `Bearer resource_metadata="${new URL("/metadata", listener.url).href}"`,
+              "WWW-Authenticate": `Bearer resource_metadata="${new URL("/metadata", listener.url).href}"${options.challengeScope === undefined ? "" : `, scope="${options.challengeScope}"`}`,
             },
           });
         }

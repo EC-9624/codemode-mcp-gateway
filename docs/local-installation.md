@@ -110,19 +110,27 @@ valid provider config or credentials and never delete upstream OAuth records.
 
 The listener is restricted to `127.0.0.1`; Host and Origin validation supplement
 mandatory bearer authentication. Only `GET /health` is unauthenticated and returns
-`ok`. `/status` and every MCP method require authentication. `/status` reports a live
+`ok`. `/status` and every MCP method require authentication. CLI status requests use
+short-lived, endpoint-bound HMAC proofs rather than transmitting a bearer token;
+the CLI also verifies a signature covering the response and its request nonce.
+`/status` reports a live
 instance ID, process ID, configuration identity, sessions, actual upstream status,
 and client registration results from startup, never tokens. Service readiness checks
 match the endpoint PID against the owning launchd job and selected configuration,
 and wait for registration attempts to finish. Readiness does not mean every client
 or provider succeeded: inspect the separate `clients` and `upstreams` results.
 
-The stable local credential is in
+The stable private signing key is in
 `$XDG_STATE_HOME/codemode-mcp-gateway/service/auth.json` (default
 `~/.local/state/codemode-mcp-gateway/service/auth.json`), with a 0700 directory and
-0600 file. Missing credentials are created; invalid, symlinked, or nonprivate files
-are refused, never silently rotated. This local token is separate from provider
-OAuth in the OS store. The LaunchAgent and tracked client configs contain no secret.
+0600 file, as `{ "version": 2, "key": "..." }`. The key is never sent over HTTP.
+Each listener derives a different bearer token from this key and its random instance
+ID. Captured native bearer tokens cannot authenticate to a later instance. Missing
+credentials are created; invalid, symlinked, or nonprivate files are refused. Legacy
+version-1 bearer files are replaced with a new signing key only after successfully
+binding the listener. Stop the old service and restart to upgrade; occupied-port
+probes never send a legacy credential or upgrade it. These credentials are separate
+from provider OAuth in the OS store. The LaunchAgent and tracked client configs contain no secret.
 Logs are private files beside the credential; `gw service status --json` is safe to inspect.
 
 `gw serve` provisions Codex's native `http_headers.Authorization`
@@ -159,10 +167,20 @@ client registrations; install/restart run the same `gw serve` startup path.
 
 Run plain `claude` or `codex`. GUI clients reading these same configs
 use the same headers without shell inheritance; GUI interaction itself was not tested.
-Already-running clients must reload/restart. Later service starts synchronize changed
-ports/tokens without a separate setup command; normal restarts do not rotate the token.
+Already-running clients must reload/restart after every service restart to adopt its
+new bearer token. Reusing an already-running matching daemon does not rotate tokens
+or rewrite correct registrations. Later starts synchronize changed ports/tokens
+without a separate setup command.
 OpenCode's configuration and environment are unchanged. Importing the library,
 programmatic HTTP hosting, and explicit stdio serving never modify native client configs.
+
+This is minimal HTTP hardening, not authenticated transport for native clients.
+A process that occupies the port while the gateway is down can still impersonate
+an MCP server to a native client, receive stale credentials/tool arguments, or forge
+tool responses. It cannot use those stale bearer tokens against a new gateway
+instance. Host/Origin checks do not authenticate a server. Use direct stdio when
+this residual local-process threat is unacceptable; pinned TLS or protected IPC
+would require a separate native-client transport integration.
 
 Each HTTP session owns its spills. DELETE closes only that session, cancels/drains
 its work, and removes its output. Event streams and pending requests keep it alive;
