@@ -45,6 +45,8 @@ export async function oauthFixture(
     refresh?: (fields: URLSearchParams) => Promise<Response | undefined>;
     deny?: boolean;
     challenge?: boolean;
+    resourceScopes?: readonly string[];
+    authorizationScopes?: readonly string[];
     mcp?: (request: Request) => Promise<Response | undefined>;
     unauthorized?: (request: Request) => void | Promise<void>;
   } = {},
@@ -61,6 +63,7 @@ export async function oauthFixture(
   let refreshes = 0;
   let exchanges = 0;
   let registrations = 0;
+  const registrationScopes: unknown[] = [];
   let rejectAccess = false;
   const requests: { path: string; headers: Headers; method: string }[] = [];
 
@@ -82,6 +85,9 @@ export async function oauthFixture(
         return Response.json({
           resource: new URL("/mcp", listener.url).href,
           authorization_servers: [listener.url.href],
+          ...(options.resourceScopes === undefined
+            ? {}
+            : { scopes_supported: options.resourceScopes }),
         });
       }
 
@@ -96,7 +102,7 @@ export async function oauthFixture(
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
           authorization_response_iss_parameter_supported: true,
-          scopes_supported: ["read", "write", "offline_access"],
+          scopes_supported: options.authorizationScopes ?? ["read", "write", "offline_access"],
         });
       }
 
@@ -114,6 +120,7 @@ export async function oauthFixture(
 
         redirectUri = body.redirect_uris[0];
         registrations++;
+        registrationScopes.push("scope" in body ? body.scope : undefined);
 
         return Response.json({ ...body, client_id: "cmg-test-client" }, { status: 201 });
       }
@@ -227,6 +234,7 @@ export async function oauthFixture(
     url: new URL("/mcp", listener.url).href,
     issuer: listener.url.href,
     requests,
+    registrationScopes,
     get refreshes() {
       return refreshes;
     },

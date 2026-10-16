@@ -322,8 +322,12 @@ cannot be interrupted. PKCE, callback state, and issuer validation
 protect the code exchange. Login uses the SDK's metadata, registration, and token
 helpers, not a Notion-specific OAuth implementation. Discovery probes the upstream
 without credentials for a `WWW-Authenticate` metadata URL, falling back to well-known
-discovery when none is advertised. Optional `oauth.scope` requests
-an explicit space-delimited scope; CMG does not infer a request for every advertised scope.
+discovery when none is advertised. Optional `oauth.scope` requests an explicit
+space-delimited scope. Otherwise, login requests the protected resource's advertised
+scopes, not every scope supported by the authorization server. `offline_access` is
+added when either advertises it. Registration and browser consent request the same
+scopes. To replace an existing incorrectly scoped registration, run
+`gw logout --server <name>`, then `gw login --server <name>`; login alone reuses registration.
 
 Serving is noninteractive: it loads the current OS user's saved credentials and
 refreshes them without prompting for browser consent. Missing or revoked authorization

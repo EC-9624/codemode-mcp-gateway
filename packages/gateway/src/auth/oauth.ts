@@ -25,6 +25,7 @@ export type OAuthDiscovery = {
   authorizationServerUrl: string;
   metadata: AuthorizationServerMetadata;
   resource: string | null;
+  resourceScopes: string[] | undefined;
 };
 
 /** Prepare one browser authorization attempt. The caller owns it and saves its completed grant. */
@@ -41,6 +42,20 @@ export async function authorize(
 
   const discovery = discovered.value;
   const previous = stored.value;
+
+  const scopes = new Set(
+    connection.scope?.split(/\s+/).filter(Boolean) ?? discovery.resourceScopes ?? [],
+  );
+
+  if (
+    discovery.resourceScopes?.includes("offline_access") ||
+    discovery.metadata.scopes_supported?.includes("offline_access")
+  )
+    scopes.add("offline_access");
+
+  // DCR defaults can differ from resource scopes. Register and request the same grant
+  // so consent cannot be constrained by an incompatibly scoped client registration.
+  const scope = scopes.size === 0 ? undefined : [...scopes].join(" ");
 
   const reusable =
     previous !== undefined &&
@@ -84,7 +99,7 @@ export async function authorize(
           response_types: ["code"],
           token_endpoint_auth_method: "none",
         },
-        ...(connection.scope === undefined ? {} : { scope: connection.scope }),
+        ...(scope === undefined ? {} : { scope }),
         fetchFn: authFetch(signal),
       });
     } catch (cause) {
@@ -117,10 +132,6 @@ export async function authorize(
     if (!saved.ok) return saved;
   }
 
-  // Request no inferred all-scopes grant. offline_access is added only when advertised.
-  const scopes = new Set(connection.scope?.split(/\s+/).filter(Boolean) ?? []);
-  if (discovery.metadata.scopes_supported?.includes("offline_access")) scopes.add("offline_access");
-
   let authorization;
   try {
     authorization = await startAuthorization(discovery.authorizationServerUrl, {
@@ -128,7 +139,7 @@ export async function authorize(
       clientInformation: record.client,
       redirectUrl: listener.redirectUri,
       state,
-      ...(scopes.size === 0 ? {} : { scope: [...scopes].join(" ") }),
+      ...(scope === undefined ? {} : { scope }),
       ...(discovery.resource === null ? {} : { resource: discovery.resource }),
     });
   } catch (cause) {
@@ -351,6 +362,7 @@ export async function discoverOAuth(
     authorizationServerUrl: info.authorizationServerUrl,
     metadata,
     resource,
+    resourceScopes: info.resourceMetadata?.scopes_supported,
   });
 }
 

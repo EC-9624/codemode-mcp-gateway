@@ -55,6 +55,7 @@ describe("login", () => {
       tokens: { access_token: "access-1" },
     });
     expect(upstream.registrations).toBe(1);
+    expect(upstream.registrationScopes).toEqual(["read offline_access"]);
     expect(upstream.exchanges).toBe(1);
     expect(upstream.requests.some((request) => request.path === "/metadata")).toBe(true);
     expect(
@@ -62,6 +63,65 @@ describe("login", () => {
         .filter((request) => request.path !== "/mcp")
         .every((request) => !request.headers.has("authorization")),
     ).toBe(true);
+  });
+
+  test.each([
+    {
+      name: "resource scopes when no explicit scope is configured",
+      resourceScopes: ["read:jira-work", "offline_access"],
+      authorizationScopes: [],
+      oauth: {},
+      expectedScope: "read:jira-work offline_access",
+    },
+    {
+      name: "explicit scopes instead of broader resource scopes",
+      resourceScopes: ["read", "write", "offline_access"],
+      authorizationScopes: [],
+      oauth: { scope: "read" },
+      expectedScope: "read offline_access",
+    },
+    {
+      name: "only offline access when the authorization server advertises broader scopes",
+      resourceScopes: undefined,
+      authorizationScopes: ["read", "write", "offline_access"],
+      oauth: {},
+      expectedScope: "offline_access",
+    },
+    {
+      name: "no scope when neither configuration nor discovery supplies one",
+      resourceScopes: undefined,
+      authorizationScopes: [],
+      oauth: {},
+      expectedScope: undefined,
+    },
+  ])("uses $name consistently for registration and consent", async (scenario) => {
+    await using upstream = await oauthFixture({
+      ...(scenario.resourceScopes === undefined ? {} : { resourceScopes: scenario.resourceScopes }),
+      authorizationScopes: scenario.authorizationScopes,
+    });
+
+    await using config = await configuration({
+      type: "remote",
+      url: upstream.url,
+      oauth: scenario.oauth,
+    });
+
+    const memory = memoryCredentials();
+    const consentScopes: (string | null)[] = [];
+
+    const result = await login(config.path, {
+      store: () => memory.store,
+      lockDirectory: config.lockDirectory,
+      authorize: async (url) => {
+        consentScopes.push(url.searchParams.get("scope"));
+        await fetch(await upstream.authorize(url));
+      },
+    });
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(upstream.registrationScopes).toEqual([scenario.expectedScope]);
+    expect(consentScopes).toEqual([scenario.expectedScope ?? null]);
+    expect(memory.record?.authorization.status).toBe("authorized");
   });
 
   test("reuses registration and its callback URI on a later login", async () => {
