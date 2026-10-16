@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
-import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
+import { CodeExecutor, createDiscoveryTools, type ExecutionReport } from "@cmg/codemode";
+import { responseText } from "../examples/output.ts";
 import { z } from "zod";
 
 const waves = Number(process.argv[2] ?? 5);
@@ -184,8 +185,18 @@ async function measure(scenario: Scenario) {
     maxConcurrentExecutions: scenario.limit,
   });
 
+  const reports = new Map<string, ExecutionReport>();
+  let sequence = 0;
+
   await using gateway = await connect(
-    createCodemodeServer({ execute: (code, options) => executor.execute(code, options) }),
+    createCodemodeServer({
+      execute: async (code, options) => {
+        const report = await executor.execute(code, options);
+        reports.set(code, report);
+
+        return report;
+      },
+    }),
   );
 
   const samples: Sample[] = [];
@@ -198,13 +209,16 @@ async function measure(scenario: Scenario) {
 
       const start = performance.now();
 
+      const code = `${step.code}\n// diagnostic request ${++sequence}`;
+
       const response = await gateway.client.callTool({
         name: "execute",
-        arguments: { code: step.code },
+        arguments: { code },
       });
 
       const elapsedMs = performance.now() - start;
-      const report = envelope.parse(response.structuredContent);
+      const report = envelope.parse(reports.get(code));
+      reports.delete(code);
       if (!report.result.ok) {
         strictEqual(response.isError, true);
         strictEqual(report.result.error.maximum, scenario.limit);
@@ -219,8 +233,9 @@ async function measure(scenario: Scenario) {
         return;
       }
 
-      strictEqual(response.isError, false);
+      strictEqual(response.isError, undefined);
       deepStrictEqual(report.result.value, step.expected);
+      deepStrictEqual(JSON.parse(responseText(response)), step.expected);
       deepStrictEqual(
         report.calls.map((call) => call.name),
         step.calls,

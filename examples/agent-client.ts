@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { waitForServer } from "./readiness.ts";
+import { responseText } from "./output.ts";
 
 const client = new Client({ name: "cmg-agent-example", version: "0.0.0" });
 
@@ -33,5 +34,5 @@ for (const code of [
   'return await tools.describeTool({ name: "math.add" });',
   'return (await tools["math.add"]({ a: 2, b: 3 })).structuredContent.sum;',
 ]) {
-  console.log((await client.callTool({ name: "execute", arguments: { code } })).structuredContent);
+  console.log(responseText(await client.callTool({ name: "execute", arguments: { code } })));
 }

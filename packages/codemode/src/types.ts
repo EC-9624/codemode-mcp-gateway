@@ -80,7 +80,10 @@ export type SandboxOptions = {
   maxStackSizeBytes?: number;
   /** Submitted source in UTF-8 bytes. Defaults to 256 KiB. */
   maxSourceBytes?: number;
-  /** Final JSON return value or script-error message in UTF-8 bytes. Defaults to 256 KiB. */
+  /**
+   * Final JSON return value or script-error message in UTF-8 bytes. Defaults to 256 KiB.
+   * Checked after conversion; not a cap on temporary serialization memory.
+   */
   maxOutputBytes?: number;
   /** Total admitted calls, including queued calls and failed responses. Defaults to 100. */
   maxToolCalls?: number;

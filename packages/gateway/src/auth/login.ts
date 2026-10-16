@@ -99,6 +99,8 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
 
   if (signal.aborted) return oauthFailure(signal.reason, signal);
 
+  // Consent happens without holding the lease. Only commit against the snapshot
+  // that started this attempt, so a concurrent login, logout, or refresh wins.
   if (!isDeepStrictEqual(current.value, attempt.previous)) {
     return AuthResult.failure(
       "required",

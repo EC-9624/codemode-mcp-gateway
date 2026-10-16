@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { gatewayProcess } from "./support/gateway-process.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { responseValue } from "./support/output.ts";
 
 describe("CMG HTTP upstream", () => {
   test("executes upstream calls using authentication supplied by the host environment", async () => {
@@ -32,10 +33,7 @@ describe("CMG HTTP upstream", () => {
       },
     });
 
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: 5 },
-      calls: [{ callId: 1, name: "test.add", status: "completed" }],
-    });
+    expect(responseValue(response)).toBe(5);
     expect(app.stderr).not.toContain("synthetic-token");
   }, 10_000);
 
@@ -148,9 +146,7 @@ describe("CMG HTTP upstream", () => {
       arguments: { code: 'return (await tools["test.wait"]({})).structuredContent;' },
     });
 
-    expect(response.structuredContent).toMatchObject({
-      result: { ok: true, value: { recovered: true } },
-    });
+    expect(responseValue(response)).toEqual({ recovered: true });
     expect(upstream.transport.sessionId).toBeDefined();
   }, 10_000);
 

@@ -73,9 +73,13 @@ return (await tools["math.add"]({ a: 2, b: 3 })).structuredContent.sum;
 For additional matches, repeat the query with `offset: nextOffset` until it is null.
 `limit` changes the page size; see the [discovery contract](docs/reference.md#catalog-and-discovery).
 
-Library and gateway reports contain the final result and compact call summaries.
-Scripts receive complete tool results; call summaries store no response bodies or
-arguments. The [gateway README](packages/gateway/README.md) covers configuration,
+The library keeps full host-side execution reports; the gateway sends only the returned
+value or useful error text, with no bookkeeping envelope or `structuredContent`.
+Above 40,000 UTF-8 bytes it shows a beginning/end preview and saves full output to
+a private local file. Read it with native harness tools on the shared filesystem.
+Files last until gateway shutdown; there is no custom artifact tool, TTL, or total
+storage quota. Gateway hard output defaults to 16 MiB; the library keeps 256 KiB.
+Scripts still receive complete upstream tool results. The [gateway README](packages/gateway/README.md) covers configuration,
 authentication headers, process ownership, and shutdown. HTTP support is upstream
 only; remote agent hosting is not implemented.
 
@@ -124,7 +128,9 @@ with one discovery-query clarification; the guide records both the readiness iss
 and the successful checks.
 
 Builds emit ESM JavaScript and declarations into each package's `dist/`, including
-the codemode worker. Dependencies are not bundled. Export maps expose only package
+the codemode worker. The patched QuickJS SDK JavaScript is bundled so standalone
+consumers receive the memory-growth fix; WASM variants and other dependencies stay
+external. See [patch notes](patches/README.md). Export maps expose only package
 roots; repository scripts use the `development` condition, while installed consumers
 use compiled exports. Relative source imports use `.ts`; TypeScript rewrites them
 to JavaScript extensions during the build.
@@ -164,8 +170,9 @@ Both commands emit JSON lines. Live `elapsedMs` measures each client request thr
 response validation; startup measures process launch through MCP initialization and upstream readiness.
 Shutdown measures EOF through observed child close, requiring exit code zero and no
 signal. A 10-second shutdown watchdog makes forced termination a failure.
-`responseJsonBytes` counts UTF-8 serialized agent-facing MCP JSON, including its text
-and structured representations; it is not wire size. `upstreamJsonCharacters` counts
+`responseJsonBytes` counts UTF-8 serialized agent-facing MCP JSON, not wire size.
+Older measurements below included both text and structured representations.
+`upstreamJsonCharacters` counts
 UTF-16 code units of serialized provider JSON inside the guest, not bytes.
 
 The local baseline accepts 2–200 runs per workload (default 20), using public
@@ -314,7 +321,7 @@ schema validation, tool dispatch, worker execution, and result serialization.
 Each workflow discovers tools, describes their schemas, searches, then fetches two
 64-KiB documents in parallel and returns only IDs and character counts. Search waits
 150 ms, fetch waits 300 ms, and the client pauses 100 ms between execution requests.
-Every successful result and call summary is validated; unexpected tool, execution,
+Every successful result and host-side call summary is validated; unexpected tool, execution,
 transport, or validation failures fail the diagnostic. Capacity rejections are
 measured, end that workflow, and are never retried.
 
@@ -578,9 +585,9 @@ supports retaining the shorter prompt, without establishing a general latency or
 efficiency advantage. The gateway exited naturally with code 0, no signal, and no
 pending requests; its temporary OpenCode configuration was removed.
 
-#### Why large document returns disappear from the preview
+#### Why large document returns disappeared from the preview (historical response format)
 
-CMG's [`response()`](packages/mcp/src/server.ts) emits the complete report both as
+At measurement time, CMG's MCP response emitted the complete report both as
 `structuredContent` and as one compact JSON text line. In the inspected local
 OpenCode source (`bcf23b6775`), `packages/core/src/tool-output.ts` defaults to 2,000
 lines / 50 KiB and retains only whole lines within that byte budget. A first line
@@ -726,6 +733,16 @@ Completed slices:
 30. Library deadlines are unset by default and guest memory defaults to 256 MiB.
     Tool calls beyond the configured active concurrency queue in invocation order
     within the total-call budget; gateway deadlines remain 5/10 seconds.
+31. Agent-facing MCP responses contain only returned values/error text, with `isError`
+    only on failure. Gateway output above 40,000 UTF-8 bytes spills to private temporary
+    files with head/tail previews and native-tool paths; hard output defaults to 16 MiB.
+32. A pinned QuickJS SDK memory-view patch fixes async results that grow WASM memory.
+    The patched SDK JavaScript ships in codemode's build, with standalone-install
+    regression coverage and bundled MIT notices; WASM variants remain external.
+
+The byte-forwarding observer now records only MCP outcomes, request/session IDs,
+overlap, and timings; execution categories and call counts are no longer exposed
+on the wire. In-process diagnostics validate execution reports directly on the host.
 
 Next: continue ordinary multi-agent use and longer runs before revisiting
 defaults. Additional limits remain paused. Runtime-level follow-up on the

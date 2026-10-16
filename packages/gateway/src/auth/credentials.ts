@@ -66,7 +66,10 @@ export type OAuthConnection = {
   scope?: string;
 };
 
-/** A scoped store, not a registry of other users' credentials. */
+/**
+ * A scoped store, not a registry of other users' credentials. Saves replace complete
+ * snapshots; concurrent readers must not observe partially updated grants.
+ */
 export type CredentialStore = {
   load(): Promise<AuthResult<Credentials | undefined>>;
   save(value: Credentials): Promise<AuthResult<void>>;

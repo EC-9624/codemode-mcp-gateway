@@ -106,7 +106,7 @@ describe("application configuration", () => {
       memoryLimitBytes: 256 * 1024 * 1024,
       maxStackSizeBytes: 1024 * 1024,
       maxSourceBytes: 256 * 1024,
-      maxOutputBytes: 256 * 1024,
+      maxOutputBytes: 16 * 1024 * 1024,
       maxToolCalls: 100,
       maxConcurrentToolCalls: 10,
       maxConcurrentExecutions: 4,

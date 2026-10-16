@@ -4,7 +4,8 @@
   "description": "Run JavaScript with application-supplied tools in worker-backed QuickJS on Bun",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -18,13 +19,17 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun ../../scripts/build-codemode-runtime.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun --conditions=development test ./tests",
     "check": "bun run typecheck && oxlint --deny-warnings . && oxfmt --check . && bun run test",
     "prepack": "bun run build"
   },
   "dependencies": {
+    "@jitl/quickjs-wasmfile-debug-asyncify": "0.32.0",
+    "@jitl/quickjs-wasmfile-debug-sync": "0.32.0",
+    "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@standard-schema/spec": "1.1.0",
     "acorn": "8.19.0",
     "quickjs-emscripten": "0.32.0"

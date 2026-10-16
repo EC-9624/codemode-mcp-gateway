@@ -95,6 +95,8 @@ export async function acquireLease(
     return AuthResult.success(undefined);
   };
 
+  // Ownership may be lost during an awaited store operation. Report that loss even
+  // if the operation succeeds; this check cannot cancel or roll back the store write.
   async function guarded<T>(operation: () => Promise<AuthResult<T>>): Promise<AuthResult<T>> {
     const before = check();
     if (!before.ok) return before;

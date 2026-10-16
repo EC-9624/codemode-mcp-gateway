@@ -56,7 +56,7 @@ export type ToolSearchPage = {
 
 export type ToolCatalog = {
   readonly tools: Readonly<Record<string, SandboxTool>>;
-  /** Rank distinct case-insensitive name matches first, then name/description matches; stable ties. */
+  /** Rank by distinct query terms found in names, then names/descriptions; case-insensitive, stable ties. */
   search(query: string): ToolDescription[];
   /** Exact-name lookup; unknown names return undefined without invoking a tool. */
   describe(name: string): ToolDescription | undefined;

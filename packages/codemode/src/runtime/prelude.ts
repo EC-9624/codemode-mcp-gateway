@@ -1,6 +1,8 @@
 // Submitted code is compiled separately: it must not share this closure's dispatcher or resolvers.
 export const PRELUDE_SOURCE = `((dispatch, toolNamesJson) => {
   "use strict";
+  // Capture bridge dependencies before submitted code can replace guest globals or
+  // prototype methods; later mutations must not rewrite the private call protocol.
   const stringify = JSON.stringify;
   const parse = JSON.parse;
   const create = Object.create;

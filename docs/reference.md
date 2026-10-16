@@ -731,23 +731,31 @@ availability snapshot, including failed/unauthenticated entries with no tools.
 
 ### Responses
 
-Both `structuredContent` and a JSON text content block contain a `CodemodeResponse`:
+One text content block contains only the returned value or useful error message.
+Strings stay plain; other values use compact JSON. The adapter omits `structuredContent`,
+call summaries, and the execution envelope; the full `ExecutionReport` stays host-side.
+On success, `isError` is omitted. On failure, `isError: true` is included.
+Inspect upstream `isError` inside JavaScript when its outcome matters: catching an
+upstream failure and returning normally is still successful execution.
 
-- `result`: the sandbox result, or a controlled failure with `kind: "sandbox"` for
-  infrastructure errors.
-- `calls`: invocation-ordered `{ callId, name, status: "completed" }` or
-  `{ callId, name, status: "interrupted", reason }` summaries.
+The optional host `formatOutput(text)` callback supplies presentation without
+changing the executor report. Server shutdown awaits the callback as well as the
+executor; its shutdown guard prevents late SDK-validated requests from starting work.
+Unexpected formatting errors produce a controlled output-delivery error and private
+diagnostics, never a script replay.
 
-The adapter projects only public summary fields from the supplied executor, omitting
-additional fields, private causes, and stacks. Completed means a response was
-serialized; an upstream `isError` can still occur in a
-completed call. Inspect the upstream response within JavaScript when its outcome matters.
-Final unsuccessful results set the outer MCP `isError: true`. A script that handles
-an upstream failure and returns normally is still successful.
+The gateway supplies pi-style spilling above 40,000 UTF-8 bytes: it saves complete
+rendered output and returns a UTF-8-safe head/tail preview with a full local path.
+Files use exclusive creation and owner-only permissions in a private temp directory;
+shutdown removes that directory only after tracked requests/presentation finish.
+The harness reads the file with its native tools on the shared filesystem. No custom
+artifact tool, TTL, aggregate storage quota, or crash-leftover sweep is provided.
+Save errors keep the preview and original success/failure outcome with a save-failure
+notice. The gateway defaults to a 16 MiB hard output limit; the library keeps 256 KiB.
 
 Infrastructure diagnostics are delivered to the SDK server's host-side `onerror`
 callback with their original cause. If that synchronous callback throws, the
-controlled public failure and call summaries are preserved; the callback's private
+controlled public failure is preserved; the callback's private
 message is not sent to the MCP client. Cancellation of an MCP request can prevent
 delivery of its final response even though worker cleanup still completes.
 

@@ -226,7 +226,10 @@ This package does not own tool connections, MCP setup, process signals, or an ag
 ## Distribution
 
 The provisional package name has not been published. Builds emit ESM JavaScript,
-declarations, and the worker into `dist/` without bundling dependencies. Installed
+declarations, and the worker into `dist/`. The QuickJS SDK JavaScript is bundled
+with a [memory-growth fix](../../patches/README.md); WASM variants and other
+dependencies remain external. This ensures the fix reaches standalone consumers
+without lifecycle scripts or consumer patches. See `THIRD_PARTY_NOTICES.md`. Installed
 consumers use compiled exports; repository scripts select source with the
 `development` condition. Node compatibility is not supported.
 

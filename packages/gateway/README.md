@@ -199,19 +199,43 @@ Use bracket notation for exact qualified names. Local discovery calls share the 
 
 ## Results and failures
 
-The response is emitted as structured content and JSON text. It includes compact
-call summaries without tool bodies, matching the executor's report format. Upstream `isError` is data the script
-must inspect; outer MCP `isError` indicates that the final execution failed.
+The response contains only the returned value: strings as plain text, other values
+as compact JSON. There is no `structuredContent`, report envelope, or call list.
+`isError` is omitted on success and included as `true` on failure. Upstream
+`isError` remains data that scripts must inspect; catching a failure and returning
+normally still succeeds.
 
-Script errors, deadlines, cancellation, and execution limits appear in `result`.
-Infrastructure failures use a controlled `sandbox` error; private diagnostics stay
-host-side. MCP protocol errors reject in the script with the original tool name,
+Script errors, deadlines, cancellation, and execution limits show their useful
+error messages. Infrastructure failures show `Sandbox execution failed.`; private
+diagnostics stay host-side. MCP protocol errors reject in the script with the original tool name,
 numeric code, and message, including SDK-generated output-schema errors. Error data
 and stacks are excluded; messages are public and are not redacted. Unknown exceptions
 still reject as `Host tool failed.`. For both cases, `cmg` writes the qualified tool
 name, call ID, and original error name/message/code to stderr as one JSON line.
-Cancellation cannot roll back upstream side effects, and a completed
-summary does not establish safe retry. See [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
+Cancellation cannot roll back upstream side effects. See
+[execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
+
+### Large output
+
+Output above **40,000 UTF-8 bytes** is saved in full to a private local `.txt` file.
+The agent sees a UTF-8-safe beginning/end preview, a truncation notice, and an
+absolute `[Full output: /path/to/file.txt]` reference, all within the inline budget.
+Use the harness's native file or shell tools to inspect it; there is no artifact
+retrieval tool. Long single-line JSON may need shell-based parsing or filtering.
+The harness and gateway must share filesystem access and permission to read the path.
+
+Each gateway lazily creates a `0700` OS temp directory and writes random filenames
+exclusively with `0600` permissions. Files remain available across executions until
+gateway shutdown, which waits for writes before removing its directory. Crashes can
+leave files behind. This slice has no TTL, storage quota, or startup sweep; repeated
+large output can accumulate disk usage. Save failures retain the preview and original
+execution outcome, add `[Full output could not be saved.]`, and report diagnostics
+host-side. Scripts are never automatically replayed.
+
+The gateway's default hard final-output limit is **16 MiB**, configurable with
+`sandbox.maxOutputBytes`. Above that limit, execution still reports an output-limit
+error. The reusable library keeps its **256 KiB** default; this is not streaming
+and does not bound temporary allocations or aggregate memory.
 
 ## Headers and execution policy
 
@@ -233,7 +257,8 @@ Header templates expand host environment variables before connecting. Missing
 variables mark that server failed before contacting it. Static headers do not enable OAuth or store credentials.
 Optional `sandbox` settings configure the fixed QuickJS policy; app defaults use
 a 5-second guest deadline and 10-second total deadline, unchanged by the library's
-unset deadlines. Guest memory defaults to 256 MiB. Other defaults come from codemode.
+unset deadlines. Guest memory defaults to 256 MiB and hard final output to 16 MiB.
+Other defaults come from codemode.
 
 For example, configure execution capacity and total tool calls without request overrides:
 
@@ -250,8 +275,8 @@ initialized notification, and 15 seconds
 for discovery. Configuration is loaded once; recovery republishes catalog snapshots.
 
 Each gateway's `maxConcurrentExecutions` defaults to 4 across all its MCP instances, including
-worker cleanup. Excess requests receive `isError: true` with `result.error.resource:
-"executions"` and empty calls; they are not queued or retried. Separate gateways have separate budgets.
+worker cleanup. Excess requests receive `isError: true` and an execution-capacity
+message; they are not queued or retried. Separate gateways have separate budgets.
 The per-execution `maxConcurrentToolCalls` limit remains independent: ten active
 calls by default, with additional calls queued in invocation order. Queued calls
 consume the total-call budget and their wait counts toward execution deadlines.
@@ -427,7 +452,7 @@ configuration -> independent upstreams -> catalog/status revisions
   -> combined tool/discovery snapshots -> one fixed-policy CodeExecutor -> MCP execute server
 
 agent code -> worker/guest -> host tool adapter -> upstream MCP
-           <- processed result and compact call summaries
+           <- returned value/error text, or saved-output preview and path
 ```
 
 Qualified upstream names cannot overwrite `searchTools` or `describeTool`.

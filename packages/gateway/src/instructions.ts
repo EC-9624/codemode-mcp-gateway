@@ -11,7 +11,7 @@ export const executionInstructions = `Run JavaScript that discovers and calls to
 ## Runtime
 The code is an async function body in a fresh QuickJS sandbox: top-level await and return work. Use JavaScript, not TypeScript. State does not persist between executions.
 Only injected tools provide external access; fetch, filesystem, process, and imports are unavailable. Execution and tool-call limits are host-owned; discovery calls count toward the tool-call budget.
-The response contains the returned value or execution error, plus compact call summaries. Completed calls are not rolled back when a later call fails; do not blindly replay a script that may have performed writes.
+The response contains only the returned value or error message. Large output shows a beginning/end preview and a local file path; use the caller's native file or shell tools to inspect the full output. The caller and gateway must share filesystem access. Output files last until gateway shutdown. Tool calls are not rolled back when a later call fails; do not blindly replay a script that may have performed writes.
 
 ## Availability
 searchTools also accepts an optional server filter and returns a servers availability snapshot. Inspect it when expected tools are missing; healthy servers remain usable while others connect or recover.

@@ -57,10 +57,7 @@ const sum = await agent.callTool({
   arguments: { code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" },
 });
 
-deepEqual(sum.structuredContent, {
-  result: { ok: true, value: 5 },
-  calls: [{ callId: 1, name: "add", status: "completed" }],
-});
+deepEqual(sum, { content: [{ type: "text", text: "5" }] });
 
 const binary = process.argv[2];
 const config = process.argv[3];
@@ -94,9 +91,7 @@ while (true) {
     { signal: readySignal },
   );
 
-  const state = z
-    .object({ result: z.object({ ok: z.literal(true), value: z.string() }) })
-    .parse(ready.structuredContent).result.value;
+  const state = ready.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
 
   if (state === "connected") break;
 
@@ -109,10 +104,7 @@ const response = await cli.callTool({
   arguments: { code: 'return (await tools["math.add"]({ a: 20, b: 22 })).structuredContent.sum;' },
 });
 
-deepEqual(response.structuredContent, {
-  result: { ok: true, value: 42 },
-  calls: [{ callId: 1, name: "math.add", status: "completed" }],
-});
+deepEqual(response, { content: [{ type: "text", text: "42" }] });
 
 // Catalog revisions and worker startup must also work through compiled package exports.
 await using named = new Gateway(
@@ -145,10 +137,4 @@ const combined = await namedClient.callTool({
   },
 });
 
-deepEqual(combined.structuredContent, {
-  result: { ok: true, value: [3, 7] },
-  calls: [
-    { callId: 1, name: "one.add", status: "completed" },
-    { callId: 2, name: "two.add", status: "completed" },
-  ],
-});
+deepEqual(combined, { content: [{ type: "text", text: "[3,7]" }] });

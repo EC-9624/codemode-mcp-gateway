@@ -145,6 +145,8 @@ export class OAuthSession implements AsyncDisposable {
 
     const authorization = checked.value.authorization;
     const expires = authorization.tokens.expires_in;
+    // A delayed 401 for an older token must not rotate the current grant again.
+    // Refresh expiring tokens early to leave headroom for the outbound request.
     if (
       (!force || (rejected !== undefined && rejected !== authorization.tokens.access_token)) &&
       (expires === undefined || Date.now() + 30_000 < authorization.receivedAt + expires * 1_000)
@@ -217,6 +219,8 @@ export class OAuthSession implements AsyncDisposable {
 
     const record = checked.value;
     const authorization = record.authorization;
+    // Another process may have refreshed while we waited for the lease. Reuse its
+    // token instead of exchanging the same rotating refresh grant twice.
     if (authorization.tokens.access_token !== staleToken) {
       return AuthResult.success(authorization.tokens.access_token);
     }

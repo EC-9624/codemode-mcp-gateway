@@ -14,6 +14,7 @@ import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { type Configuration, type ServerConfiguration } from "./config.ts";
 import { connectUpstream, UpstreamError } from "./upstream.ts";
 import { executionInstructions } from "./instructions.ts";
+import { OutputFiles } from "./output.ts";
 import { GatewayError } from "./errors.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import {
@@ -62,6 +63,7 @@ export class Gateway implements AsyncDisposable {
   private readonly shutdown = new AbortController();
   private readonly entries: Entry[];
   private readonly executor: CodeExecutor;
+  private readonly output = new OutputFiles();
   private readonly leases = new Set<Lease>();
   private readonly attempts = new Map<string, Promise<void>>();
   private readonly servers = new Set<McpServer>();
@@ -132,6 +134,7 @@ export class Gateway implements AsyncDisposable {
     const server = createCodemodeServer({
       execute: (code, options) => this.execute(code, options),
       description: executionInstructions,
+      formatOutput: (text) => this.output.format(text, (error) => server.server.onerror?.(error)),
     });
 
     this.servers.add(server);
@@ -505,6 +508,8 @@ export class Gateway implements AsyncDisposable {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
     const snapshot = this.snapshot();
+    // Recovery may replace connections mid-execution. Keep this snapshot's upstreams
+    // alive until executor cleanup finishes, even after they retire from discovery.
     for (const lease of snapshot.leases) lease.users++;
 
     try {
@@ -543,8 +548,16 @@ export class Gateway implements AsyncDisposable {
     if (this.timer !== undefined) clearInterval(this.timer);
 
     const errors: unknown[] = [];
+    // Server close drains execution and presentation; deleting output files earlier
+    // could race a formatter still writing its result.
     const results = await Promise.allSettled([...this.servers].map((server) => server.close()));
     for (const result of results) if (result.status === "rejected") errors.push(result.reason);
+
+    try {
+      await this.output.close();
+    } catch (cause) {
+      errors.push(cause);
+    }
 
     const attempts = await Promise.allSettled([
       ...(this.starting === undefined ? [] : [this.starting]),
