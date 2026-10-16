@@ -5,8 +5,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type Gateway } from "./gateway.ts";
-import { type ClientRegistration } from "./clients.ts";
-import { ServiceAuthentication } from "./service-auth.ts";
+import { GatewayError } from "./errors.ts";
+import { type HttpStatus } from "./status.ts";
 
 const credential = z
   .string()
@@ -14,19 +14,22 @@ const credential = z
   .max(256)
   .regex(/^[A-Za-z0-9_-]+$/);
 
-const baseOptions = z.strictObject({
+const optionsSchema = z.strictObject({
   port: z.number().int().min(0).max(65535),
   orphanGraceMs: z.number().int().positive().default(60_000),
-  configurationId: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/)
-    .optional(),
+  bearerToken: credential,
 });
 
-const optionsSchema = z.union([
-  baseOptions.extend({ bearerToken: credential }),
-  baseOptions.extend({ serviceKey: credential }),
-]);
+/** CLI credentials are user-owned: never generate, persist, or render the token. */
+export function httpToken(): string {
+  const parsed = credential.safeParse(process.env.GW_HTTP_TOKEN);
+  if (!parsed.success)
+    throw new GatewayError(
+      "Set GW_HTTP_TOKEN to a private bearer token of 32–256 letters, digits, underscores, or hyphens. Use the same token in your MCP client configuration.",
+    );
+
+  return parsed.data;
+}
 
 export type HttpOptions = z.input<typeof optionsSchema>;
 export type HttpListenResult =
@@ -53,11 +56,8 @@ export class GatewayHttpServer implements AsyncDisposable {
   private readonly owned = new Set<Session>();
   private readonly retiring = new Set<Promise<void>>();
   private readonly tokenHash: Buffer;
-  private readonly authentication: ServiceAuthentication | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly started = performance.now();
-  private readonly configurationId: string | undefined;
-  private clients: ClientRegistration[] = [];
   private closing: Promise<void> | undefined;
   private stopped = false;
   private readonly fault = Promise.withResolvers<unknown>();
@@ -66,14 +66,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     private readonly gateway: Gateway,
     options: z.output<typeof optionsSchema>,
   ) {
-    this.authentication =
-      "serviceKey" in options ? new ServiceAuthentication(options.serviceKey) : undefined;
-    this.tokenHash = digest(
-      "serviceKey" in options
-        ? ServiceAuthentication.bearer(options.serviceKey, this.instanceId)
-        : options.bearerToken,
-    );
-    this.configurationId = options.configurationId;
+    this.tokenHash = digest(options.bearerToken);
     this.listener = Bun.serve({
       hostname: "127.0.0.1",
       port: options.port,
@@ -108,7 +101,7 @@ export class GatewayHttpServer implements AsyncDisposable {
         error: {
           kind: "invalid-options",
           message:
-            "Invalid HTTP options: use a valid port and a private bearer token of at least 32 characters.",
+            "Invalid HTTP options: use a valid port and a private bearer token of 32–256 letters, digits, underscores, or hyphens.",
         },
       };
 
@@ -144,11 +137,6 @@ export class GatewayHttpServer implements AsyncDisposable {
     return this.fault.promise;
   }
 
-  /** CLI startup status only; the HTTP host itself never edits native client configs. */
-  setClientRegistrations(results: ClientRegistration[]): void {
-    this.clients = [...results];
-  }
-
   close(): Promise<void> {
     this.stopped = true;
     this.closing ??= Promise.resolve().then(() => this.dispose());
@@ -174,15 +162,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     const authorization = request.headers.get("authorization");
     const submitted = authorization?.match(/^Bearer +([A-Za-z0-9_-]+)$/i)?.[1];
 
-    const signed =
-      url.pathname === "/status" &&
-      request.method === "GET" &&
-      this.authentication?.accepts(url, authorization) === true;
-
-    if (
-      !signed &&
-      (submitted === undefined || !timingSafeEqual(digest(submitted), this.tokenHash))
-    ) {
+    if (submitted === undefined || !timingSafeEqual(digest(submitted), this.tokenHash)) {
       return new Response("Unauthorized", {
         status: 401,
         headers: { "www-authenticate": 'Bearer realm="codemode-mcp-gateway"' },
@@ -192,27 +172,16 @@ export class GatewayHttpServer implements AsyncDisposable {
     if (this.stopped) return new Response("Service is stopping", { status: 503 });
 
     if (url.pathname === "/status" && request.method === "GET") {
-      const body = JSON.stringify({
+      return Response.json({
         service: {
           ready: true,
           pid: process.pid,
           instanceId: this.instanceId,
           uptimeMs: Math.round(performance.now() - this.started),
-          configurationId: this.configurationId,
         },
         sessions: this.sessions.size,
         upstreams: this.gateway.status(),
-        clients: this.clients,
-      });
-
-      return new Response(body, {
-        headers: {
-          "content-type": "application/json",
-          ...(signed && authorization !== null && this.authentication !== undefined
-            ? { "x-cmg-status-signature": this.authentication.response(url, authorization, body) }
-            : {}),
-        },
-      });
+      } satisfies HttpStatus);
     }
 
     if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });

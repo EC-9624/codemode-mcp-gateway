@@ -1,199 +1,150 @@
-# Local standalone installation
+# Local deployment
 
 The product/MCP name is **codemode-mcp-gateway**; the executable is **`gw`**.
-Library APIs use the scoped package imports:
+It requires Bun **1.4.3**. Installation, process supervision, and MCP client
+configuration are user responsibilities. There is no custom installer, updater,
+rollback manager, or `gw service` command. Nothing is published.
 
-```ts
-import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
-import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
-import { Gateway } from "codemode-mcp-gateway";
-```
-
-This is a private local installation, not a release or a single-file native binary.
-It requires Bun 1.4.3 and runs installed ESM, its worker, bundled SDK JavaScript,
-and external dependencies. One persistent macOS LaunchAgent owns the gateway;
-Codex and Claude connect directly using Streamable HTTP MCP. No bridge is used.
-
-## Build, verify, and activate
+## Run from the checkout or a built package
 
 ```sh
-bun run install:local
-gw service install
-gw service status --json
+bun install --frozen-lockfile --ignore-scripts
+bun run gw check --config examples/multi.json --json
+# Supply GW_HTTP_TOKEN from a private environment before HTTP serving.
+bun run gw serve --config examples/multi.json
 ```
 
-The installer copies current tracked and nonignored untracked source to a disposable
-directory, installs the frozen lockfile with scripts disabled, explicitly builds,
-and packs all three packages. It installs the tarballs with local overrides into:
-
-```text
-~/.local/share/codemode-mcp-gateway/installs/<revision>-<timestamp>/
-```
-
-The candidate archives pass the existing isolated-consumer checks, including
-declarations, real worker execution/cancellation, MCP composition, and the installed
-`gw` executable. Only then does an atomic symlink replacement activate `current`.
-The build installer never restarts clients or publishes anything. `gw service install`
-separately registers/starts the user LaunchAgent. Earlier builds stay
-available for running clients and rollback. Source/build scratch files are removed;
-the checkout's `dist/` is not needed at runtime or populated by this command.
-`installation.json` records the source revision, dirty-tree flag, Bun version, and
-install time; dirty source is included rather than silently installing old HEAD.
-
-The personal dotfiles repository manages `~/.local/bin/gw`, which invokes Bun and
-`current/node_modules/codemode-mcp-gateway/dist/cli.js`. The installer itself does not
-overwrite a user's launcher, configuration, or credentials. This is not `bun link`:
-subsequent source edits do not change an installed gateway until explicitly rebuilt.
-
-## Configuration and clients
-
-Default configuration is now `~/.config/codemode-mcp-gateway/config.json`, or
-`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`. Explicit `--config` still wins.
-This replaces the old `cmg` CLI/default config path; library package names,
-credential identity, and credential-lock storage are unchanged. Existing configs
-can still be selected explicitly; they are not deleted or silently migrated.
-
-Personal dotfiles configure `service.port: 4791`, New Relic, Metabase, Notion, and Jira (via Atlassian),
-with no gateway tool allowlist. Provider-side OAuth grants still govern access.
-New Relic and Metabase request their prior read/query scopes. Atlassian MCP can
-advertise non-Jira tools as well. No old OAuth credentials are copied.
-
-Codex's private configuration and Claude Code's user MCP registration use:
+For compiled ESM and worker assets, run `bun run build`, then:
 
 ```sh
-http://127.0.0.1:4791/mcp
+bun packages/gateway/dist/cli.js serve --config /absolute/path/to/config.json
 ```
 
-Both use the MCP server name `codemode-mcp-gateway`. Neither launches a server or
-bridge process. OpenCode's direct MCP settings are unchanged. Start the gateway:
+The compiled CLI still requires its workspace/package dependencies; it is not a
+standalone binary. For manually packed installations, see
+[external consumers](installed-validation.md#prepare-an-external-consumer).
+`bun run verify:packages` verifies built tarballs in disposable consumers without
+installing a user service. No lifecycle hook or global package link is required.
+Users choose their own deployment location, updates, rollback, and process supervisor.
+
+Configuration resolves from `--config` or a positional path, then
+`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise
+`~/.config/codemode-mcp-gateway/config.json`. Relative upstream paths resolve from
+the configuration directory. `service.port` defaults to 4791.
+
+## HTTP authentication
+
+Supply `GW_HTTP_TOKEN` to `gw serve` and live `gw doctor` commands. It must contain
+32–256 letters, digits, underscores, or hyphens. Generate a high-entropy token once
+(for example, 32 random bytes encoded as hex), keep it in your own secret manager
+or private environment file, and supply the same value after each restart.
+Do not generate a new token in every startup command.
+
+The gateway does not generate, persist, migrate, or print the HTTP token. It does
+not accept the token as a CLI argument or gateway JSON setting. Any environment
+file is user-managed and should be private, outside Git, and readable only by its
+owner. Restrict access to the process environment too.
+
+Clients send `Authorization: Bearer <your-token>` to
+`http://127.0.0.1:4791/mcp`. This credential is unrelated to upstream OAuth tokens,
+which remain in the OS credential store and still require explicit login.
+
+**Rotation is explicit:** change the supplied token, restart the gateway, and
+update/reload clients. A restart alone does not revoke an unchanged token; a leaked
+token remains usable until rotation. There is no hot rotation or overlap period.
+
+The listener binds only `127.0.0.1`; mandatory bearer authentication is supplemented
+by Host and Origin validation. `GET /health` returns unauthenticated liveness only.
+`/status` and all MCP methods require the token. Status includes the process ID,
+instance ID, uptime, session count, and observed upstream states—not credentials,
+installation details, or client-registration outcomes.
+
+Live doctor checks send the bearer token to the configured loopback port, reject
+redirects, and validate response JSON. They do not use signed status proofs or
+authenticate the server's identity. **A different local process owning that port
+can capture the persistent token and impersonate MCP/status responses.** Host/Origin
+checks do not authenticate a server. Trust the port owner, or use direct stdio
+when this local-process threat is unacceptable.
+
+## Configure clients yourself
+
+The gateway never discovers installed clients or reads/edits their configuration.
+Add the HTTP registration using your client's supported configuration mechanism.
+The following values are placeholders, not usable credentials.
+
+### Codex
+
+In a private Codex `config.toml`:
+
+```toml
+[mcp_servers.codemode-mcp-gateway]
+url = "http://127.0.0.1:4791/mcp"
+http_headers = { Authorization = "Bearer <your-private-token>" }
+```
+
+### Claude Code
+
+In your private user MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "codemode-mcp-gateway": {
+      "type": "http",
+      "url": "http://127.0.0.1:4791/mcp",
+      "headers": { "Authorization": "Bearer <your-private-token>" }
+    }
+  }
+}
+```
+
+Use the same token supplied to the gateway. Keep literal credentials out of tracked
+files and protect the client configuration (for example, mode 0600). Use a client's
+own secret mechanism instead when appropriate. Neither client needs a gateway
+wrapper or bridge. Already-running clients may need to reload configuration.
+
+## Lifetime and upstream authorization
+
+`gw serve` stays in the foreground until SIGINT/SIGTERM or an infrastructure failure;
+stdin EOF and closing an MCP client do not stop it. An occupied port fails without
+probing, replacing, or adopting the owner, and before upstream connections start.
+Choose an external supervisor if you need login startup or crash recovery.
+
+Each HTTP session owns its output spills. DELETE cancels/drains that session and
+removes its output without affecting other clients. Open requests/event streams
+retain sessions; disconnected sessions receive a 60-second retirement grace.
+Crashes can leave output behind. Scripts are never automatically replayed.
+
+`gw serve --stdio` retains direct client-owned stdio and requires no gateway HTTP
+token. `gw doctor --stdio` explicitly probes fresh upstream connections; ordinary
+`gw doctor` reads the running HTTP gateway rather than starting another set.
 
 ```sh
-gw serve
+bun run gw login --config examples/multi.json --server notion
+bun run gw doctor --config examples/multi.json --json
 ```
 
-This automatically registers installed Codex/Claude clients with native HTTP
-authentication. Launch plain `codex` or `claude`; no setup script, Python, dotfiles,
-wrapper, or token environment variable is required. `gw serve` stays in the
-foreground; use `gw service install` instead for login startup and crash recovery.
-Upstream definitions still come from the gateway configuration; no personal
-providers are silently added. Sign in explicitly, one provider at a time:
+Login remains explicit and interactive. Serving loads saved upstream credentials
+and refreshes noninteractively. Missing grants yield `needs-auth`; other upstreams
+remain usable. Logout removes local upstream credentials, not the provider grant.
 
-```sh
-gw check --json
-gw login --server newrelic
-gw login --server metabase
-gw login --server notion
-gw login --server jira
-gw doctor --json
-```
+## Migrating from gateway-managed installation
 
-Login needs interactive consent. A configured/connected local MCP server does not
-mean its upstreams are authenticated. Missing grants yield `needs-auth`; other
-upstreams remain usable. Servers requiring unsupported OAuth registration methods
-must remain explicitly blocked, not worked around by copying credentials.
+- Stop and unregister any previously installed launchd job using your OS tools
+  before starting this build. The retired `gw service` commands are unavailable.
+- Choose your deployment path and provide a persistent `GW_HTTP_TOKEN` explicitly.
+- Replace the old instance-derived bearer header in your clients with that token.
+  Old service `auth.json` keys and native headers are not imported or migrated.
+- Existing installations, launchd definitions, service credentials, and client
+  settings are left untouched. Remove obsolete files yourself when no longer needed.
+- Upstream OAuth identities, stored grants, and lock locations are unchanged.
 
-## Updating and rollback
+## Historical validation of retired deployment workflows
 
-Run `bun run install:local`, then `gw service restart`. To roll back, stop the service,
-repoint `current` to a verified prior service-capable `installs/<id>` symlink target,
-then start it. Pre-service stdio-only snapshots are not service rollback targets.
-Never remove a build still used by the service. Updating does not replay interrupted
-scripts. No automatic update, pruning, global package install, or publication occurs.
+The following records describe earlier builds, not current installation instructions
+or verification of the persistent-token workflow.
 
-## Service lifetime, security, and clients
-
-`gw serve` is the foreground HTTP host used by launchd. `gw` alone shows help;
-`gw serve --stdio` is explicit direct-mode compatibility. Service install/start/stop/
-restart/status/uninstall need no administrator privileges. Install starts at login;
-crashes/nonzero exits restart, clean stops do not. Stop/uninstall work without a
-valid provider config or credentials and never delete upstream OAuth records.
-
-The listener is restricted to `127.0.0.1`; Host and Origin validation supplement
-mandatory bearer authentication. Only `GET /health` is unauthenticated and returns
-`ok`. `/status` and every MCP method require authentication. CLI status requests use
-short-lived, endpoint-bound HMAC proofs rather than transmitting a bearer token;
-the CLI also verifies a signature covering the response and its request nonce.
-`/status` reports a live
-instance ID, process ID, configuration identity, sessions, actual upstream status,
-and client registration results from startup, never tokens. Service readiness checks
-match the endpoint PID against the owning launchd job and selected configuration,
-and wait for registration attempts to finish. Readiness does not mean every client
-or provider succeeded: inspect the separate `clients` and `upstreams` results.
-
-The stable private signing key is in
-`$XDG_STATE_HOME/codemode-mcp-gateway/service/auth.json` (default
-`~/.local/state/codemode-mcp-gateway/service/auth.json`), with a 0700 directory and
-0600 file, as `{ "version": 2, "key": "..." }`. The key is never sent over HTTP.
-Each listener derives a different bearer token from this key and its random instance
-ID. Captured native bearer tokens cannot authenticate to a later instance. Missing
-credentials are created; invalid, symlinked, or nonprivate files are refused. Legacy
-version-1 bearer files are replaced with a new signing key only after successfully
-binding the listener. Stop the old service and restart to upgrade; occupied-port
-probes never send a legacy credential or upgrade it. These credentials are separate
-from provider OAuth in the OS store. The LaunchAgent and tracked client configs contain no secret.
-Logs are private files beside the credential; `gw service status --json` is safe to inspect.
-
-`gw serve` provisions Codex's native `http_headers.Authorization`
-and Claude's native `headers.Authorization`. These literal credentials live only in
-private 0600 `~/.codex/config.toml` and `~/.claude.json`, never in tracked files or
-command arguments. It respects `CODEX_HOME` and `CLAUDE_CONFIG_DIR`; the latter
-places Claude's user registration in `$CLAUDE_CONFIG_DIR/.claude.json`. Existing
-client configs/directories or executables identify installed clients. Missing clients
-are reported as `not-installed`, without creating their config directories.
-
-The gateway updates only its own registration, preserving unrelated preferences,
-servers, account state, and compatible tool policies/timeouts. TOML edits use parser
-source ranges to retain unrelated comments/formatting/multiline strings; Bun supplies
-semantic validation and serialization. No-op starts leave config files untouched.
-Changed files use private temporary files and atomic replacement. A short-lived lock
-serializes gateway writers; an observed concurrent edit aborts that update. Native
-clients do not share this lock, so this is not a cross-application transaction, and
-the two client updates are not atomic as a pair.
-
-Symlinked configs/directories and destinations inside Git checkouts are refused;
-malformed or unwritable configs are reported per client without replacement. Other
-clients and the gateway can remain usable. Repair the reported problem and rerun
-`gw serve`. The startup output reports the latest attempt; the daemon's `/status`
-client results record its own startup attempt. Never put a native credential in a
-tracked config. Personal dotfiles may seed secret-free preferences separately, but
-the gateway never depends on them.
-
-If the port is occupied, native configs are not changed unless authenticated status
-identifies the same gateway configuration/directory. In that case `gw serve`
-refreshes registrations and exits without another daemon or upstream connections.
-Different/older gateway configurations require an explicit service restart. Unrelated
-listeners are never killed. `gw service start` also refreshes an already-ready service's
-client registrations; install/restart run the same `gw serve` startup path.
-
-Run plain `claude` or `codex`. GUI clients reading these same configs
-use the same headers without shell inheritance; GUI interaction itself was not tested.
-Already-running clients must reload/restart after every service restart to adopt its
-new bearer token. Reusing an already-running matching daemon does not rotate tokens
-or rewrite correct registrations. Later starts synchronize changed ports/tokens
-without a separate setup command.
-OpenCode's configuration and environment are unchanged. Importing the library,
-programmatic HTTP hosting, and explicit stdio serving never modify native client configs.
-
-This is minimal HTTP hardening, not authenticated transport for native clients.
-A process that occupies the port while the gateway is down can still impersonate
-an MCP server to a native client, receive stale credentials/tool arguments, or forge
-tool responses. It cannot use those stale bearer tokens against a new gateway
-instance. Host/Origin checks do not authenticate a server. Use direct stdio when
-this residual local-process threat is unacceptable; pinned TLS or protected IPC
-would require a separate native-client transport integration.
-
-Each HTTP session owns its spills. DELETE closes only that session, cancels/drains
-its work, and removes its output. Event streams and pending requests keep it alive;
-after the last stream/request disconnects, a 60-second grace retires abandoned
-sessions. There is no per-file TTL, global disk quota, crash sweep, or replay. A
-client can reconnect with a new session after a service restart, but interrupted
-scripts must not be replayed automatically. Closing clients never stops the daemon.
-
-The programmatic `GatewayHttpServer.listen(gateway, options)` borrows a gateway,
-returns a validated listen result, and owns only its listener/sessions. `close()`
-drains those sessions without disposing the borrowed gateway. The daemon owns both.
-
-## Earlier stdio installation validation: 2026-10-16
+### Earlier stdio installation validation: 2026-10-16
 
 Source was `6202446` plus the uncommitted CLI/install changes, using Bun 1.4.3.
 `bun run check` passed 656 tests, build/typecheck/lint/format, and packed consumers;
@@ -217,7 +168,7 @@ unchanged. Dotfiles shell/TOML/JSON checks and a Stow restow simulation passed.
 These are local installation/interop checks, not live-provider workflow validation,
 cross-client shared-process behavior, or a release approval.
 
-## Shared HTTP service validation: 2026-10-16
+### Shared HTTP service validation: 2026-10-16
 
 Against `650a368` plus the uncommitted HTTP/service changes, Bun 1.4.3 on macOS arm64:
 

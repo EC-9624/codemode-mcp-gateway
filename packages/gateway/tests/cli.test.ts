@@ -41,8 +41,8 @@ describe("gw executable", () => {
     { name: "competing paths", args: ["check", "one.json", "--config", "two.json"] },
     { name: "JSON protocol pollution", args: ["serve", "--json"] },
     { name: "unknown option", args: ["--unknown"] },
-    { name: "missing service action", args: ["service"] },
-    { name: "unknown service action", args: ["service", "unknown"] },
+    { name: "removed service command", args: ["service"] },
+    { name: "removed service action", args: ["service", "install"] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);
 
@@ -65,7 +65,8 @@ describe("gw executable", () => {
     const result = await runProcess([cli]);
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("configure native Codex/Claude access");
+    expect(result.stdout).toContain("GW_HTTP_TOKEN");
+    expect(result.stdout).toContain("user-managed");
     expect(result.stderr).toBe("");
   });
 
@@ -158,16 +159,10 @@ describe("gw executable", () => {
       },
     });
 
-    const result = await runProcess([
-      cli,
-      "doctor",
-      "--stdio",
-      "--config",
-      file.path,
-      "--server",
-      "paused",
-      "--json",
-    ]);
+    const result = await runProcess(
+      [cli, "doctor", "--stdio", "--config", file.path, "--server", "paused", "--json"],
+      { GW_HTTP_TOKEN: undefined },
+    );
 
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({

@@ -12,15 +12,15 @@ import {
   type Configuration,
 } from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
-import { serveDaemon } from "./daemon.ts";
-import { daemonStatus, serviceCommand, ServiceAction } from "./local-service.ts";
+import { serveHttp } from "./daemon.ts";
+import { httpToken } from "./http.ts";
+import { httpStatus } from "./status.ts";
 
-const help = `Usage: gw [serve|service|check|doctor|login|logout] [configuration.json] [options]
+const help = `Usage: gw [serve|check|doctor|login|logout] [configuration.json] [options]
 
   gw                         Show this help
-  gw serve                   Run HTTP MCP and configure native Codex/Claude access
+  gw serve                   Run foreground HTTP MCP using GW_HTTP_TOKEN
   gw serve --stdio           Run an explicit direct stdio gateway
-  gw service <action>        install, start, stop, restart, status, uninstall
   gw <configuration.json>    Legacy explicit-path stdio mode
   gw check                   Validate configuration without connecting
   gw doctor                  Read the running service's upstream status
@@ -36,13 +36,13 @@ Options:
   -v, --version        Show the installed version
 
 Default: $XDG_CONFIG_HOME/codemode-mcp-gateway/config.json, or ~/.config/codemode-mcp-gateway/config.json.
-Serving configures installed Codex/Claude clients using private native HTTP headers.
-No setup script, launch wrapper, or token environment variable is required.
-Clients connect directly to the HTTP /mcp URL; no bridge is required.
+HTTP serve/doctor require GW_HTTP_TOKEN: 32–256 letters, digits, underscores, or hyphens.
+Supply the same persistent token in your MCP clients; rotate it explicitly when needed.
+Client configuration, installation, and process supervision are user-managed.
 Stdio serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
 running multi-upstream gateways recover automatically after credentials change.`;
 
-type Command = "serve" | "service" | "check" | "doctor" | "login" | "logout";
+type Command = "serve" | "check" | "doctor" | "login" | "logout";
 
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
@@ -90,7 +90,6 @@ export async function main(
   let command: Command = "serve";
   if (
     first === "serve" ||
-    first === "service" ||
     first === "check" ||
     first === "doctor" ||
     first === "login" ||
@@ -100,18 +99,17 @@ export async function main(
     positionals.shift();
   }
 
-  const action = command === "service" ? ServiceAction.safeParse(positionals.shift()) : undefined;
   const explicit = parsed.values.config ?? positionals[0];
   const server = parsed.values.server;
   if (
+    first === "service" ||
     positionals.length > 1 ||
     (parsed.values.config !== undefined && positionals.length !== 0) ||
     (explicit !== undefined && !explicit.trim()) ||
     (server !== undefined && !server.trim()) ||
     (server !== undefined && command !== "doctor" && command !== "login" && command !== "logout") ||
-    (parsed.values.json && command !== "check" && command !== "doctor" && command !== "service") ||
-    (parsed.values.stdio && command !== "serve" && command !== "doctor") ||
-    (command === "service" && action?.success !== true)
+    (parsed.values.json && command !== "check" && command !== "doctor") ||
+    (parsed.values.stdio && command !== "serve" && command !== "doctor")
   ) {
     console.error("Invalid arguments. Run gw --help for usage.");
 
@@ -130,15 +128,6 @@ export async function main(
 
   try {
     const path = configurationPath(explicit);
-    if (command === "service" && action?.success) {
-      const result = await serviceCommand(action.data, path);
-      if (shutdown.signal.aborted) return 130;
-
-      console.log(parsed.values.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
-
-      return 0;
-    }
-
     if (command === "login" || command === "logout") {
       const selected = { ...options, ...(server === undefined ? {} : { server }) };
 
@@ -176,7 +165,10 @@ export async function main(
 
     if (command === "doctor") {
       const config = selectServer(await readConfiguration(path), server);
-      const remote = parsed.values.stdio ? undefined : await daemonStatus(path, shutdown.signal);
+
+      const remote = parsed.values.stdio
+        ? undefined
+        : await httpStatus(config.service.port, httpToken(), shutdown.signal);
 
       let statuses: ServerStatus[];
       if (remote === undefined) {
@@ -204,9 +196,7 @@ export async function main(
           JSON.stringify({
             ok: healthy,
             servers: statuses,
-            ...(remote === undefined
-              ? {}
-              : { service: remote.service, clients: remote.clients, sessions: remote.sessions }),
+            ...(remote === undefined ? {} : { service: remote.service, sessions: remote.sessions }),
           }),
         );
       else
@@ -219,7 +209,7 @@ export async function main(
     }
 
     if (parsed.values.stdio || first !== "serve") await serve(path, options);
-    else await serveDaemon(path, options);
+    else await serveHttp(path, options);
 
     return 0;
   } catch (error) {

@@ -9,14 +9,15 @@ The package remains private while its API matures.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
+# Supply GW_HTTP_TOKEN from your private environment before HTTP serving.
 bun run gw serve --config examples/cmg.json
 bun run example:server
 ```
 
-Requires Bun **1.4.3**. `gw serve` hosts authenticated MCP on loopback HTTP;
-it automatically registers native Codex/Claude access in private user configs.
-No separate setup script, dotfiles, Python, launch wrapper, or token environment
-variable is required. Existing upstream definitions and explicit OAuth login remain.
+Requires Bun **1.4.3**. `gw serve` hosts authenticated MCP on loopback HTTP using
+the user-supplied persistent `GW_HTTP_TOKEN`. Client configuration, installation,
+and process supervision are user-managed. The gateway never edits client configs
+or creates a local HTTP credential file. Existing upstream definitions and explicit OAuth login remain.
 `gw serve --stdio` explicitly selects direct stdio. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 In stdio mode stdout is exclusively MCP traffic; diagnostics use stderr.
@@ -30,16 +31,13 @@ from `--config <path>` (or a positional path), then
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
 
-For a standalone personal install independent of the checkout, see
-[local installation](../../docs/local-installation.md). `bun run install:local`
-builds and verifies local tarballs before activating them; no publication or global
-package link is required. The CLI/default config path changed from `cmg` to `gw`
-and `codemode-mcp-gateway/config.json`; OAuth identity and lock storage are unchanged.
+For building and running outside source mode, HTTP credentials, and manual client
+configuration, see [local deployment](../../docs/local-installation.md).
+There is no custom installer or OS service-management command. OAuth identity
+and lock storage are unchanged.
 
 ```sh
-gw service install         # Register/start the macOS LaunchAgent
-gw service status --json
-gw serve                   # Foreground HTTP service (not an extra daemon)
+gw serve                   # Foreground HTTP service; requires GW_HTTP_TOKEN
 gw serve --stdio --config ./cmg.json
 gw check --json
 gw doctor --server notion --json
@@ -51,20 +49,21 @@ gw --version
 
 Commands accept `--config` or an optional positional configuration path.
 `check` validates without connecting. `doctor` reads authenticated status from the
-actual daemon; `doctor --stdio` explicitly opens/closes fresh diagnostic connections.
-Service actions are install/start/stop/restart/status/uninstall. Service status
-distinguishes launchd process state, authenticated readiness, startup client
-registration outcomes, and upstream health. `gw serve` reuses an authenticated
-matching daemon and refreshes native registration; unrelated occupied ports are
-left alone. No-op registration leaves files untouched. Symlinked destinations,
-paths inside Git checkouts, and malformed configs are reported without replacement. Registration
-failure in one client does not prevent the other from working. See the
-[client/security contract](../../docs/local-installation.md#service-lifetime-security-and-clients).
-Each new HTTP service instance rotates native bearer tokens; running clients must
-reload/restart after a service restart. Reusing a running instance retains its token.
-CLI status checks use signed requests/responses without sending the private service
-key or native bearer. Native HTTP clients still do not authenticate the server itself;
-port impersonation can expose arguments and forge responses while the service is down.
+actual HTTP process using the same `GW_HTTP_TOKEN`; `doctor --stdio` explicitly
+opens/closes fresh diagnostic connections without requiring that token.
+`GW_HTTP_TOKEN` must contain 32–256 letters, digits, underscores, or hyphens.
+Set it from a private environment, not a command argument or tracked configuration.
+Clients send the same token in their bearer header. Restarting with the same token
+does not revoke it. Rotation requires a changed token, gateway restart, and client
+updates; leaked tokens remain usable until rotation. The gateway never generates,
+persists, or prints this credential. An occupied port always fails without probing
+or adopting the owning process, and no additional upstreams are started.
+HTTP status contains process/session/upstream information, not client registration
+or installation state. CLI status requests reject redirects and validate the response;
+they do not cryptographically authenticate the server. A process occupying the port
+can capture the persistent token and impersonate an MCP/status server. Host/Origin
+checks do not prevent this; trust the local port owner or use direct stdio. See
+[HTTP authentication](../../docs/local-installation.md#http-authentication).
 Login/logout select a named server; the name
 can be omitted when exactly one OAuth connection is configured. Logout removes
 local credentials, not the upstream grant.
@@ -72,7 +71,7 @@ local credentials, not the upstream grant.
 Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
 failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
 The gateway remains running with failed upstreams; a failed doctor check
-returns 1. `--json` is accepted by check/doctor/service, never stdio serving.
+returns 1. `--json` is accepted by check/doctor, never stdio serving.
 
 ## Named upstreams and hot recovery
 
@@ -470,6 +469,12 @@ The public entry also exports `Configuration`, `resolveHeaders`, and
 process lifetime, including configuration loading and shutdown listeners. Importing
 the package alone starts neither path. See the [public exports](src/index.ts).
 
+`GatewayHttpServer.listen(gateway, { port, bearerToken })` borrows the gateway and
+owns only its HTTP listener and MCP sessions. The caller supplies the persistent
+token directly; programmatic hosting does not read `GW_HTTP_TOKEN`. Closing the
+HTTP host leaves its borrowed gateway usable. The retired `serviceKey` and
+`configurationId` options are no longer accepted.
+
 `login(path, options?)` and `logout(path, options?)` return explicit `AuthResult`
 values for expected authorization/storage failures. Configuration, infrastructure,
 and cleanup failures may reject, including `AuthorizationError` when releasing a
@@ -500,7 +505,7 @@ Qualified upstream names cannot overwrite `searchTools` or `describeTool`.
 The MCP adapter borrows an executor; this package selects QuickJS
 and describes its actual environment to the agent.
 
-EOF, SIGINT, and SIGTERM cancel active executions and await worker cleanup before
+For stdio, EOF, SIGINT, and SIGTERM cancel active executions and await worker cleanup before
 closing the upstream. Stdio shutdown observes the child's actual close event;
 HTTP shutdown requests session deletion when supported, with a 5-second DELETE
 request timeout. The agent-facing transport opens during upstream setup, so EOF
@@ -512,6 +517,8 @@ arguments and exit status. [`gateway.ts`](src/gateway.ts) composes catalog snaps
 while [`connection.ts`](src/connection.ts) opens and cleans up one transport/OAuth session.
 Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
 [`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
+[`daemon.ts`](src/daemon.ts) owns the foreground HTTP process; it does not supervise
+the process, provision clients, or persist its HTTP token.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
 build, invoke it as `gw configuration.json`; dependencies are not bundled.
@@ -525,8 +532,8 @@ tarball installation, saved-credential reuse, and OpenCode V2 integration.
 
 Named upstreams with partial availability and hot credential recovery. Agent-facing
 transports are authenticated loopback Streamable HTTP and explicit direct stdio.
-macOS launchd can own the shared service; other platforms can run `gw serve` in the
-foreground. There is no model loop, remote network hosting, or Node support. Cancellation cannot roll back
+Users choose how to install and supervise the foreground `gw serve` process and
+configure its clients. There is no model loop, remote network hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
 are recorded; longer soak testing and aggregate/payload resource hardening remain
 future work. Local OAuth serves one

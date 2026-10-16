@@ -200,6 +200,8 @@ must not run concurrently in the same runtime. The default suite runs every pack
 The standalone fixture installs codemode without MCP; the composition fixture
 checks the MCP adapter and executable CLI. Both typecheck against emitted `.d.ts`
 files and use real workers. These fixtures are not imported by ordinary tests.
+The HTTP CLI fixture supplies its own persistent token and connects through the
+installed executable without client configuration or installation-state writes.
 
 `verify:packages:clean` performs the same scenarios from a disposable copy of current
 source with no inherited installs/builds. It installs the frozen lockfile with scripts

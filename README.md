@@ -8,9 +8,9 @@ Requires **Bun 1.4.3**, pinned in `.bun-version`. Package names are provisional;
 nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
-For an independent local install with the **`gw`** CLI, run `bun run install:local`.
-See [local installation](docs/local-installation.md) for Codex/Claude configuration,
-explicit OAuth login, updates, and rollback. Nothing is published.
+Run the **`gw`** CLI from the checkout or a built local package. Installation,
+process supervision, and client configuration are user-managed. See
+[local deployment](docs/local-installation.md) for HTTP credentials and client examples.
 
 ## Quick start
 
@@ -26,18 +26,22 @@ these examples do not require a build.
 ## Agent-facing service
 
 ```sh
+# Supply a persistent GW_HTTP_TOKEN from your private environment for HTTP serving.
 bun run gw serve --config examples/multi.json
 bun run gw check examples/multi.json --json
 bun run gw doctor --stdio examples/multi.json --json
 bun run gw login examples/multi.json --server notion
 ```
 
-`gw serve` runs the authenticated loopback HTTP MCP service; Codex and Claude connect
-directly to its `/mcp` URL. `gw service install` registers the persistent macOS
-LaunchAgent. Both paths automatically configure native client authentication in
-private user configs; no external setup script, dotfiles dependency, wrapper, or
-token environment variable is needed. No per-client gateway or bridge is needed.
-Already-running clients may need to reload. `gw` alone shows help.
+`gw serve` runs the foreground loopback HTTP MCP service. Set `GW_HTTP_TOKEN` to a
+private token of 32–256 letters, digits, underscores, or hyphens; configure clients
+to send the same token as `Authorization: Bearer <token>` to `/mcp`.
+The token survives restarts when supplied unchanged. Rotate it explicitly by
+changing it, restarting the gateway, and updating clients; a leaked token remains
+valid until rotation. The gateway never generates/persists this token, edits client
+configs, installs itself, or manages an OS service. An occupied port is an error,
+not a request to adopt or restart its owner. No per-client gateway or bridge is needed.
+`gw` alone shows help.
 Explicit `gw serve --stdio` and legacy positional-config invocations retain direct
 stdio for development and examples. Both transports expose `execute({ code })`.
 Diagnostics use stderr.
@@ -59,7 +63,8 @@ Local paths resolve from the configuration directory. The included
 Notion deadlines. Serving and management commands use
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
 or a positional path overrides it. `check` validates without connecting; `doctor`
-queries the actual running service (`doctor --stdio` explicitly probes fresh connections).
+queries the actual running service using `GW_HTTP_TOKEN` (`doctor --stdio` explicitly
+probes fresh connections and needs no gateway HTTP token).
 Login is explicit and interactive; serving
 uses saved OS credentials and noninteractive refresh. Logout removes local
 credentials, not the upstream grant.

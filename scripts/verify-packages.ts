@@ -167,7 +167,7 @@ await run(
 );
 await run([process.execPath, "service.ts", join(consumer, "node_modules/.bin/gw")], consumer);
 console.log(
-  "Packed packages verified: declarations, worker execution/cancellation, MCP adapter, CLI, and automatic native HTTP registration.",
+  "Packed packages verified: declarations, worker execution/cancellation, MCP adapter, CLI, and user-configured authenticated HTTP.",
 );
 
 /** A timeout bounds regressions that leave workers or child processes running. */

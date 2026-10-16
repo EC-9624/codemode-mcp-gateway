@@ -788,8 +788,12 @@ the gateway; its independent MCP sessions share that gateway's executor and upst
 Native Codex/Claude clients use the `/mcp` URL directly, without a bridge. A client
 DELETE retires only its own session; open HTTP requests/event streams retain the
 session, and disconnected sessions receive a 60-second grace. Closing clients does
-not stop the daemon. `gw service` manages the macOS LaunchAgent; see
-[local service installation](local-installation.md).
+not stop the HTTP process. Installation, process supervision, and client configuration
+are user-managed; there is no custom installer or `gw service` command. HTTP serving
+and live `doctor` checks use a user-supplied persistent `GW_HTTP_TOKEN`; it is never
+generated or saved by the gateway. Restarting does not revoke an unchanged token.
+See [local deployment](local-installation.md) for rotation, migration, and the local
+port-impersonation limitation.
 
 Startup budgets are separate from execution budgets. The gateway uses the same
 `SandboxLimits` upper bounds as constructor and worker-boundary validation, with

@@ -13,6 +13,30 @@ import { z } from "zod";
 const token = "synthetic-local-service-token-0123456789012345";
 
 describe("shared HTTP gateway", () => {
+  test.each([
+    { name: "short", token: "short" },
+    { name: "oversized", token: "x".repeat(257) },
+    { name: "invalid characters", token: "synthetic-private-token-containing a-space" },
+  ])("rejects a $name bearer token before opening a listener", async ({ token }) => {
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: { servers: { notes: { type: "local", command: ["unused"], disabled: true } } },
+      }),
+      process.cwd(),
+    );
+
+    const opened = await GatewayHttpServer.listen(gateway, { port: 0, bearerToken: token });
+
+    expect(opened).toEqual({
+      ok: false,
+      error: {
+        kind: "invalid-options",
+        message:
+          "Invalid HTTP options: use a valid port and a private bearer token of 32–256 letters, digits, underscores, or hyphens.",
+      },
+    });
+  });
+
   test("cancels one client's execution while the other client remains usable", async () => {
     const started = Promise.withResolvers<void>();
     const stopped = Promise.withResolvers<void>();
