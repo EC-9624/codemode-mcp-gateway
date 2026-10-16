@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 import { captureWorker } from "./support/capture-worker.ts";
 import { executionErrorOf } from "./support/execution-error.ts";
 import { expectNoExecutionListeners, gateTermination } from "./support/worker-cleanup.ts";

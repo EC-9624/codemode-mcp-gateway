@@ -1,6 +1,6 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
-import { CodeExecutor, ToolResult, type ExecutionReport } from "@cmg/codemode";
-import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { CodeExecutor, ToolResult, type ExecutionReport } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog, createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";

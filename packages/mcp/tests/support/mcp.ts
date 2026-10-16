@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport, type Tool } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
-import { type ToolCatalog } from "@cmg/codemode";
+import { type ToolCatalog } from "@codemode-mcp-gateway/codemode";
 
 /** Own both ends, including partially completed setup. Each test owns its server handlers. */
 export async function connectMcp(server: McpServer) {

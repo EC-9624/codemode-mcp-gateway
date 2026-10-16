@@ -2,39 +2,45 @@
 
 A Bun stdio gateway that lets coding agents discover and compose multiple upstream
 MCP servers' tools through JavaScript. This product package provides both a
-programmatic API and the `cmg` executable, composing `@cmg/codemode` and `@cmg/mcp`.
+programmatic API and the `gw` executable, composing `@codemode-mcp-gateway/codemode` and `@codemode-mcp-gateway/mcp`.
 The package remains private while its API matures.
 
 ## Run from the repository
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-bun run cmg examples/cmg.json
+bun run gw examples/cmg.json
 bun run example:server
 ```
 
-Requires Bun **1.4.3**. `cmg` speaks MCP on stdin/stdout, so it waits for a client;
+Requires Bun **1.4.3**. `gw` speaks MCP on stdin/stdout, so it waits for a client;
 it is not a JavaScript REPL. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 Stdout is exclusively MCP traffic; diagnostics and upstream stderr use stderr.
 
 ## CLI and default configuration
 
-Once installed, clients can launch `cmg` without arguments. Configuration resolves
+Once installed, clients can launch `gw` without arguments. Configuration resolves
 from `--config <path>` (or a positional path), then
-`$XDG_CONFIG_HOME/cmg/config.json`, otherwise `~/.config/cmg/config.json`.
+`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise `~/.config/codemode-mcp-gateway/config.json`.
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
 
+For a standalone personal install independent of the checkout, see
+[local installation](../../docs/local-installation.md). `bun run install:local`
+builds and verifies local tarballs before activating them; no publication or global
+package link is required. The CLI/default config path changed from `cmg` to `gw`
+and `codemode-mcp-gateway/config.json`; OAuth identity and lock storage are unchanged.
+
 ```sh
-cmg                         # Same as cmg serve
-cmg --config ./cmg.json
-cmg check --json
-cmg doctor --server notion --json
-cmg login --server notion
-cmg logout --server notion
-cmg --help
-cmg --version
+gw                         # Same as gw serve
+gw --config ./cmg.json
+gw check --json
+gw doctor --server notion --json
+gw login --server notion
+gw logout --server notion
+gw --help
+gw --version
 ```
 
 All commands accept `--config` or an optional positional configuration path.
@@ -96,7 +102,7 @@ silently aliased across upstreams; even an upstream tool named `searchTools` is
 qualified and cannot overwrite the local helper.
 
 Access-token refresh remains automatic. A missing/revoked grant or uncertain refresh
-failure moves the affected server to `needs-auth`. Run `cmg login --server notion`
+failure moves the affected server to `needs-auth`. Run `gw login --server notion`
 using the same configuration; the gateway checks waiting credential records on a
 one-second maintenance cadence and reconnects after an authorized snapshot changes.
 Unchanged failed grants are not refreshed repeatedly, including after session expiry
@@ -138,8 +144,8 @@ transport has already closed or authorization is known unusable; local cleanup
 still completes. Unexpected infrastructure/cleanup failures remain host failures.
 
 [`examples/multi.json`](../../examples/multi.json) combines the synthetic math server
-and Notion. Run `bun run cmg doctor examples/multi.json` or point an MCP client at
-`bun run cmg examples/multi.json`. Configuration accepts only `mcp.servers`.
+and Notion. Run `bun run gw doctor examples/multi.json` or point an MCP client at
+`bun run gw examples/multi.json`. Configuration accepts only `mcp.servers`.
 
 ### Verified interoperability
 
@@ -210,7 +216,7 @@ error messages. Infrastructure failures show `Sandbox execution failed.`; privat
 diagnostics stay host-side. MCP protocol errors reject in the script with the original tool name,
 numeric code, and message, including SDK-generated output-schema errors. Error data
 and stacks are excluded; messages are public and are not redacted. Unknown exceptions
-still reject as `Host tool failed.`. For both cases, `cmg` writes the qualified tool
+still reject as `Host tool failed.`. For both cases, `gw` writes the qualified tool
 name, call ID, and original error name/message/code to stderr as one JSON line.
 Cancellation cannot roll back upstream side effects. See
 [execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
@@ -302,11 +308,11 @@ OAuth is opt-in for an explicitly named HTTP connection:
 From the repository root:
 
 ```sh
-bun run cmg login examples/notion.json
+bun run gw login examples/notion.json
 bun run example:notion examples/notion.json "your test page"
 bun run example:notion examples/notion.json "your test page" --page "<page-url-or-id>" --expect "<known text>" --runs 3
-bun run cmg examples/notion.json
-bun run cmg logout examples/notion.json
+bun run gw examples/notion.json
+bun run gw logout examples/notion.json
 ```
 
 `login` displays an authorization URL and attempts to open the browser. One
@@ -470,9 +476,9 @@ arguments and exit status. [`gateway.ts`](src/gateway.ts) owns connections and t
 [`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
-build, invoke it as `cmg configuration.json`; dependencies are not bundled.
+build, invoke it as `gw configuration.json`; dependencies are not bundled.
 
-The Notion runner and metadata observer accept `--gateway <installed-cmg-path>`
+The Notion runner and metadata observer accept `--gateway <installed-gw-path>`
 to launch that executable instead of the source CLI. See the
 [external-consumer validation guide](../../docs/installed-validation.md) for local
 tarball installation, saved-credential reuse, and OpenCode V2 integration.
@@ -506,5 +512,5 @@ out-of-order store completions, persistence publication, and compromised/crashed
 lock ownership that the public serving API cannot expose precisely. The real OS adapter
 is exercised through public login/logout with scoped spies on Bun's secret service.
 Its helpers and upstream fixtures are package-local. Packed-consumer fixtures additionally verify the installed API
-and `cmg` executable through the root distribution checks.
+and `gw` executable through the root distribution checks.
 See [testing conventions](../../docs/testing.md).

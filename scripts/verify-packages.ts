@@ -2,10 +2,12 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { deepEqual, ok } from "node:assert/strict";
 import { z } from "zod";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const { values } = parseArgs({ options: { archives: { type: "string" } }, strict: true });
 await using cleanup = new AsyncDisposableStack();
 const directory = await mkdtemp(join(tmpdir(), "cmg-packages-"));
 cleanup.defer(() => rm(directory, { recursive: true, force: true }));
@@ -16,10 +18,15 @@ for (const [workspace, file, required] of [
   ["packages/gateway", "gateway.tgz", "package/dist/cli.js"],
 ] as const) {
   const archive = join(directory, file);
-  await run(
-    [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
-    join(root, workspace),
-  );
+  if (values.archives === undefined) {
+    await run(
+      [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
+      join(root, workspace),
+    );
+  } else {
+    await Bun.write(archive, Bun.file(join(values.archives, file)));
+  }
+
   const entries = (await run(["tar", "-tf", archive], directory)).trim().split("\n");
   ok(entries.includes(required), `Missing built asset ${required}`);
   ok(entries.includes("package/README.md"), "Package documentation must be included");
@@ -80,7 +87,7 @@ await Bun.write(
     private: true,
     type: "module",
     scripts: { typecheck: "tsc --noEmit" },
-    dependencies: { "@cmg/codemode": `file:${join(directory, "codemode.tgz")}` },
+    dependencies: { "@codemode-mcp-gateway/codemode": `file:${join(directory, "codemode.tgz")}` },
     devDependencies: { typescript: "7.0.2", "@types/bun": "1.4.2" },
   }),
 );
@@ -102,8 +109,8 @@ await Bun.write(
     type: "module",
     scripts: { typecheck: "tsc --noEmit" },
     dependencies: {
-      "@cmg/codemode": `file:${join(directory, "codemode.tgz")}`,
-      "@cmg/mcp": `file:${join(directory, "mcp.tgz")}`,
+      "@codemode-mcp-gateway/codemode": `file:${join(directory, "codemode.tgz")}`,
+      "@codemode-mcp-gateway/mcp": `file:${join(directory, "mcp.tgz")}`,
       "codemode-mcp-gateway": `file:${join(directory, "gateway.tgz")}`,
       "@modelcontextprotocol/client": "2.3.1",
       "@modelcontextprotocol/server": "2.3.1",
@@ -112,8 +119,8 @@ await Bun.write(
     devDependencies: { typescript: "7.0.2", "@types/bun": "1.4.2" },
     // Local tarballs stand in for registry versions that have deliberately not been published.
     overrides: {
-      "@cmg/codemode": `file:${join(directory, "codemode.tgz")}`,
-      "@cmg/mcp": `file:${join(directory, "mcp.tgz")}`,
+      "@codemode-mcp-gateway/codemode": `file:${join(directory, "codemode.tgz")}`,
+      "@codemode-mcp-gateway/mcp": `file:${join(directory, "mcp.tgz")}`,
     },
   }),
 );
@@ -152,7 +159,7 @@ await run(
   [
     process.execPath,
     "consumer.ts",
-    join(consumer, "node_modules/.bin/cmg"),
+    join(consumer, "node_modules/.bin/gw"),
     join(consumer, "config/cmg.json"),
   ],
   consumer,

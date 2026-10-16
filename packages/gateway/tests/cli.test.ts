@@ -7,7 +7,7 @@ import { main } from "../src/main.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
-describe("cmg executable", () => {
+describe("gw executable", () => {
   test("interrupted check exits 130 without reporting successful validation", async () => {
     const reading = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -47,7 +47,7 @@ describe("cmg executable", () => {
     expect(result).toEqual({
       code: 2,
       stdout: "",
-      stderr: "Invalid arguments. Run cmg --help for usage.\n",
+      stderr: "Invalid arguments. Run gw --help for usage.\n",
     });
   });
 
@@ -55,14 +55,14 @@ describe("cmg executable", () => {
     const result = await runProcess([cli, "--help"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("cmg login --server <name>");
+    expect(result.stdout).toContain("gw login --server <name>");
     expect(result.stdout).toContain("XDG_CONFIG_HOME");
   });
 
   test("prints the installed version without connecting", async () => {
     expect(await runProcess([cli, "--version"])).toEqual({
       code: 0,
-      stdout: "cmg 0.0.0\n",
+      stdout: "gw 0.0.0\n",
       stderr: "",
     });
   });
@@ -71,7 +71,7 @@ describe("cmg executable", () => {
     await using file = await configurationDocument({});
     const directory = dirname(file.path);
     await Bun.write(
-      join(directory, "cmg/config.json"),
+      join(directory, "codemode-mcp-gateway/config.json"),
       JSON.stringify({
         mcp: { servers: { absent: { type: "local", command: ["nonexistent-cmg-command"] } } },
       }),
@@ -82,7 +82,7 @@ describe("cmg executable", () => {
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       ok: true,
-      configuration: join(directory, "cmg/config.json"),
+      configuration: join(directory, "codemode-mcp-gateway/config.json"),
       servers: ["absent"],
     });
     expect(result.stderr).toBe("");

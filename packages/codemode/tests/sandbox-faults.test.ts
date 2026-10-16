@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { Scope, type QuickJSContext } from "quickjs-emscripten";
 import { DEFAULT_LIMITS } from "../src/runtime/limits.ts";
 import { createVm } from "../src/runtime/vm.ts";
-import { ToolResult } from "@cmg/codemode";
+import { ToolResult } from "@codemode-mcp-gateway/codemode";
 import { executeEngine } from "../src/runtime/engine.ts";
 import { expectDisposedExecution, type ExecutionResources } from "./support/disposal.ts";
 import { executeLocally, installLocalToolBridge } from "./support/local-tools.ts";

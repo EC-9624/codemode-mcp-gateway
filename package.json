@@ -9,8 +9,9 @@
   "type": "module",
   "scripts": {
     "build": "bun run --cwd packages/codemode build && bun run --cwd packages/mcp build && bun run --cwd packages/gateway build",
-    "cmg": "bun --conditions=development run packages/gateway/src/cli.ts",
-    "server": "bun run cmg",
+    "gw": "bun --conditions=development run packages/gateway/src/cli.ts",
+    "server": "bun run gw",
+    "install:local": "bun run scripts/install-local.ts",
     "example": "bun --conditions=development run examples/basic.ts",
     "example:mcp": "bun --conditions=development run examples/mcp.ts",
     "example:server": "bun --conditions=development run examples/agent-client.ts",
@@ -33,8 +34,8 @@
     "verify:packages:clean": "bun run scripts/verify-clean-packages.ts"
   },
   "devDependencies": {
-    "@cmg/codemode": "workspace:*",
-    "@cmg/mcp": "workspace:*",
+    "@codemode-mcp-gateway/codemode": "workspace:*",
+    "@codemode-mcp-gateway/mcp": "workspace:*",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@standard-schema/spec": "1.1.0",

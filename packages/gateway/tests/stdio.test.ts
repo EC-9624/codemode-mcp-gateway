@@ -11,7 +11,7 @@ describe("CMG stdio application", () => {
     await using file = await configurationDocument({});
     const directory = dirname(file.path);
     await Bun.write(
-      join(directory, "cmg/config.json"),
+      join(directory, "codemode-mcp-gateway/config.json"),
       JSON.stringify({
         mcp: {
           servers: {

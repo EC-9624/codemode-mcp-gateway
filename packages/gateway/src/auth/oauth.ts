@@ -381,7 +381,7 @@ export function oauthFailure(cause: unknown, signal: AbortSignal): AuthResult<ne
     return AuthResult.failure(
       "cancelled",
       signal.reason instanceof DOMException && signal.reason.name === "TimeoutError"
-        ? "OAuth login timed out. Run cmg login again."
+        ? "OAuth login timed out. Run gw login again."
         : "OAuth operation was cancelled.",
       cause,
     );
@@ -393,7 +393,7 @@ export function oauthFailure(cause: unknown, signal: AbortSignal): AuthResult<ne
   ) {
     return AuthResult.failure(
       "required",
-      "Upstream authorization is no longer valid. Run cmg login <configuration.json>.",
+      "Upstream authorization is no longer valid. Run gw login <configuration.json>.",
       cause,
     );
   }

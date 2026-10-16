@@ -1,4 +1,4 @@
-import { SandboxExecutionError } from "@cmg/codemode";
+import { SandboxExecutionError } from "@codemode-mcp-gateway/codemode";
 import { rejectionOf } from "./rejection.ts";
 
 export async function executionErrorOf(

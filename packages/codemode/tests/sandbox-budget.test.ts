@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createDiscoveryTools, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
+import {
+  createDiscoveryTools,
+  CodeExecutor,
+  ToolCatalog,
+  ToolResult,
+} from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor call budget", () => {
   test("preserves admission failure triggered by guest error conversion", async () => {

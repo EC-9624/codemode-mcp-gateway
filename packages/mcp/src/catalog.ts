@@ -4,7 +4,12 @@ import {
   type Client,
   type Tool,
 } from "@modelcontextprotocol/client";
-import { ToolResult, validateTool, ToolCatalog, type ToolDefinition } from "@cmg/codemode";
+import {
+  ToolResult,
+  validateTool,
+  ToolCatalog,
+  type ToolDefinition,
+} from "@codemode-mcp-gateway/codemode";
 import { compileToolSchema } from "./schema.ts";
 import { type McpCatalogOptions } from "./types.ts";
 

@@ -1,4 +1,4 @@
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 import { faultWorker, interruptFlag, superviseWorker } from "../support/workers.ts";
 
 // An outer process timeout bounds regressions that would otherwise hang bun:test.

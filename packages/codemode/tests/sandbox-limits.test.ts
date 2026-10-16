@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult, type SandboxOptions } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type SandboxOptions } from "@codemode-mcp-gateway/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor limit configuration", () => {

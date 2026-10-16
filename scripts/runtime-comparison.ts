@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { Worker } from "node:worker_threads";
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
-import { type ExecutionReport } from "@cmg/codemode";
+import { type ExecutionReport } from "@codemode-mcp-gateway/codemode";
 
 const args = parseArgs({
   options: {
@@ -214,7 +214,9 @@ async function workload(): Promise<() => Promise<void>> {
       }
     };
 
-  const { CodeExecutor, ToolResult, createDiscoveryTools } = await import("@cmg/codemode");
+  const { CodeExecutor, ToolResult, createDiscoveryTools } =
+    await import("@codemode-mcp-gateway/codemode");
+
   const text = options.scenario === "tool" ? "x".repeat(1024 * 1024) : "";
 
   const executor = new CodeExecutor({
@@ -227,7 +229,7 @@ async function workload(): Promise<() => Promise<void>> {
   if (options.scenario === "mcp") {
     const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
     const { McpServer } = await import("@modelcontextprotocol/server");
-    const { createMcpCatalog, createCodemodeServer } = await import("@cmg/mcp");
+    const { createMcpCatalog, createCodemodeServer } = await import("@codemode-mcp-gateway/mcp");
     const upstream = new McpServer({ name: "runtime-benchmark", version: "0" });
     cleanup.defer(() => upstream.close());
     upstream.registerTool("read", { description: "Read documents" }, () => ({

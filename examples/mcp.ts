@@ -1,8 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
-import { CodeExecutor } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 
 const client = new Client({ name: "cmg-example", version: "0.0.0" });
 

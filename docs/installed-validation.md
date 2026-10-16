@@ -36,8 +36,8 @@ cat > "$installed/consumer/package.json" <<EOF
     "zod": "4.3.6"
   },
   "overrides": {
-    "@cmg/codemode": "file:$installed/codemode.tgz",
-    "@cmg/mcp": "file:$installed/mcp.tgz"
+    "@codemode-mcp-gateway/codemode": "file:$installed/codemode.tgz",
+    "@codemode-mcp-gateway/mcp": "file:$installed/mcp.tgz"
   }
 }
 EOF
@@ -61,7 +61,7 @@ and stop rather than launching a login during validation.
 ```sh
 bun notion-client.ts config/notion.json "<specific private query>" \
   --page "<known-page-url-or-id>" --expect "<known text marker>" \
-  --gateway ./node_modules/.bin/cmg
+  --gateway ./node_modules/.bin/gw
 ```
 
 This reuses discovery, schema, search identity, fetch identity/content, and natural
@@ -107,7 +107,7 @@ In a temporary project config, use this local MCP entry with absolute paths:
           "config/notion.json",
           "/absolute/gateway-metadata.jsonl",
           "--gateway",
-          "/absolute/consumer/node_modules/.bin/cmg"
+          "/absolute/consumer/node_modules/.bin/gw"
         ],
         "codemode": false,
         "protocol": "legacy"

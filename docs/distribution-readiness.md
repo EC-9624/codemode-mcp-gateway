@@ -8,7 +8,7 @@ publication or release-policy change was performed.
 
 - [ ] **User decision:** final names/scopes, ownership, initial versions, release
       policy, and which packages may be published. All versions are `0.0.0`;
-      `@cmg/codemode` has no `private` guard, whereas MCP and gateway explicitly have
+      `@codemode-mcp-gateway/codemode` has no `private` guard, whereas MCP and gateway explicitly have
       `private: true` (`packages/codemode/package.json:2-3`,
       `packages/mcp/package.json:2-4`, `packages/gateway/package.json:2-4`). Absence of
       the guard is not publishing authorization. Do not rename or change visibility
@@ -50,7 +50,7 @@ publication or release-policy change was performed.
 - **MCP adapter:** borrows connected clients/executors; it does not select a VM or
   own application connections. `execute({ code })` yields display `content`, not
   host reports (`packages/mcp/README.md:43-69,101-119`).
-- **Gateway:** public composition/auth/config API and separate `cmg` executable;
+- **Gateway:** public composition/auth/config API and separate `gw` executable;
   importing the root must not start serving or register signal handlers
   (`packages/gateway/src/index.ts:1-13`,
   `packages/gateway/tests/fixtures/import-gateway.ts:1-19`). Private visibility

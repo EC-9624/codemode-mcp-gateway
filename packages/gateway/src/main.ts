@@ -13,14 +13,14 @@ import {
 } from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
 
-const help = `Usage: cmg [serve|check|doctor|login|logout] [configuration.json] [options]
+const help = `Usage: gw [serve|check|doctor|login|logout] [configuration.json] [options]
 
-  cmg                         Serve MCP using the XDG configuration
-  cmg <configuration.json>    Serve MCP using an explicit configuration
-  cmg check                   Validate configuration without connecting
-  cmg doctor                  Check upstream connections and authentication
-  cmg login --server <name>   Authorize a named upstream
-  cmg logout --server <name>  Remove its local credentials
+  gw                         Serve MCP using the XDG configuration
+  gw <configuration.json>    Serve MCP using an explicit configuration
+  gw check                   Validate configuration without connecting
+  gw doctor                  Check upstream connections and authentication
+  gw login --server <name>   Authorize a named upstream
+  gw logout --server <name>  Remove its local credentials
 
 Options:
   -c, --config <path>  Override configuration for any command
@@ -29,7 +29,7 @@ Options:
   -h, --help           Show this help
   -v, --version        Show the installed version
 
-Default: $XDG_CONFIG_HOME/cmg/config.json, or ~/.config/cmg/config.json.
+Default: $XDG_CONFIG_HOME/codemode-mcp-gateway/config.json, or ~/.config/codemode-mcp-gateway/config.json.
 Serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
 running multi-upstream gateways recover automatically after credentials change.`;
 
@@ -54,7 +54,7 @@ export async function main(
       },
     });
   } catch {
-    console.error("Invalid arguments. Run cmg --help for usage.");
+    console.error("Invalid arguments. Run gw --help for usage.");
 
     return 2;
   }
@@ -70,7 +70,7 @@ export async function main(
       .object({ version: z.string() })
       .parse(await Bun.file(new URL("../package.json", import.meta.url)).json());
 
-    console.log(`cmg ${manifest.version}`);
+    console.log(`gw ${manifest.version}`);
 
     return 0;
   }
@@ -99,7 +99,7 @@ export async function main(
     (server !== undefined && command !== "doctor" && command !== "login" && command !== "logout") ||
     (parsed.values.json && command !== "check" && command !== "doctor")
   ) {
-    console.error("Invalid arguments. Run cmg --help for usage.");
+    console.error("Invalid arguments. Run gw --help for usage.");
 
     return 2;
   }

@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { getQuickJS, type QuickJSHandle } from "quickjs-emscripten";
 import { Parser } from "acorn";
 import { DEFAULT_LIMITS } from "../src/runtime/limits.ts";
-import { ToolResult, type SandboxResult } from "@cmg/codemode";
+import { ToolResult, type SandboxResult } from "@codemode-mcp-gateway/codemode";
 import { executeEngine } from "../src/runtime/engine.ts";
 import { createVm } from "../src/runtime/vm.ts";
 import { expectDisposedExecution, type ExecutionResources } from "./support/disposal.ts";

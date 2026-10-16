@@ -1,4 +1,4 @@
-# @cmg/codemode
+# @codemode-mcp-gateway/codemode
 
 A Bun-only library for running JavaScript inside QuickJS, a JavaScript engine
 compiled to WebAssembly. Supply host tools; scripts can call them but cannot
@@ -7,7 +7,7 @@ access the host's filesystem, network, or process directly. MCP is not required.
 ## Usage
 
 ```ts
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 const sandbox = new CodeExecutor({
   tools: { answer: () => ToolResult.success(42) },
@@ -243,7 +243,7 @@ bun run --cwd packages/codemode check
 ```
 
 The unit is a public module: flat `tests/*.test.ts` exercise `CodeExecutor`,
-`ToolCatalog`, `defineTool`, and `validateTool` through `@cmg/codemode`. Sandbox
+`ToolCatalog`, `defineTool`, and `validateTool` through `@codemode-mcp-gateway/codemode`. Sandbox
 subjects are split by contract (tools, limits, cancellation, reports), not by
 implementation layers. Tests use real QuickJS and workers.
 

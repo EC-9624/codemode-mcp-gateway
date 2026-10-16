@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ToolResult } from "@cmg/codemode";
+import { ToolResult } from "@codemode-mcp-gateway/codemode";
 import { DEFAULT_LIMITS } from "../src/runtime/limits.ts";
 import { executeEngine } from "../src/runtime/engine.ts";
 import { expectDisposedExecution, type ExecutionResources } from "./support/disposal.ts";

@@ -1,5 +1,5 @@
 {
-  "name": "@cmg/codemode",
+  "name": "@codemode-mcp-gateway/codemode",
   "version": "0.0.0",
   "description": "Run JavaScript with application-supplied tools in worker-backed QuickJS on Bun",
   "files": [

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolCatalog, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor guest boundary", () => {
   test("does not expose host APIs to guest code", async () => {

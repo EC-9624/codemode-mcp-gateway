@@ -343,7 +343,7 @@ cancellation followed by a termination failure rejects with `SandboxExecutionErr
 but pending calls keep `reason: "cancelled"`. Completed calls remain completed.
 
 ```ts
-import { CodeExecutor, SandboxExecutionError } from "@cmg/codemode";
+import { CodeExecutor, SandboxExecutionError } from "@codemode-mcp-gateway/codemode";
 
 try {
   const sandbox = new CodeExecutor();
@@ -402,7 +402,12 @@ metadata and the callback owns validation. Discovery schema objects should be
 treated as read-only.
 
 ```ts
-import { createDiscoveryTools, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
+import {
+  createDiscoveryTools,
+  CodeExecutor,
+  ToolCatalog,
+  ToolResult,
+} from "@codemode-mcp-gateway/codemode";
 
 const catalog = ToolCatalog.create({
   answer: {
@@ -472,7 +477,7 @@ schema's inferred **output** type, including intentional transformations:
 
 ```ts
 import { z } from "zod";
-import { defineTool, CodeExecutor, ToolCatalog, ToolResult } from "@cmg/codemode";
+import { defineTool, CodeExecutor, ToolCatalog, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 const catalog = ToolCatalog.create({
   length: defineTool({
@@ -535,8 +540,8 @@ protocol negotiation, and closing the client. The adapter borrows it on both
 success and failure; cancelling one execution does not close the shared client.
 
 ```ts
-import { CodeExecutor } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 
 // client is an application-owned, connected @modelcontextprotocol/client Client.
 const catalog = await createMcpCatalog(client);
@@ -638,7 +643,7 @@ Guest response handling preserves MCP data:
   not establish whether an error came from upstream. Error data and stacks are
   excluded; messages are public, not redacted, and must not contain secrets.
   Other invocation exceptions remain generic `Host tool failed.` rejections.
-  Hosts observe the original cause in both cases through `onToolException`; `cmg`
+  Hosts observe the original cause in both cases through `onToolException`; `gw`
   writes the original error name/message/code to stderr.
 
 A completed call can therefore have delivered an upstream response with
@@ -681,8 +686,8 @@ infrastructure rejection path as asynchronous failures. An optional description
 documents the supplied environment; the default makes no engine-specific claims.
 
 ```ts
-import { CodeExecutor } from "@cmg/codemode";
-import { createCodemodeServer, createMcpCatalog } from "@cmg/mcp";
+import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
+import { createCodemodeServer, createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 
 const catalog = await createMcpCatalog(client);
 const sandbox = new CodeExecutor({
@@ -785,8 +790,8 @@ retains its catalog and connection leases through settlement. One long-lived
 Its admission budget includes actual worker exit after failed termination.
 Separate gateways/processes remain independent.
 
-The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/cmg/config.json`,
-otherwise `~/.config/cmg/config.json`) and never implicitly loads cwd configuration.
+The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`,
+otherwise `~/.config/codemode-mcp-gateway/config.json`) and never implicitly loads cwd configuration.
 `check` validates offline, `doctor` opens fresh diagnostic connections, and named
 `login`/`logout` manage OS credentials. A running named gateway detects newly saved
 authorized credentials and recreates affected upstream sessions without restarting

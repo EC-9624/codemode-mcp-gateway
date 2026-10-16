@@ -1,12 +1,12 @@
 import { ok, deepEqual, rejects } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { CodeExecutor, ToolResult, type ExecutionReport } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ExecutionReport } from "@codemode-mcp-gateway/codemode";
 
 // Installed alone: no MCP dependencies or repository source can satisfy accidental imports.
-const installed = fileURLToPath(import.meta.resolve("@cmg/codemode"));
+const installed = fileURLToPath(import.meta.resolve("@codemode-mcp-gateway/codemode"));
 ok(installed.startsWith(fileURLToPath(new URL("./node_modules/", import.meta.url))));
 ok(installed.endsWith("/dist/index.js"));
-const internal = "@cmg/codemode/runtime/engine";
+const internal = "@codemode-mcp-gateway/codemode/runtime/engine";
 await rejects(() => import(internal));
 
 const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });

@@ -8,7 +8,7 @@ import {
   ToolCatalog,
   ToolResult,
   type ToolInputSchema,
-} from "@cmg/codemode";
+} from "@codemode-mcp-gateway/codemode";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("validated tools through CodeExecutor", () => {

@@ -1,4 +1,4 @@
-import { type ExecutionReport } from "@cmg/codemode";
+import { type ExecutionReport } from "@codemode-mcp-gateway/codemode";
 
 export type McpCatalogOptions = {
   /** Overall tool discovery deadline in milliseconds. Defaults to 15000. */

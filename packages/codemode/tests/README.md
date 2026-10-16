@@ -1,7 +1,7 @@
 # Codemode test ownership
 
 The tests specify public behaviors by subject. Import subjects through
-`@cmg/codemode`, keep Arrange → Act → Assert visible, and give each independent
+`@codemode-mcp-gateway/codemode`, keep Arrange → Act → Assert visible, and give each independent
 event sequence its own test. Support code owns mechanics, not scenario decisions.
 
 ## Public subjects

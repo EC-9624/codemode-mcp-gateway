@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { CodeExecutor, ToolResult, type ToolContext } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ToolContext } from "@codemode-mcp-gateway/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor cancellation", () => {

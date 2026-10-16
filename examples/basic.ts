@@ -5,7 +5,7 @@ import {
   defineTool,
   ToolCatalog,
   ToolResult,
-} from "@cmg/codemode";
+} from "@codemode-mcp-gateway/codemode";
 
 const basic = new CodeExecutor({
   tools: {

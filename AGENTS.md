@@ -29,10 +29,12 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
   Codemode runtime details stay internal to `packages/codemode/src/runtime/`.
   MCP imports only codemode's public API; codemode never imports MCP or its SDK.
   `packages/gateway/` owns composition, engine selection, configuration, and transports,
-  with a programmatic `src/index.ts` and a thin `src/cli.ts` exposing `cmg`.
+  with a programmatic `src/index.ts` and a thin `src/cli.ts` exposing `gw`.
   Importing the programmatic entry must not start the CLI or install process listeners.
   The MCP server borrows an executor rather than constructing a concrete sandbox.
 - Published package imports use the export map; runtime deep imports are unsupported.
+  Libraries are `@codemode-mcp-gateway/codemode` and `@codemode-mcp-gateway/mcp`;
+  the product package is `codemode-mcp-gateway` and its CLI is `gw`.
   Internal relative imports use explicit `.ts` paths; TypeScript rewrites them for
   compiled ESM. Repository source runs use the `development` export condition;
   packed consumers use `dist/`.

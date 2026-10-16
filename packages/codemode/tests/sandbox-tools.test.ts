@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor tools", () => {
   test("lets the script catch public host errors and continue", async () => {

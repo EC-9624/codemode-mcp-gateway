@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Tool } from "@modelcontextprotocol/client";
-import { ToolResult } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { ToolResult } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { connectMcp, requireTool, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 

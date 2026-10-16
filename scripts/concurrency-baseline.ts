@@ -3,8 +3,12 @@ import { cpus, release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
-import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
-import { CodeExecutor, createDiscoveryTools, type ExecutionReport } from "@cmg/codemode";
+import { createMcpCatalog, createCodemodeServer } from "@codemode-mcp-gateway/mcp";
+import {
+  CodeExecutor,
+  createDiscoveryTools,
+  type ExecutionReport,
+} from "@codemode-mcp-gateway/codemode";
 import { responseText } from "../examples/output.ts";
 import { z } from "zod";
 

@@ -5,7 +5,7 @@ import {
   createDiscoveryTools,
   ToolCatalog,
   type ToolSearchPage,
-} from "@cmg/codemode";
+} from "@codemode-mcp-gateway/codemode";
 
 describe("ToolCatalog", () => {
   test("describes tools without invoking or exposing their implementations", () => {

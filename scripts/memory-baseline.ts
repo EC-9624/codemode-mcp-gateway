@@ -131,7 +131,10 @@ async function measure() {
       child: undefined,
       idleMs: 1000,
       gcMethod: options.gc === "forced" ? "Bun.gc(true), main thread only" : "automatic",
-      executorEntry: options.scenario === "executor" ? import.meta.resolve("@cmg/codemode") : null,
+      executorEntry:
+        options.scenario === "executor"
+          ? import.meta.resolve("@codemode-mcp-gateway/codemode")
+          : null,
     }),
   );
   await setImmediate();
@@ -261,7 +264,7 @@ async function operation(counts: Counts): Promise<() => Promise<void>> {
   if (options.scenario === "control") return async () => {};
 
   if (options.scenario === "executor") {
-    const { CodeExecutor } = await import("@cmg/codemode");
+    const { CodeExecutor } = await import("@codemode-mcp-gateway/codemode");
     const executor = new CodeExecutor();
 
     return async () => {

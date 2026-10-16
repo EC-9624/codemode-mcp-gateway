@@ -1,8 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHandler, type CallToolResult } from "@modelcontextprotocol/server";
-import { CodeExecutor, ToolResult, type ToolException } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { CodeExecutor, ToolResult, type ToolException } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { connectMcp, requireTool, toolServer } from "./support/mcp.ts";
 

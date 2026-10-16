@@ -1,6 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { CodeExecutor, ToolResult, type ExecuteOptions, type SandboxOptions } from "@cmg/codemode";
+import {
+  CodeExecutor,
+  ToolResult,
+  type ExecuteOptions,
+  type SandboxOptions,
+} from "@codemode-mcp-gateway/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor", () => {

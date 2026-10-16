@@ -7,8 +7,8 @@ import {
   type SandboxTool,
   type ToolDefinition,
   type ToolException,
-} from "@cmg/codemode";
-import { createCodemodeServer } from "@cmg/mcp";
+} from "@codemode-mcp-gateway/codemode";
+import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { type Configuration, type ServerConfiguration } from "./config.ts";
@@ -432,7 +432,7 @@ export class Gateway implements AsyncDisposable {
     if (cause.recovery === "retry")
       return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}; reconnection will be attempted automatically.`;
 
-    return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}. Run cmg login --server=${entry.name} with the same configuration; recovery is automatic after credentials change.`;
+    return `Server ${JSON.stringify(entry.name)} authorization ${cause.failure.kind}. Run gw login --server=${entry.name} with the same configuration; recovery is automatic after credentials change.`;
   }
 
   private snapshot() {

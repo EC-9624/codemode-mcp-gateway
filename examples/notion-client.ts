@@ -173,7 +173,7 @@ try {
       status: "failed",
       kind: "transport",
       message:
-        "Gateway initialization failed. See gateway diagnostics; if authorization is missing or rejected, run cmg login with this configuration.",
+        "Gateway initialization failed. See gateway diagnostics; if authorization is missing or rejected, run gw login with this configuration.",
     }),
   );
   process.exitCode = 1;
@@ -279,7 +279,7 @@ async function runStep(step: string, code: string, iteration: number, agent: num
 
 function argumentsOf(args: string[]) {
   const usage =
-    "Usage: bun run example:notion <config> <query> [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>] [--gateway <installed-cmg-path>]";
+    "Usage: bun run example:notion <config> <query> [--page <url-or-id>] [--expect <marker>] [--runs <1-20>] [--agents <1-8>] [--gateway <installed-gw-path>]";
 
   let parsed;
   try {

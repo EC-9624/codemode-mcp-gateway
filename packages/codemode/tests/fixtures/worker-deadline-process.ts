@@ -1,4 +1,4 @@
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 import { Worker } from "node:worker_threads";
 import {
   faultWorker,

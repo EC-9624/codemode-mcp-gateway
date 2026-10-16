@@ -1,4 +1,4 @@
-# @cmg/mcp
+# @codemode-mcp-gateway/mcp
 
 Two adapters between MCP and code-mode execution:
 
@@ -9,8 +9,8 @@ Two adapters between MCP and code-mode execution:
 ## Usage
 
 ```ts
-import { CodeExecutor } from "@cmg/codemode";
-import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog, createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type Client } from "@modelcontextprotocol/client";
 
 // The caller connects/authenticates client and retains ownership of it.

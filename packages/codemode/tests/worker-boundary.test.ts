@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { ToolResult } from "@cmg/codemode";
+import { ToolResult } from "@codemode-mcp-gateway/codemode";
 import { WorkerToMainMessage } from "../src/runtime/protocol.ts";
 import { executionErrorOf } from "./support/execution-error.ts";
 import { faultWorker, interruptFlag, startupData, superviseWorker } from "./support/workers.ts";

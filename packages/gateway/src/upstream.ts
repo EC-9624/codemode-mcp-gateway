@@ -5,8 +5,8 @@ import {
   InsufficientScopeError,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { ToolCatalog, ToolResult } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { ToolCatalog, ToolResult } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { resolveHeaders, type ServerConfiguration } from "./config.ts";
 import { credentialStore, oauthConnection } from "./auth/credentials.ts";
 import { OAuthSession } from "./auth/session.ts";
@@ -266,7 +266,7 @@ function publicAuthFailures(
 
                 if (cause instanceof InsufficientScopeError) {
                   return ToolResult.failure(
-                    "The upstream denied this operation's scope. Use an account with permission and explicitly run cmg login if additional consent is required.",
+                    "The upstream denied this operation's scope. Use an account with permission and explicitly run gw login if additional consent is required.",
                   );
                 }
 

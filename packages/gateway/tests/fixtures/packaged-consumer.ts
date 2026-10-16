@@ -1,7 +1,7 @@
 import { ok, deepEqual } from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
-import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
+import { CodeExecutor, createDiscoveryTools } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog, createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { Configuration, Gateway } from "codemode-mcp-gateway";
 import { dirname } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -10,7 +10,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 // This fixture is copied into an unrelated directory and imports only installed public exports.
-for (const name of ["@cmg/codemode", "@cmg/mcp", "codemode-mcp-gateway"]) {
+for (const name of [
+  "@codemode-mcp-gateway/codemode",
+  "@codemode-mcp-gateway/mcp",
+  "codemode-mcp-gateway",
+]) {
   const installed = fileURLToPath(import.meta.resolve(name));
   ok(installed.startsWith(fileURLToPath(new URL("./node_modules/", import.meta.url))));
   ok(installed.endsWith("/dist/index.js"));

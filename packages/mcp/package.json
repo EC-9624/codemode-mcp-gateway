@@ -1,5 +1,5 @@
 {
-  "name": "@cmg/mcp",
+  "name": "@codemode-mcp-gateway/mcp",
   "version": "0.0.0",
   "private": true,
   "description": "Adapt MCP tools and expose an application-supplied code-mode executor",
@@ -26,7 +26,7 @@
     "prepack": "bun run build"
   },
   "dependencies": {
-    "@cmg/codemode": "workspace:*",
+    "@codemode-mcp-gateway/codemode": "workspace:*",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@standard-schema/spec": "1.1.0",

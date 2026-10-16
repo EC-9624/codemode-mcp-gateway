@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SandboxLimits } from "@cmg/codemode";
+import { SandboxLimits } from "@codemode-mcp-gateway/codemode";
 import { GatewayError } from "./errors.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -106,7 +106,7 @@ export function configurationPath(
     throw new GatewayError("XDG_CONFIG_HOME must be an absolute path.");
   }
 
-  return join(xdg || join(home, ".config"), "cmg", "config.json");
+  return join(xdg || join(home, ".config"), "codemode-mcp-gateway", "config.json");
 }
 
 /** Resolve login/logout targets without guessing between accounts. */

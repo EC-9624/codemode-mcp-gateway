@@ -5,8 +5,8 @@ import { McpServer, ProtocolError, ProtocolErrorCode } from "@modelcontextprotoc
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { CodeExecutor, type ToolException } from "@cmg/codemode";
-import { createMcpCatalog } from "@cmg/mcp";
+import { CodeExecutor, type ToolException } from "@codemode-mcp-gateway/codemode";
+import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { connectMcp, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 

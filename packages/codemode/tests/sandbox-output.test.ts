@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor output limit", () => {
   test("returns a large async result without leaking a context when WASM memory grows", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isMainThread } from "node:worker_threads";
-import { CodeExecutor, ToolResult, type ToolException } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ToolException } from "@codemode-mcp-gateway/codemode";
 import { executionErrorOf } from "./support/execution-error.ts";
 
 describe("CodeExecutor reports", () => {

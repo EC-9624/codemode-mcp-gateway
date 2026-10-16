@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { SandboxExecutionError, type ExecutionReport } from "@cmg/codemode";
-import { createCodemodeServer } from "@cmg/mcp";
+import { SandboxExecutionError, type ExecutionReport } from "@codemode-mcp-gateway/codemode";
+import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { connectMcp } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 import { PassThrough } from "node:stream";

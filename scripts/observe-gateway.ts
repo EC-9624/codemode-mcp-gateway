@@ -21,7 +21,7 @@ if (
   (gateway !== undefined && !gateway.trim())
 ) {
   console.error(
-    "Usage: bun scripts/observe-gateway.ts <gateway-config> <metadata-jsonl> [--gateway <installed-cmg-path>]",
+    "Usage: bun scripts/observe-gateway.ts <gateway-config> <metadata-jsonl> [--gateway <installed-gw-path>]",
   );
   process.exit(1);
 }

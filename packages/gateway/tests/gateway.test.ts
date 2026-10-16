@@ -39,7 +39,7 @@ describe("multi-upstream gateway", () => {
     if (status === undefined || !("error" in status))
       throw new Error("Expected authorization guidance.");
 
-    const argument = status.error.message.match(/Run cmg login (\S+) with/)?.[1];
+    const argument = status.error.message.match(/Run gw login (\S+) with/)?.[1];
     if (argument === undefined) throw new Error("Missing login server argument.");
 
     expect(
@@ -1199,7 +1199,7 @@ describe("multi-upstream gateway", () => {
     });
 
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("cmg login --server=notes");
+    expect(JSON.stringify(denied)).toContain("gw login --server=notes");
     expect(JSON.stringify(denied)).not.toContain("private revoked grant");
     expect(gateway.status()).toMatchObject([{ state: "needs-auth" }, { state: "connected" }]);
     expect(responseValue(healthy)).toBe(3);

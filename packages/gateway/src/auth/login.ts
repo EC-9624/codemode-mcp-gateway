@@ -104,7 +104,7 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
   if (!isDeepStrictEqual(current.value, attempt.previous)) {
     return AuthResult.failure(
       "required",
-      "Credentials changed during sign-in. Run cmg login again to authorize the current connection.",
+      "Credentials changed during sign-in. Run gw login again to authorize the current connection.",
     );
   }
 

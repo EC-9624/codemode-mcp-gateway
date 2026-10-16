@@ -8,6 +8,10 @@ Requires **Bun 1.4.3**, pinned in `.bun-version`. Package names are provisional;
 nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
+For an independent local install with the **`gw`** CLI, run `bun run install:local`.
+See [local installation](docs/local-installation.md) for Codex/Claude configuration,
+explicit OAuth login, updates, and rollback. Nothing is published.
+
 ## Quick start
 
 ```sh
@@ -22,13 +26,13 @@ these examples do not require a build.
 ## Agent-facing service
 
 ```sh
-bun run cmg examples/multi.json
-bun run cmg check examples/multi.json --json
-bun run cmg doctor examples/multi.json --json
-bun run cmg login examples/multi.json --server notion
+bun run gw examples/multi.json
+bun run gw check examples/multi.json --json
+bun run gw doctor examples/multi.json --json
+bun run gw login examples/multi.json --server notion
 ```
 
-`cmg` speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`; it waits
+`gw` speaks MCP on stdin/stdout and exposes one tool, `execute({ code })`; it waits
 for an MCP client, not interactive JavaScript input. Diagnostics use stderr.
 Configure named upstreams under `mcp.servers`:
 
@@ -45,8 +49,8 @@ Configure named upstreams under `mcp.servers`:
 
 Local paths resolve from the configuration directory. The included
 [`examples/multi.json`](examples/multi.json) supplies the math script and longer
-Notion deadlines. Once installed, launch `cmg` without arguments to use
-`$XDG_CONFIG_HOME/cmg/config.json` or `~/.config/cmg/config.json`; `--config <path>`
+Notion deadlines. Once installed, launch `gw` without arguments to use
+`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
 or a positional path overrides it. `check` validates without connecting; `doctor`
 opens fresh diagnostic connections. Login is explicit and interactive; serving
 uses saved OS credentials and noninteractive refresh. Logout removes local
@@ -108,11 +112,11 @@ allocations. See [output/failure details](packages/gateway/README.md#results-and
 
 ## Packages
 
-| Package                                              | Responsibility                                                                    |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [`@cmg/codemode`](packages/codemode/README.md)       | Execute JavaScript with host tools; no MCP dependency                             |
-| [`@cmg/mcp`](packages/mcp/README.md)                 | Adapt connected MCP clients or expose a borrowed executor as an MCP server        |
-| [`codemode-mcp-gateway`](packages/gateway/README.md) | Compose upstreams, discovery, configuration, OAuth, lifecycle, API, and `cmg` CLI |
+| Package                                                         | Responsibility                                                                   |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`@codemode-mcp-gateway/codemode`](packages/codemode/README.md) | Execute JavaScript with host tools; no MCP dependency                            |
+| [`@codemode-mcp-gateway/mcp`](packages/mcp/README.md)           | Adapt connected MCP clients or expose a borrowed executor as an MCP server       |
+| [`codemode-mcp-gateway`](packages/gateway/README.md)            | Compose upstreams, discovery, configuration, OAuth, lifecycle, API, and `gw` CLI |
 
 Codemode owns workers/VMs; MCP uses only codemode's public contracts. Gateway owns
 connections and selects QuickJS. Importing its programmatic entry starts no CLI or
@@ -122,7 +126,7 @@ codemode is independently packable. Import package roots, not runtime deep paths
 For standalone execution:
 
 ```ts
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
 const report = await sandbox.execute("return await tools.answer();");
@@ -167,7 +171,7 @@ Each package owns its tests and local `check` command. Root `check` coordinates
 builds, typechecking, lint, formatting checks, tests, and packed-consumer verification;
 there is no root test suite. `verify:packages` builds/packs all workspaces and checks
 unrelated temporary consumers, declarations, workers, MCP, gateway API, and packaged
-`cmg`. Temporary overrides stand in for unpublished registry versions; nothing is
+`gw`. Temporary overrides stand in for unpublished registry versions; nothing is
 published. Use `bun run typecheck` for typechecking and `bun run format` for formatting.
 The clean variant copies current source without inherited installs/builds, then
 performs a frozen install, explicit build, and the same consumer checks. Local
@@ -202,7 +206,7 @@ memory-growth fix; WASM variants remain external. See [patch notes](patches/READ
 After explicit login, run the read-only Notion workflow with private test inputs:
 
 ```sh
-bun run cmg login examples/notion.json
+bun run gw login examples/notion.json
 bun run example:notion examples/notion.json "specific search phrase" \
   --page "<page-url-or-id>" --expect "<known text>" --runs 3
 ```

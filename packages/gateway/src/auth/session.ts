@@ -55,7 +55,7 @@ export class OAuthSession implements AsyncDisposable {
     if (record === undefined || record.authorization.status === "required") {
       return AuthResult.failure(
         "required",
-        "No upstream authorization is available. Run cmg login <configuration.json>.",
+        "No upstream authorization is available. Run gw login <configuration.json>.",
       );
     }
 
@@ -72,7 +72,7 @@ export class OAuthSession implements AsyncDisposable {
     ) {
       return AuthResult.failure(
         "required",
-        "The upstream OAuth issuer or resource changed. Run cmg login <configuration.json>.",
+        "The upstream OAuth issuer or resource changed. Run gw login <configuration.json>.",
       );
     }
 
@@ -180,7 +180,7 @@ export class OAuthSession implements AsyncDisposable {
     if (record === undefined || record.authorization.status === "required") {
       return AuthResult.failure(
         "required",
-        "Upstream authorization is required. Run cmg login <configuration.json>.",
+        "Upstream authorization is required. Run gw login <configuration.json>.",
       );
     }
 
@@ -228,7 +228,7 @@ export class OAuthSession implements AsyncDisposable {
     if (authorization.tokens.refresh_token === undefined) {
       return AuthResult.failure(
         "required",
-        "The upstream did not provide a usable refresh token. Run cmg login <configuration.json>.",
+        "The upstream did not provide a usable refresh token. Run gw login <configuration.json>.",
       );
     }
 

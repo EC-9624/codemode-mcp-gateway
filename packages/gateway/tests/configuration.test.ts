@@ -235,12 +235,12 @@ describe("application configuration", () => {
 describe("configuration path resolution", () => {
   test("uses XDG configuration independently of the working directory", () => {
     expect(configurationPath(undefined, { XDG_CONFIG_HOME: "/config" }, "/home/test")).toBe(
-      "/config/cmg/config.json",
+      "/config/codemode-mcp-gateway/config.json",
     );
   });
   test("falls back to the home configuration directory", () => {
     expect(configurationPath(undefined, {}, "/home/test")).toBe(
-      "/home/test/.config/cmg/config.json",
+      "/home/test/.config/codemode-mcp-gateway/config.json",
     );
   });
   test("an explicit absolute path overrides even invalid XDG configuration", () => {

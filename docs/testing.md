@@ -34,7 +34,7 @@ than creating a shared test-framework package.
 
 ## The module is the unit
 
-Import contract subjects from `@cmg/codemode`, `@cmg/mcp`, or
+Import contract subjects from `@codemode-mcp-gateway/codemode`, `@codemode-mcp-gateway/mcp`, or
 `codemode-mcp-gateway`. Exercise their real implementation and internal collaborators.
 Changing a private parser, bridge, or transition helper should not require rewriting
 the behavioral specification.

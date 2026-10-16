@@ -1,4 +1,4 @@
-import { CodeExecutor, SandboxLimits, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, SandboxLimits, ToolResult } from "@codemode-mcp-gateway/codemode";
 
 const runs = Number(process.argv[2] ?? 20);
 if (process.argv.length > 3 || !Number.isInteger(runs) || runs < 2 || runs > 200) {

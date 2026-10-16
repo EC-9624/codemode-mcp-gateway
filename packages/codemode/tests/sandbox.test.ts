@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor } from "@cmg/codemode";
+import { CodeExecutor } from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor.execute", () => {
   test("returns the result of a JavaScript function body with no tool calls", async () => {

@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads";
 import { DEFAULT_LIMITS, type ExecutionLimits } from "../../src/runtime/limits.ts";
 import { type WorkerStartupData } from "../../src/runtime/protocol.ts";
 import { WorkerExecution, type WorkerControl } from "../../src/runtime/execution.ts";
-import { type SandboxTool } from "@cmg/codemode";
+import { type SandboxTool } from "@codemode-mcp-gateway/codemode";
 import { type ToolCallLimits } from "../../src/runtime/budget.ts";
 
 export { type WorkerControl } from "../../src/runtime/execution.ts";

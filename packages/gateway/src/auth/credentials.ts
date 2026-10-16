@@ -134,7 +134,7 @@ export function credentialStore(
       } catch (cause) {
         return AuthResult.failure(
           "invalid",
-          "Stored OAuth credentials are invalid. Run cmg logout, then cmg login.",
+          "Stored OAuth credentials are invalid. Run gw logout, then gw login.",
           cause,
         );
       }
@@ -143,7 +143,7 @@ export function credentialStore(
       if (!parsed.success || parsed.data.upstreamUrl !== connection.url) {
         return AuthResult.failure(
           "invalid",
-          "Stored OAuth credentials do not match this connection. Run cmg logout, then cmg login.",
+          "Stored OAuth credentials do not match this connection. Run gw logout, then gw login.",
         );
       }
 

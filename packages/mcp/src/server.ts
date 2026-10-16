@@ -13,7 +13,7 @@
  */
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { type ExecutionReport } from "@cmg/codemode";
+import { type ExecutionReport } from "@codemode-mcp-gateway/codemode";
 import { type CodemodeServerOptions } from "./types.ts";
 
 /** Borrows an executor. Closing awaits this server's execution cleanup and output formatting. */

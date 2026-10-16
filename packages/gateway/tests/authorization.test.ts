@@ -231,7 +231,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(responseText(response)).toContain("cmg login");
+    expect(responseText(response)).toContain("gw login");
     expect(upstream.refreshes).toBe(1);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -396,7 +396,7 @@ describe("OAuth-backed stdio gateway", () => {
       tools: [],
       servers: [{ name: "test", state: "needs-auth" }],
     });
-    expect(app.stderr).toContain("cmg login");
+    expect(app.stderr).toContain("gw login");
     expect(upstream.requests).toEqual([]);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -429,7 +429,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(responseText(result)).toContain("cmg login");
+    expect(responseText(result)).toContain("gw login");
     expect(JSON.stringify(result)).not.toContain("private revoke detail");
     expect(app.stderr).not.toContain("private revoke detail");
     expect(upstream.refreshes).toBe(1);
