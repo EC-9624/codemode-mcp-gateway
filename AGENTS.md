@@ -150,10 +150,12 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 ## Comments and Documentation
 
 - Code explains **How** through names, types, and control flow.
-- Tests specify **What**: observable contracts, with names that match their assertions.
-- Commit logs explain **Why**: the problem and motivation, not a list of edits.
-- Code comments explain **Why not**: why an apparently simpler alternative would
-  break a constraint or guarantee. Do not invent rationale or narrate readable code.
+- Code comments explain **What** non-obvious logic accomplishes and **Why** it is
+  necessary: intent, constraints, ownership, and failure modes. Explain why an
+  apparently simpler alternative would break a guarantee when relevant.
+- Tests verify observable contracts, with names that match their assertions.
+- Commit logs explain the problem and motivation, not a list of edits.
+- Ground comments in verified behavior; do not invent rationale or narrate readable code.
 - Keep concise API and ownership documentation where callers need the contract.
 - Explain non-obvious constraints, ownership rules, and surprising behavior.
 - Do not narrate obvious assignments or control flow.

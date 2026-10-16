@@ -1,5 +1,5 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
-import { CodeExecutor, ToolResult } from "@cmg/codemode";
+import { CodeExecutor, ToolResult, type ExecutionReport } from "@cmg/codemode";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -86,8 +86,15 @@ await upstream.connect(remote);
 await client.connect(local);
 const catalog = await createMcpCatalog(client);
 
+const reports: ExecutionReport[] = [];
+
 const server = createCodemodeServer({
-  execute: (code, options) => executor.execute(code, { ...options, tools: catalog.tools }),
+  execute: async (code, options) => {
+    const report = await executor.execute(code, { ...options, tools: catalog.tools });
+    reports.push(report);
+
+    return report;
+  },
 });
 
 cleanup.defer(() => server.close());
@@ -96,16 +103,17 @@ cleanup.defer(() => agent.close());
 const [agentLocal, agentRemote] = InMemoryTransport.createLinkedPair();
 await server.connect(agentRemote);
 await agent.connect(agentLocal);
-deepEqual(
-  (
-    await agent.callTool({
-      name: "execute",
-      arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
-    })
-  ).structuredContent,
+
+const response = await agent.callTool({
+  name: "execute",
+  arguments: { code: "return (await tools.add({ a: 20, b: 22 })).structuredContent.sum;" },
+});
+
+deepEqual(response, { content: [{ type: "text", text: "42" }] });
+deepEqual(reports, [
   {
     result: { ok: true, value: 42 },
     calls: [{ callId: 1, name: "add", status: "completed" }],
   },
-);
+]);
 console.log(JSON.stringify({ phase: "contract", versions: process.versions, ok: true }));

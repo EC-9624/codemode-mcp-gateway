@@ -253,6 +253,8 @@ export class WorkerExecution {
     this.lastCallId = call.callId;
     if (!this.checkRunning()) return;
 
+    // The guest bridge queues excess concurrency; the parent independently rejects
+    // a worker that bypasses those limits before it can invoke another host callback.
     const limit = this.budget.admit() ?? this.budget.start();
     if (limit !== undefined) {
       this.finish({ ok: true, result: { ok: false, error: limit } });

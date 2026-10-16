@@ -7,6 +7,7 @@ import { login, logout, Credentials, type CredentialStore } from "codemode-mcp-g
 import { gatewayProcess } from "./support/gateway-process.ts";
 import { oauthFixture } from "./support/oauth.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { responseText, responseValue } from "./support/output.ts";
 
 async function credentialFiles(value: unknown) {
   const directory = await mkdtemp(join(tmpdir(), "cmg-auth-process-"));
@@ -83,7 +84,7 @@ describe("OAuth-backed stdio gateway", () => {
 
     app.child.stdin.end();
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(response)).toBe(42);
     expect(app.child.pid).toBe(pid);
     expect(await app.closed).toEqual({ code: 0, signal: null });
     expect(app.stderr).not.toContain("access-");
@@ -144,7 +145,7 @@ describe("OAuth-backed stdio gateway", () => {
     }
 
     for (const result of await requests) {
-      expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 5 } });
+      expect(responseValue(result)).toBe(5);
     }
 
     expect(upstream.refreshes).toBe(1);
@@ -229,10 +230,8 @@ describe("OAuth-backed stdio gateway", () => {
       arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
-    expect(response.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "script" } },
-    });
-    expect(JSON.stringify(response.structuredContent)).toContain("cmg login");
+    expect(response.isError).toBe(true);
+    expect(responseText(response)).toContain("cmg login");
     expect(upstream.refreshes).toBe(1);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -276,10 +275,8 @@ describe("OAuth-backed stdio gateway", () => {
       arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
-    expect(result.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "script" } },
-    });
-    expect(JSON.stringify(result.structuredContent)).toContain("scope");
+    expect(result.isError).toBe(true);
+    expect(responseText(result)).toContain("scope");
     expect(JSON.stringify(result)).not.toContain("private scope detail");
     expect(upstream.refreshes).toBe(0);
     expect(upstream.registrations).toBe(0);
@@ -395,8 +392,9 @@ describe("OAuth-backed stdio gateway", () => {
       arguments: { code: 'return await tools.searchTools({ query: "add" });' },
     });
 
-    expect(status.structuredContent).toMatchObject({
-      result: { ok: true, value: { tools: [], servers: [{ name: "test", state: "needs-auth" }] } },
+    expect(responseValue(status)).toMatchObject({
+      tools: [],
+      servers: [{ name: "test", state: "needs-auth" }],
     });
     expect(app.stderr).toContain("cmg login");
     expect(upstream.requests).toEqual([]);
@@ -430,10 +428,8 @@ describe("OAuth-backed stdio gateway", () => {
       arguments: { code: 'return await tools["test.add"]({ a: 2, b: 3 });' },
     });
 
-    expect(result.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "script" } },
-    });
-    expect(JSON.stringify(result.structuredContent)).toContain("cmg login");
+    expect(result.isError).toBe(true);
+    expect(responseText(result)).toContain("cmg login");
     expect(JSON.stringify(result)).not.toContain("private revoke detail");
     expect(app.stderr).not.toContain("private revoke detail");
     expect(upstream.refreshes).toBe(1);
@@ -465,9 +461,7 @@ describe("OAuth-backed stdio gateway", () => {
     await app.waitFor('"state":"needs-auth"');
     // A new session adopts the login; wait for its second connection report.
     await app.waitForConnections(2);
-    expect((await app.client.callTool(input)).structuredContent).toMatchObject({
-      result: { ok: true, value: 5 },
-    });
+    expect(responseValue(await app.client.callTool(input))).toBe(5);
     expect(upstream.refreshes).toBe(1);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -504,7 +498,7 @@ describe("OAuth-backed stdio gateway", () => {
 
       const first = await app.client.callTool(input);
       expect(first.isError).toBe(true);
-      expect(JSON.stringify(first.structuredContent)).toContain("authorization storage");
+      expect(responseText(first)).toContain("authorization storage");
       expect((await app.client.callTool(input)).isError).toBe(true);
       expect(upstream.refreshes).toBe(1);
       expect(await Bun.file(files.path).json()).toEqual(original);
@@ -574,15 +568,13 @@ describe("OAuth-backed stdio gateway", () => {
 
     try {
       await challenged.promise;
-      expect((await app.client.callTool(input)).structuredContent).toMatchObject({
-        result: { ok: true, value: 5 },
-      });
+      expect(responseValue(await app.client.callTool(input))).toBe(5);
       expect(upstream.refreshes).toBe(1);
     } finally {
       release.resolve();
     }
 
-    expect((await delayed).structuredContent).toMatchObject({ result: { ok: true, value: 5 } });
+    expect(responseValue(await delayed)).toBe(5);
     expect(upstream.refreshes).toBe(1);
   }, 10_000);
 
@@ -629,7 +621,7 @@ describe("OAuth-backed stdio gateway", () => {
       await rm(join(files.environment.CMG_TEST_LOCKS, lock), { recursive: true });
       const failed = await pending;
       expect(failed.isError).toBe(true);
-      expect(JSON.stringify(failed.structuredContent)).toContain("authorization busy");
+      expect(responseText(failed)).toContain("authorization busy");
       expect((await app.client.callTool(input)).isError).toBe(true);
       expect(await Bun.file(files.path).json()).toEqual(original);
       expect(upstream.refreshes).toBe(1);

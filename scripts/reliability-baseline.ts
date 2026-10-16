@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpCatalog, createCodemodeServer } from "@cmg/mcp";
-import { CodeExecutor, createDiscoveryTools } from "@cmg/codemode";
+import { CodeExecutor, createDiscoveryTools, type ExecutionReport } from "@cmg/codemode";
+import { responseText } from "../examples/output.ts";
 import { z } from "zod";
 import { observeWorkers } from "./reliability-workers.ts";
 
@@ -224,8 +225,15 @@ async function measure() {
     totalTimeoutMs: 4000,
   });
 
+  const reports = new Map<string, ExecutionReport>();
+
   const server = createCodemodeServer({
-    execute: (code, options) => executor.execute(code, options),
+    execute: async (code, options) => {
+      const report = await executor.execute(code, options);
+      if (!options.signal.aborted) reports.set(code, report);
+
+      return report;
+    },
   });
 
   const agent = new Client({ name: "reliability-agent", version: "0" });
@@ -293,9 +301,11 @@ async function measure() {
     activeRequests++;
     counts.peakRequests = Math.max(counts.peakRequests, activeRequests);
     const start = performance.now();
+    code += `\n// diagnostic request ${counts.attempted}`;
     try {
       const response = await agent.callTool({ name: "execute", arguments: { code } });
-      const report = reportSchema.parse(response.structuredContent);
+      const report = reportSchema.parse(reports.get(code));
+      reports.delete(code);
       deepStrictEqual(
         report.calls.map((call) => call.name),
         names,
@@ -308,9 +318,13 @@ async function measure() {
         report.calls.map((call) => call.callId),
         names.map((_, index) => index + 1),
       );
-      strictEqual(response.isError, failure !== undefined);
+      strictEqual(response.isError, failure === undefined ? undefined : true);
       if (failure === undefined) {
         deepStrictEqual(report.result, { ok: true, value: expected });
+        strictEqual(
+          responseText(response),
+          typeof expected === "string" ? expected : JSON.stringify(expected),
+        );
         ok(report.calls.every((call) => call.status === "completed"));
         counts.completed++;
       } else {

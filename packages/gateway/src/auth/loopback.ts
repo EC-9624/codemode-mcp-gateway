@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { AuthResult } from "./result.ts";
 
-/** Tern-style one-shot loopback listener; the caller owns state, deadline, and disposal. */
+/** One-shot OAuth callback listener; the caller supplies state and deadline and owns disposal. */
 export async function listenForCallback(state: string, signal: AbortSignal, port = 0) {
   await using setup = new AsyncDisposableStack();
 

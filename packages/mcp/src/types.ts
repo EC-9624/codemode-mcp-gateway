@@ -1,4 +1,4 @@
-import { type CallOutcome, type ExecutionReport, type SandboxResult } from "@cmg/codemode";
+import { type ExecutionReport } from "@cmg/codemode";
 
 export type McpCatalogOptions = {
   /** Overall tool discovery deadline in milliseconds. Defaults to 15000. */
@@ -16,13 +16,10 @@ export type CodemodeServerOptions = {
   execute: (code: string, options: { signal: AbortSignal }) => Promise<ExecutionReport>;
   /** Describe the actual supplied environment; the default makes no engine-specific claims. */
   description?: string;
-};
-
-/** The executor's metadata-only observations, also used at the MCP boundary. */
-export type CallSummary = CallOutcome;
-
-/** Agent-facing projection, emitted as both structured content and JSON text without tool bodies. */
-export type CodemodeResponse = {
-  result: SandboxResult | { ok: false; error: { kind: "sandbox"; message: string } };
-  calls: CallSummary[];
+  /**
+   * Host-owned presentation of returned values or public errors. Closing awaits this promise
+   * so output resources can be released afterward. Rejections become controlled presentation
+   * errors; execution is never replayed. Recoverable save failures should return a preview.
+   */
+  formatOutput?: (text: string) => Promise<string>;
 };

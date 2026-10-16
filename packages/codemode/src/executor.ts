@@ -93,7 +93,8 @@ export class CodeExecutor {
               },
             }),
         ...(signal === undefined ? {} : { signal }),
-        // Shared flag: 0 = continue, 1 = request interruption.
+        // A busy QuickJS worker cannot process cancellation messages. Its interrupt
+        // handler polls this shared flag: 0 = continue, 1 = request interruption.
         interrupt: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
       };
 

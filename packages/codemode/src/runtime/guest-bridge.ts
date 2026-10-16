@@ -5,8 +5,8 @@
  *
  * Calls are validated and admitted before dispatch; excess concurrency waits in FIFO order.
  * A reply settles its guest promise, releases an active slot, dispatches the next queued
- * call, and wakes the engine. Decoding the returned value
- * runs later on the guest job queue, so a then getter can safely start another call.
+ * call, and wakes the engine. Decoding runs later on the guest job queue, so a then
+ * getter can safely start another call after the previous call releases its slot.
  *
  * The first admission limit or infrastructure failure stops the bridge. Exceptions
  * must be recorded here: letting them escape a native callback would make the SDK
@@ -79,6 +79,8 @@ export function installGuestToolBridge(
     if (!scope.alive || failure !== undefined) return;
 
     const call = queuedCalls[0];
+    // A full active budget leaves the call queued, not failed. Admission already
+    // charged it against the total budget, so queueing cannot bypass the call limit.
     if (call === undefined || budget.start() !== undefined) return;
 
     queuedCalls.shift();

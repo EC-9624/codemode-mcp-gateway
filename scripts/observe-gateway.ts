@@ -40,18 +40,6 @@ const response = z.object({
   result: z
     .object({
       isError: z.boolean().optional(),
-      structuredContent: z
-        .object({
-          result: z.discriminatedUnion("ok", [
-            z.object({ ok: z.literal(true) }),
-            z.object({
-              ok: z.literal(false),
-              error: z.object({ kind: z.string(), resource: z.string().optional() }),
-            }),
-          ]),
-          calls: z.array(z.object({ status: z.string() })),
-        })
-        .optional(),
     })
     .optional(),
   error: z.object({ code: z.number() }).optional(),
@@ -114,7 +102,6 @@ replies.on("line", (line) => {
   if (call === undefined) return;
 
   pending.delete(id);
-  const report = result?.structuredContent;
   record({
     event: "response",
     id,
@@ -123,9 +110,8 @@ replies.on("line", (line) => {
     inFlight: pending.size,
     isError: result?.isError,
     protocolErrorCode: error?.code,
-    ok: report?.result.ok,
-    failure: report?.result.ok === false ? report.result.error : undefined,
-    toolCalls: report?.calls.length,
+    // Execution details remain host-side; wire observation knows only the MCP outcome.
+    ok: result === undefined ? undefined : result.isError !== true,
   });
 });
 

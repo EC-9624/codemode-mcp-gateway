@@ -10,6 +10,17 @@ Investigation started 2026-10-16 on macOS arm64, from `9ce90ed`.
 The earlier [WASM allocation investigation](wasm-memory.md) remains historical evidence;
 this study measures the real executor and the cost of potential mitigations.
 
+Integration note: the recorded measurements use that source revision plus the
+portability changes below, before `45dec3e`'s text-only MCP output and bundled
+QuickJS patch. The current probes now check text output and inspect reports
+host-side, retaining bounded per-request correlation for concurrent calls. The
+measurement artifacts are unchanged; these historical numbers are not a new
+performance baseline for the integrated tree.
+
+The integrated tree separately passed 656 tests and packed-consumer verification,
+both examples, Bun/Node contract and four-way MCP smoke probes, and the reliability
+smoke diagnostic. The long measurement matrix was not rerun during integration.
+
 ## Questions and scope
 
 1. Does disabling Bun's WASM fast-memory path stop continued growth in CMG, not just
@@ -284,8 +295,9 @@ used. Overall evidence covers **125,200 measured operations** and 1,000 warmups.
 
 This addresses the Bun allocator-retention finding, not the separate audited
 QuickJS 0.32.0 context-pointer/disposal fault when WASM memory grows during queued
-jobs. The SDK is unchanged here; fixing that defect remains separate work. Passing
-these bounded workloads must not be described as resolving every sandbox issue.
+jobs. The SDK was unpatched during these measurements. The current integrated tree
+includes `45dec3e`'s separate fix, described in [the patch notes](../patches/README.md).
+Passing these bounded workloads must not be described as resolving every sandbox issue.
 
 Reproduce a longer run with each chosen executable, serially (use a separate output
 file per host; add the environment flag only for the 1.4.2 fallback):

@@ -1,10 +1,11 @@
-import { deepEqual, equal } from "node:assert/strict";
+import { deepEqual } from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cpus, release } from "node:os";
 import { parseArgs } from "node:util";
 import { Worker } from "node:worker_threads";
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
+import { type ExecutionReport } from "@cmg/codemode";
 
 const args = parseArgs({
   options: {
@@ -240,9 +241,16 @@ async function workload(): Promise<() => Promise<void>> {
     await client.connect(local);
     const catalog = await createMcpCatalog(client);
     const tools = { ...catalog.tools, ...createDiscoveryTools(catalog) };
+    const reports = new Map<string, ExecutionReport>();
+    let sequence = 0;
 
     const server = createCodemodeServer({
-      execute: (code, request) => executor.execute(code, { ...request, tools }),
+      execute: async (code, request) => {
+        const report = await executor.execute(code, { ...request, tools });
+        reports.set(code, report);
+
+        return report;
+      },
     });
 
     cleanup.defer(() => server.close());
@@ -253,19 +261,22 @@ async function workload(): Promise<() => Promise<void>> {
     await agent.connect(agentLocal);
 
     return async () => {
-      const response = await agent.callTool({
-        name: "execute",
-        arguments: {
-          code: `
+      const code = `
         const found = await tools.searchTools({ query: "documents" });
         const name = found.tools[0].name;
         await tools.describeTool({ name });
         return (await tools[name]({})).structuredContent.text.length;
-      `,
-        },
+        // diagnostic request ${++sequence}
+      `;
+
+      const response = await agent.callTool({
+        name: "execute",
+        arguments: { code },
       });
 
-      deepEqual(response.structuredContent, {
+      const report = reports.get(code);
+      reports.delete(code);
+      deepEqual(report, {
         result: { ok: true, value: 65536 },
         calls: [
           { callId: 1, name: "searchTools", status: "completed" },
@@ -273,7 +284,7 @@ async function workload(): Promise<() => Promise<void>> {
           { callId: 3, name: "read", status: "completed" },
         ],
       });
-      equal(response.isError, false);
+      deepEqual(response, { content: [{ type: "text", text: "65536" }] });
     };
   }
 

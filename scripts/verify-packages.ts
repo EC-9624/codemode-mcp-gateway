@@ -23,6 +23,9 @@ for (const [workspace, file, required] of [
   const entries = (await run(["tar", "-tf", archive], directory)).trim().split("\n");
   ok(entries.includes(required), `Missing built asset ${required}`);
   ok(entries.includes("package/README.md"), "Package documentation must be included");
+  if (workspace === "packages/codemode")
+    ok(entries.includes("package/THIRD_PARTY_NOTICES.md"), "Bundled SDK license must be included");
+
   const sources = await readdir(join(root, workspace, "src"), { recursive: true });
 
   const expected = sources

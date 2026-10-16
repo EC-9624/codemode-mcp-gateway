@@ -81,7 +81,7 @@ const sandbox = z
     memoryLimitBytes: defaultLimit(SandboxLimits.memoryLimitBytes),
     maxStackSizeBytes: defaultLimit(SandboxLimits.maxStackSizeBytes),
     maxSourceBytes: defaultLimit(SandboxLimits.maxSourceBytes),
-    maxOutputBytes: defaultLimit(SandboxLimits.maxOutputBytes),
+    maxOutputBytes: limit(SandboxLimits.maxOutputBytes).default(16 * 1024 * 1024),
     maxToolCalls: defaultLimit(SandboxLimits.maxToolCalls),
     maxConcurrentToolCalls: defaultLimit(SandboxLimits.maxConcurrentToolCalls),
     maxConcurrentExecutions: defaultLimit(SandboxLimits.maxConcurrentExecutions),

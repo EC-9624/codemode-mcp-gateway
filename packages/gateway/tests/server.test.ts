@@ -9,6 +9,7 @@ import { z } from "zod";
 import { Configuration, Gateway, type ConfigurationInput } from "codemode-mcp-gateway";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { responseText, responseValue } from "./support/output.ts";
 
 describe("gateway execution", () => {
   test("the advertised discovery example runs and exact discovered names remain callable", async () => {
@@ -36,20 +37,12 @@ describe("gateway execution", () => {
     expect(listing.tools.map((tool) => tool.name)).toEqual(["execute"]);
     expect(description).toContain("check isError");
     expect(description).toContain("## Availability");
-    expect(sample.structuredContent).toMatchObject({
-      result: {
-        ok: true,
-        value: { tools: [], total: 0, servers: [{ name: "test", state: "connected" }] },
-      },
+    expect(responseValue(sample)).toMatchObject({
+      tools: [],
+      total: 0,
+      servers: [{ name: "test", state: "connected" }],
     });
-    expect(result.structuredContent).toEqual({
-      result: { ok: true, value: { name: "test.add", required: ["a", "b"], sum: 5 } },
-      calls: [
-        { callId: 1, name: "searchTools", status: "completed" },
-        { callId: 2, name: "describeTool", status: "completed" },
-        { callId: 3, name: "test.add", status: "completed" },
-      ],
-    });
+    expect(responseValue(result)).toEqual({ name: "test.add", required: ["a", "b"], sum: 5 });
   });
 
   test("charges discovery calls to the supplied execution budget", async () => {
@@ -63,10 +56,7 @@ describe("gateway execution", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "limit", resource: "tool-calls", maximum: 1 } },
-      calls: [{ callId: 1, name: "searchTools", status: "completed" }],
-    });
+    expect(responseText(response)).toBe("Execution exceeded the 1 tool-call limit.");
   });
 
   test("shares capacity across MCP instances and admits a later request after completion", async () => {
@@ -98,20 +88,18 @@ describe("gateway execution", () => {
       arguments: { code: 'return await tools["test.wait"]({});' },
     });
 
-    expect(rejected.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "limit", resource: "executions", maximum: 1 } },
-      calls: [],
-    });
+    expect(rejected.isError).toBe(true);
+    expect(responseText(rejected)).toBe("Executor reached the 1 concurrent-execution limit.");
     expect(calls).toBe(1);
     release.resolve();
-    expect((await running).isError).toBe(false);
+    expect((await running).isError).toBeUndefined();
 
     const recovered = await second.client.callTool({
       name: "execute",
       arguments: { code: "return 7;" },
     });
 
-    expect(recovered.structuredContent).toEqual({ result: { ok: true, value: 7 }, calls: [] });
+    expect(responseValue(recovered)).toBe(7);
   });
 
   test("closing one MCP instance leaves the gateway's upstream usable by another", async () => {
@@ -126,7 +114,7 @@ describe("gateway execution", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 5 } });
+    expect(responseValue(response)).toBe(5);
     expect(app.gateway.status()).toMatchObject([{ state: "connected" }]);
   });
 
@@ -185,7 +173,7 @@ describe("gateway execution", () => {
     expect(termination).toHaveBeenCalledTimes(1);
   });
 
-  test("processes a large upstream dataset and exposes only selected output and call summaries", async () => {
+  test("processes a large upstream dataset and exposes only selected output", async () => {
     const upstream = createMcpServer();
     upstream.registerTool("dataset", {}, () => ({
       content: [],
@@ -202,13 +190,7 @@ describe("gateway execution", () => {
       },
     });
 
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: 3000 },
-      calls: [{ callId: 1, name: "test.dataset", status: "completed" }],
-    });
-    expect(response.content).toEqual([
-      { type: "text", text: JSON.stringify(response.structuredContent) },
-    ]);
+    expect(response).toEqual({ content: [{ type: "text", text: "3000" }] });
     expect(JSON.stringify(response)).not.toContain("private payload");
   });
 
@@ -229,11 +211,8 @@ describe("gateway execution", () => {
       },
     });
 
-    expect(failed.structuredContent).toEqual({
-      result: { ok: false, error: { kind: "script", message: "Script failed" } },
-      calls: [{ callId: 1, name: "test.add", status: "completed" }],
-    });
-    expect(recovered.structuredContent).toMatchObject({ result: { ok: true, value: 9 } });
+    expect(failed).toEqual({ content: [{ type: "text", text: "Script failed" }], isError: true });
+    expect(responseValue(recovered)).toBe(9);
   });
 
   test("request cancellation reaches upstream without cancelling another execution", async () => {
@@ -290,9 +269,7 @@ describe("gateway execution", () => {
     await cancelled.promise;
     release.resolve();
 
-    expect((await second).structuredContent).toMatchObject({
-      result: { ok: true, value: { cancelled: false } },
-    });
+    expect(responseValue(await second)).toEqual({ cancelled: false });
     expect(app.gateway.status()).toMatchObject([{ state: "connected" }]);
   });
 });

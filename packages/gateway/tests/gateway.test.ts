@@ -7,6 +7,7 @@ import { Configuration, Gateway, login, type CredentialStore } from "codemode-mc
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
 import { configurationDocument } from "./support/configuration.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { responseText, responseValue } from "./support/output.ts";
 
 const localCommand = [
   process.execPath,
@@ -122,7 +123,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 7 } });
+    expect(responseValue(response)).toBe(7);
     expect(race.upstream.refreshes).toBe(1);
   }, 10000);
 
@@ -326,7 +327,7 @@ describe("multi-upstream gateway", () => {
     });
 
     expect(gateway.status()).toMatchObject([{ state: "connected" }]);
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 7 } });
+    expect(responseValue(response)).toBe(7);
     expect(race.upstream.refreshes).toBe(1);
   }, 10000);
   test("shutdown cancels a blocked initialized notification without waiting for its response", async () => {
@@ -504,14 +505,9 @@ describe("multi-upstream gateway", () => {
     expect(description).toContain("## Availability");
     expect(description).toContain('Tool names are qualified as "server.original-name".');
     expect(description).toContain("use a new execution");
-    expect(response.structuredContent).toMatchObject({
-      result: {
-        ok: true,
-        value: {
-          tools: [{ name: "math.add" }],
-          servers: [{ name: "math", state: "connected" }],
-        },
-      },
+    expect(responseValue(response)).toMatchObject({
+      tools: [{ name: "math.add" }],
+      servers: [{ name: "math", state: "connected" }],
     });
   });
 
@@ -669,7 +665,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(result)).toBe(42);
     expect(calls).toBe(2);
     expect(
       upstream.requests.filter(
@@ -725,7 +721,7 @@ describe("multi-upstream gateway", () => {
         },
       });
 
-      expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+      expect(responseValue(result)).toBe(42);
       expect(credentials.writes).toBe(0);
       expect(upstream.refreshes).toBe(0);
     },
@@ -784,7 +780,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(result)).toBe(42);
     expect(credentials.writes).toBe(0);
     expect(upstream.refreshes).toBe(0);
     expect(connections).toBe(1);
@@ -856,7 +852,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(result)).toBe(42);
     expect(credentials.writes).toBe(1);
     expect(upstream.refreshes).toBe(0);
   }, 10_000);
@@ -989,9 +985,7 @@ describe("multi-upstream gateway", () => {
           toolCount: 1,
         },
       ]);
-      expect(discovery.structuredContent).toMatchObject({
-        result: { ok: true, value: { names: [`notes.${name}`], invoked: name } },
-      });
+      expect(responseValue(discovery)).toEqual({ names: [`notes.${name}`], invoked: name });
     },
   );
 
@@ -1045,14 +1039,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({
-      result: { ok: true, value: { required: ["a", "b"], values: [5, 30] } },
-      calls: [
-        { name: "describeTool", status: "completed" },
-        { name: "local.add", status: "completed" },
-        { name: "notes.add", status: "completed" },
-      ],
-    });
+    expect(responseValue(response)).toEqual({ required: ["a", "b"], values: [5, 30] });
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ name: "add", arguments: { a: 10, b: 20 } });
   });
@@ -1091,28 +1078,22 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(discovery.structuredContent).toMatchObject({
-      result: {
-        ok: true,
-        value: {
-          tools: [{ name: "local.add" }],
-          total: 1,
-          nextOffset: null,
-          servers: [
-            { name: "local", state: "connected" },
-            { name: "broken", state: "failed" },
-            { name: "disabled", state: "disabled" },
-          ],
-        },
-      },
+    expect(responseValue(discovery)).toMatchObject({
+      tools: [{ name: "local.add" }],
+      total: 1,
+      nextOffset: null,
+      servers: [
+        { name: "local", state: "connected" },
+        { name: "broken", state: "failed" },
+        { name: "disabled", state: "disabled" },
+      ],
     });
-    expect(selected.structuredContent).toMatchObject({
-      result: {
-        ok: true,
-        value: { tools: [], total: 0, servers: [{ name: "broken", state: "failed" }] },
-      },
+    expect(responseValue(selected)).toMatchObject({
+      tools: [],
+      total: 0,
+      servers: [{ name: "broken", state: "failed" }],
     });
-    expect(healthy.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(healthy)).toBe(42);
   });
 
   test("an initially unauthenticated server becomes usable after named login without replacing the MCP connection", async () => {
@@ -1153,7 +1134,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 5 } });
+    expect(responseValue(response)).toBe(5);
     expect(gateway.status()).toMatchObject([{ name: "notes", state: "connected", toolCount: 1 }]);
     expect(upstream.exchanges).toBe(1);
   }, 10_000);
@@ -1221,7 +1202,7 @@ describe("multi-upstream gateway", () => {
     expect(JSON.stringify(denied)).toContain("cmg login --server=notes");
     expect(JSON.stringify(denied)).not.toContain("private revoked grant");
     expect(gateway.status()).toMatchObject([{ state: "needs-auth" }, { state: "connected" }]);
-    expect(healthy.structuredContent).toMatchObject({ result: { ok: true, value: 3 } });
+    expect(responseValue(healthy)).toBe(3);
 
     expect(
       await login(file.path, {
@@ -1242,7 +1223,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 9 } });
+    expect(responseValue(response)).toBe(9);
     expect(upstream.refreshes).toBe(1);
     expect(upstream.exchanges).toBe(2);
   }, 10_000);
@@ -1330,16 +1311,14 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(rejected.structuredContent).toMatchObject({
-      result: { ok: false, error: { kind: "limit", resource: "executions", maximum: 1 } },
-      calls: [],
+    expect(rejected.isError).toBe(true);
+    expect(responseText(rejected)).toBe("Executor reached the 1 concurrent-execution limit.");
+    expect(responseValue(previous)).toEqual({
+      binding: "undefined",
+      total: 0,
+      state: "needs-auth",
     });
-    expect(previous.structuredContent).toMatchObject({
-      result: { ok: true, value: { binding: "undefined", total: 0, state: "needs-auth" } },
-    });
-    expect(next.structuredContent).toMatchObject({
-      result: { ok: true, value: { sum: 7, total: 1, state: "connected" } },
-    });
+    expect(responseValue(next)).toEqual({ sum: 7, total: 1, state: "connected" });
   }, 10_000);
 
   test("reopens an upstream after login changes its OAuth resource binding", async () => {
@@ -1407,7 +1386,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(response.structuredContent).toMatchObject({ result: { ok: true, value: 42 } });
+    expect(responseValue(response)).toBe(42);
     expect(upstream.exchanges).toBe(2);
   }, 10_000);
 
@@ -1561,7 +1540,7 @@ describe("multi-upstream gateway", () => {
       },
     });
 
-    expect(result.structuredContent).toMatchObject({ result: { ok: true, value: 11 } });
+    expect(responseValue(result)).toBe(11);
   }, 12_000);
 });
 

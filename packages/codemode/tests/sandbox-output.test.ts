@@ -2,6 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { CodeExecutor, ToolResult } from "@cmg/codemode";
 
 describe("CodeExecutor output limit", () => {
+  test("returns a large async result without leaking a context when WASM memory grows", async () => {
+    // quickjs-emscripten #240: pending-job pointer views detached during memory growth.
+    const sandbox = new CodeExecutor({ maxOutputBytes: 20 * 1024 * 1024 });
+
+    const report = await sandbox.execute(
+      'return "a".repeat(8 * 1024 * 1024) + "z".repeat(8 * 1024 * 1024);',
+    );
+
+    expect(report.result.ok).toBe(true);
+    if (!report.result.ok || typeof report.result.value !== "string") {
+      throw new Error("Expected a complete string result after WASM growth.");
+    }
+
+    expect(report.result.value.length).toBe(16777216);
+    expect(report.result.value.startsWith("aaaa")).toBe(true);
+    expect(report.result.value.endsWith("zzzz")).toBe(true);
+    expect(report.calls).toEqual([]);
+  });
+
   test("preserves the complete thrown string when embedded NULs fit the output limit", async () => {
     const sandbox = new CodeExecutor({ maxOutputBytes: 3 });
 

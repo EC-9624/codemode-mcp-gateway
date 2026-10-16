@@ -25,6 +25,17 @@ deepEqual((await sandbox.execute('throw "before\\0after";')).result, {
   error: { kind: "script", message: "before\u0000after" },
 });
 
+// The SDK patch must travel with the package, not rely on the consumer's Bun patches.
+deepEqual((await sandbox.execute('return "x".repeat(16 * 1024 * 1024);')).result, {
+  ok: false,
+  error: {
+    kind: "limit",
+    resource: "output",
+    maximum: 262144,
+    message: "Output exceeds the 262144 byte limit.",
+  },
+});
+
 const started = Promise.withResolvers<void>();
 const release = Promise.withResolvers<ToolResult>();
 const controller = new AbortController();

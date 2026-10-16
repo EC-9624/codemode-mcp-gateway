@@ -1,18 +1,14 @@
 import { type Client } from "@modelcontextprotocol/client";
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
+import { responseText } from "./output.ts";
 
 /** Poll only discovery; operation scripts are never retried. */
 export async function waitForServer(client: Client, name: string, timeoutMs = 30_000) {
   const signal = AbortSignal.timeout(timeoutMs);
 
   const status = z.object({
-    result: z.object({
-      ok: z.literal(true),
-      value: z.object({
-        state: z.enum(["connecting", "connected", "failed", "needs-auth", "disabled"]),
-      }),
-    }),
+    state: z.enum(["connecting", "connected", "failed", "needs-auth", "disabled"]),
   });
 
   while (true) {
@@ -28,7 +24,9 @@ export async function waitForServer(client: Client, name: string, timeoutMs = 30
       { signal },
     );
 
-    const state = status.parse(response.structuredContent).result.value.state;
+    if (response.isError) throw new Error("Gateway discovery failed.");
+
+    const state = status.parse(JSON.parse(responseText(response))).state;
     if (state === "connected") return;
 
     if (state !== "connecting")

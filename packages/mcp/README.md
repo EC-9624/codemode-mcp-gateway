@@ -27,12 +27,11 @@ export async function compose(client: Client) {
 
 With the included upstream's `add` tool, an agent calls
 `execute({ code: "return (await tools.add({ a: 2, b: 3 })).structuredContent.sum;" })`.
-The server returns this value as both structured content and JSON text:
+The server returns only useful display text:
 
 ```json
 {
-  "result": { "ok": true, "value": 5 },
-  "calls": [{ "callId": 1, "name": "add", "status": "completed" }]
+  "content": [{ "type": "text", "text": "5" }]
 }
 ```
 
@@ -47,14 +46,20 @@ There are two different error signals:
 
 - **Upstream `isError`:** remains inside the tool's response. A script can inspect
   or handle it; returning that flag normally is still successful execution.
-- **Outer MCP `isError`:** set when the final `report.result.ok` is false.
+- **Outer MCP `isError`:** included only as `true` when execution or output delivery fails.
 
-Call summaries use the executor's metadata-only format. Completed means a response
-was serialized, not that the upstream operation succeeded. Executor rejections become
-the public error `{ kind: "sandbox", message: "Sandbox execution failed." }`.
-Original causes go only to the host SDK error hook; a throwing hook cannot replace
-the controlled response. `SandboxExecutionError(calls, cause)` preserves call
-observations; other rejection reasons produce an empty summary.
+Strings are plain text; other values are compact JSON. No return becomes `null`.
+Failures show the useful error message. There is no `structuredContent`, report
+envelope, or call list in the agent-facing response. The executor still returns
+its full host-side `ExecutionReport`; infrastructure causes and call observations
+remain on `SandboxExecutionError`, delivered to the host SDK error hook.
+Executor rejections become `Sandbox execution failed.`; a throwing diagnostic
+hook cannot replace the controlled response or expose its own message.
+
+An optional `formatOutput(text): Promise<string>` callback supplies host-owned
+presentation, such as the gateway's temp-file spilling. Closing the server waits
+for presentation as well as execution. Unexpected formatter errors produce a
+controlled delivery error, without replaying the script.
 
 Catalog setup failures reject before an executor is used. Omitted tool arguments
 normalize to `{}`; non-object or schema-invalid arguments fail before upstream
@@ -81,8 +86,8 @@ there is no automatic refresh or subscription to upstream changes.
 
 The server's `execute` tool accepts only `{ code: string }`. Limits stay in the supplied
 executor; request arguments cannot override them. This adapter adds no tool-payload
-byte limit. Scripts receive complete projected responses; call summaries contain no
-response bodies. See [schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
+byte limit. Scripts receive complete upstream responses. See
+[schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
 
 ## How it works
 
@@ -90,7 +95,7 @@ The adapters connect opposite sides of execution:
 
 ```text
 upstream client -> list and compile schemas -> ToolCatalog callbacks
-agent execute request -> supplied executor -> report -> compact MCP response
+agent execute request -> supplied executor -> host report -> display text -> optional formatter
 ```
 
 The catalog borrows a connected SDK client. Each tool callback validates arguments,
@@ -110,6 +115,8 @@ listeners. See the [catalog](src/catalog.ts), [server](src/server.ts), and
 
 Migration: `createCodemodeServer` now takes `execute`, not `catalog` and `sandbox`.
 Discovery injection and collision handling belong to application composition.
+Agent clients now read `content` instead of `structuredContent.result.value`;
+`CodemodeResponse` and `CallSummary` are no longer exported.
 
 ## Development
 

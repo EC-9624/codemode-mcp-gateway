@@ -17,6 +17,8 @@ export type CompiledToolSchema =
   | { ok: true; schema: ToolSchema; validator: ToolSchemaValidator }
   | { ok: false; message: string; cause?: unknown };
 
+// Validation must not silently rewrite upstream arguments through coercion,
+// default insertion, or property removal; tool callbacks receive the submitted data.
 const OPTIONS = {
   strict: false,
   strictNumbers: true,
@@ -32,8 +34,8 @@ const OPTIONS = {
 // Draft-07 ignores $ref siblings; 2020-12 evaluates them.
 const DRAFT7_OPTIONS = { ...OPTIONS, ignoreKeywordsWithRef: true } as const satisfies Options;
 
-// Compiling a meta-schema validator costs milliseconds per engine. These shared engines only
-// check schemas as data and never register them, so tool-local identifiers stay isolated.
+// Reuse meta-schema validators without sharing tool registrations: these engines
+// check schemas as data, while each tool compiles its $id/$ref bindings in isolation.
 const META = {
   draft7: new Ajv({ ...DRAFT7_OPTIONS, validateSchema: true }),
   draft2020: new Ajv2020({ ...OPTIONS, validateSchema: true }),
@@ -84,7 +86,8 @@ export function compileToolSchema(schema: ToolSchema): CompiledToolSchema {
   const meta = draft7 ? META.draft7 : META.draft2020;
   let check: ValidateFunction<unknown>;
   try {
-    // Matches the error Ajv's own compile-time schema validation would throw.
+    // Per-tool engines disable automatic meta-validation to use the shared validators
+    // above; malformed schemas must still fail discovery before any tool can run.
     if (meta.validateSchema(input) !== true) {
       throw new Error(`schema is invalid: ${meta.errorsText()}`);
     }

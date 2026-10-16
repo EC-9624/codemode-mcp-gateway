@@ -60,6 +60,62 @@ describe("agent-facing MCP server", () => {
 
     expect(executions).toBe(0);
   });
+  test.each([
+    { name: "a plain string", value: "hello", text: "hello" },
+    { name: "an empty string", value: "", text: "" },
+    { name: "a boolean", value: false, text: "false" },
+    { name: "null", value: null, text: "null" },
+    { name: "an object", value: { count: 3 }, text: '{"count":3}' },
+    { name: "an array", value: [1, 2], text: "[1,2]" },
+  ])("renders $name without the execution envelope", async ({ value, text }) => {
+    await using agent = await connectMcp(
+      createCodemodeServer({
+        execute: async () => ({ result: { ok: true, value }, calls: [] }),
+      }),
+    );
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return value" },
+    });
+
+    expect(response).toEqual({ content: [{ type: "text", text }] });
+  });
+
+  test("keeps unexpected output formatter failures private without replaying execution", async () => {
+    let executions = 0;
+    const cause = new Error("Private formatting details");
+    const diagnostics: Error[] = [];
+
+    const server = createCodemodeServer({
+      execute: async () => {
+        executions++;
+
+        return { result: { ok: true, value: 42 }, calls: [] };
+      },
+      formatOutput: async () => {
+        throw cause;
+      },
+    });
+
+    server.server.onerror = (error) => diagnostics.push(error);
+    await using agent = await connectMcp(server);
+
+    const response = await agent.client.callTool({
+      name: "execute",
+      arguments: { code: "return 42" },
+    });
+
+    expect(response).toEqual({
+      content: [
+        { type: "text", text: "Execution completed, but its output could not be displayed." },
+      ],
+      isError: true,
+    });
+    expect(executions).toBe(1);
+    expect(diagnostics[0]?.cause).toBe(cause);
+  });
+
   test("advertises the application-supplied execute description", async () => {
     const server = createCodemodeServer({
       description: "Run the application's read-only workflow.",
@@ -95,10 +151,7 @@ describe("agent-facing MCP server", () => {
       arguments: { code: "still available" },
     });
 
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: "still available" },
-      calls: [],
-    });
+    expect(response).toEqual({ content: [{ type: "text", text: "still available" }] });
     expect(calls).toEqual(["still available"]);
   });
 
@@ -189,10 +242,7 @@ describe("agent-facing MCP server", () => {
       arguments: { code: "application execution" },
     });
 
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: "application execution" },
-      calls: [],
-    });
+    expect(response).toEqual({ content: [{ type: "text", text: "application execution" }] });
     expect(codes).toEqual(["application execution"]);
     expect(signals).toHaveLength(1);
     expect(signals[0]?.aborted).toBe(false);
@@ -221,7 +271,7 @@ describe("agent-facing MCP server", () => {
     expect(executions).toBe(0);
   });
 
-  test("projects only public call fields from a custom executor", async () => {
+  test("returns only the value without host bookkeeping or a redundant success flag", async () => {
     const call = {
       callId: 1,
       name: "read",
@@ -238,14 +288,7 @@ describe("agent-facing MCP server", () => {
 
     const response = await agent.client.callTool({ name: "execute", arguments: { code: "read" } });
 
-    expect(response.isError).toBe(false);
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: 42 },
-      calls: [{ callId: 1, name: "read", status: "completed" }],
-    });
-    expect(response.content).toEqual([
-      { type: "text", text: JSON.stringify(response.structuredContent) },
-    ]);
+    expect(response).toEqual({ content: [{ type: "text", text: "42" }] });
     expect(JSON.stringify(response)).not.toContain("private payload");
   });
 
@@ -263,11 +306,7 @@ describe("agent-facing MCP server", () => {
       arguments: { code: "return data" },
     });
 
-    expect(response.isError).toBe(false);
-    expect(response.structuredContent).toEqual({
-      result: { ok: true, value: { isError: true } },
-      calls: [],
-    });
+    expect(response).toEqual({ content: [{ type: "text", text: '{"isError":true}' }] });
   });
 
   test("marks unsuccessful execution reports as errors", async () => {
@@ -281,10 +320,7 @@ describe("agent-facing MCP server", () => {
     const response = await agent.client.callTool({ name: "execute", arguments: { code: "fail" } });
 
     expect(response.isError).toBe(true);
-    expect(response.structuredContent).toEqual({
-      result: { ok: false, error: { kind: "script", message: "Script failed" } },
-      calls: [],
-    });
+    expect(response.content).toEqual([{ type: "text", text: "Script failed" }]);
   });
 
   test("keeps synchronous executor exceptions private", async () => {
@@ -306,15 +342,12 @@ describe("agent-facing MCP server", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(response.structuredContent).toEqual({
-      result: { ok: false, error: { kind: "sandbox", message: "Sandbox execution failed." } },
-      calls: [],
-    });
+    expect(response.content).toEqual([{ type: "text", text: "Sandbox execution failed." }]);
     expect(JSON.stringify(response)).not.toContain("Private executor details");
     expect(diagnostics[0]?.cause).toBe(cause);
   });
 
-  test("keeps infrastructure details host-side while preserving the call summary", async () => {
+  test("keeps infrastructure details and call records host-side", async () => {
     const failure = new SandboxExecutionError(
       [
         {
@@ -343,9 +376,9 @@ describe("agent-facing MCP server", () => {
     const response = await agent.client.callTool({ name: "execute", arguments: { code: "read" } });
 
     expect(response.isError).toBe(true);
-    expect(response.structuredContent).toEqual({
-      result: { ok: false, error: { kind: "sandbox", message: "Sandbox execution failed." } },
-      calls: [{ callId: 1, name: "read", status: "completed" }],
+    expect(response).toEqual({
+      content: [{ type: "text", text: "Sandbox execution failed." }],
+      isError: true,
     });
     expect(JSON.stringify(response)).not.toContain("credentials");
     expect(diagnostics).toHaveLength(1);
@@ -353,7 +386,7 @@ describe("agent-facing MCP server", () => {
     expect(executions).toBe(1);
   });
 
-  test("preserves the controlled failure and call summary when diagnostics throw", async () => {
+  test("preserves the controlled failure when diagnostics throw", async () => {
     const failure = new SandboxExecutionError(
       [{ callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" }],
       new Error("Private infrastructure details"),
@@ -378,9 +411,9 @@ describe("agent-facing MCP server", () => {
     const response = await agent.client.callTool({ name: "execute", arguments: { code: "read" } });
 
     expect(response.isError).toBe(true);
-    expect(response.structuredContent).toEqual({
-      result: { ok: false, error: { kind: "sandbox", message: "Sandbox execution failed." } },
-      calls: [{ callId: 1, name: "read", status: "interrupted", reason: "sandbox-error" }],
+    expect(response).toEqual({
+      content: [{ type: "text", text: "Sandbox execution failed." }],
+      isError: true,
     });
     expect(JSON.stringify(response)).not.toContain("Private");
     expect(executions).toBe(1);

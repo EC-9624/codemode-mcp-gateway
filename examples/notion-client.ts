@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { waitForServer } from "./readiness.ts";
+import { responseText } from "./output.ts";
 
 const options = argumentsOf(process.argv.slice(2));
 if (!options.ok) {
@@ -26,16 +27,6 @@ const check = z.discriminatedUnion("status", [
     message: z.string(),
   }),
 ]);
-
-const envelope = z.object({
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), value: check }),
-    z.object({
-      ok: z.literal(false),
-      error: z.object({ kind: z.string(), resource: z.string().optional() }),
-    }),
-  ]),
-});
 
 // Keep provider bodies in the guest. Only counts and validation outcomes leave it.
 const decoder = `
@@ -228,12 +219,39 @@ async function runStep(step: string, code: string, iteration: number, agent: num
     return false;
   }
 
-  const parsed = envelope.safeParse(response.structuredContent);
-
   const timing = {
     elapsedMs: performance.now() - start,
     responseJsonBytes: Buffer.byteLength(JSON.stringify(response), "utf8"),
   };
+
+  if (response.isError) {
+    console.log(
+      JSON.stringify({
+        step,
+        iteration,
+        agent,
+        ...timing,
+        status: "failed",
+        kind: "execution",
+        message: "Guest execution failed.",
+      }),
+    );
+    process.exitCode = 1;
+
+    return false;
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(responseText(response));
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause;
+
+    // Malformed display text fails the schema check below; never treat it as success.
+    value = undefined;
+  }
+
+  const parsed = check.safeParse(value);
 
   if (!parsed.success) {
     console.log(
@@ -252,30 +270,11 @@ async function runStep(step: string, code: string, iteration: number, agent: num
     return false;
   }
 
-  const result = parsed.data.result;
-  if (!result.ok || response.isError) {
-    console.log(
-      JSON.stringify({
-        step,
-        iteration,
-        agent,
-        ...timing,
-        status: "failed",
-        kind: "execution",
-        message: "Guest execution failed.",
-        executionKind: result.ok ? "protocol" : result.error.kind,
-        executionResource: result.ok ? undefined : result.error.resource,
-      }),
-    );
-    process.exitCode = 1;
+  const result = parsed.data;
+  console.log(JSON.stringify({ step, iteration, agent, ...timing, ...result }));
+  if (result.status === "failed") process.exitCode = 1;
 
-    return false;
-  }
-
-  console.log(JSON.stringify({ step, iteration, agent, ...timing, ...result.value }));
-  if (result.value.status === "failed") process.exitCode = 1;
-
-  return result.value.status === "passed";
+  return result.status === "passed";
 }
 
 function argumentsOf(args: string[]) {
