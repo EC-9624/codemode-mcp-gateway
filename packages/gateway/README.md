@@ -18,6 +18,9 @@ Source/package runs and builds require Bun **1.4.3**. `bun run build:standalone`
 produces `dist/gw` for the current platform, with Bun, internal libraries, workers,
 and QuickJS WASM embedded. It runs outside the checkout without dependencies or
 a separate Bun installation. No release binaries are published yet.
+From the workspace root, `bun run install:gw` combines the build and installation
+to `~/.local/bin/gw`; `--force` is required to replace an existing file or symlink.
+It does not install dependencies, change PATH, prepare credentials, or start a process.
 `gw setup` explicitly prepares a starter configuration and private persistent HTTP
 token without overwriting existing files. The starter needs user-supplied upstreams
 before it can run. `gw serve` reads the saved token or `GW_HTTP_TOKEN` override.
@@ -38,7 +41,7 @@ The working directory is not searched implicitly.
 
 For building and running outside source mode, HTTP credentials, and manual client
 configuration, see [local deployment](../../docs/local-installation.md).
-There is no custom installer or OS service-management command. OAuth identity
+There is no client provisioning or OS service-management command. OAuth identity
 and lock storage are unchanged.
 
 ```sh

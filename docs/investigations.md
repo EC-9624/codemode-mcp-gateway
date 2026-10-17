@@ -203,7 +203,7 @@ reports do not fix growth already observable with scalar executions.
 
 The [WASM follow-up](wasm-memory.md) narrows this to the fast-memory allocation
 path and documents matching upstream page-map findings. It includes a dependency-free
-[standalone reproduction](../scripts/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
+[standalone reproduction](../scripts/studies/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
 controls, and opt-in macOS allocator/VM profiling (`--profile`).
 
 The [host-runtime study](runtime-study.md) compares actual executor memory and

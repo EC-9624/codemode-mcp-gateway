@@ -10,8 +10,8 @@
   "scripts": {
     "build": "bun run --cwd packages/codemode build && bun run --cwd packages/mcp build && bun run --cwd packages/gateway build",
     "build:standalone": "bun run build && bun run scripts/build-standalone.ts",
+    "install:gw": "bun run scripts/install-gw.ts",
     "gw": "bun --conditions=development run packages/gateway/src/cli.ts",
-    "server": "bun run gw",
     "example": "bun --conditions=development run examples/basic.ts",
     "example:mcp": "bun --conditions=development run examples/mcp.ts",
     "example:server": "bun --conditions=development run examples/agent-client.ts",

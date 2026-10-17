@@ -1,5 +1,5 @@
 import { ok, strictEqual } from "node:assert";
-import { copyFile, cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,23 +49,30 @@ for (const path of [
 }
 
 await run([process.execPath, "install", "--frozen-lockfile", "--ignore-scripts"], source);
-// Explicit build preserves user ignore-scripts policy instead of weakening it to
-// make implicit lifecycle hooks run. The normal verifier packs with scripts off.
-await run([process.execPath, "run", "build"], source);
+// Installation performs the explicit build without weakening ignore-scripts or
+// touching the user's real ~/.local/bin. It must not run setup or start a service.
+const home = join(directory, "home");
+await run([process.execPath, "run", "install:gw"], source, {
+  ...process.env,
+  HOME: home,
+  XDG_CONFIG_HOME: join(home, ".config"),
+  XDG_STATE_HOME: join(home, ".local/state"),
+});
+const binary = join(home, ".local/bin/gw");
+strictEqual((await stat(binary)).mode & 0o777, 0o755);
+strictEqual(await Bun.file(join(home, ".config/codemode-mcp-gateway/config.json")).exists(), false);
+strictEqual(await Bun.file(join(home, ".local/state/codemode-mcp-gateway/token")).exists(), false);
 await run([process.execPath, "run", "scripts/verify-packages.ts"], source);
-await run([process.execPath, "run", "scripts/build-standalone.ts"], source);
-const binary = join(directory, "gw");
-await copyFile(join(source, "dist/gw"), binary);
 // Remove this task's disposable build tree before probing: absolute source/dependency
 // fallbacks cannot make a broken single-file distribution appear to work.
 await rm(source, { recursive: true, force: true });
 await run([process.execPath, join(root, "scripts/verify-standalone.ts"), binary], root);
 console.log(
-  "Clean source verified: frozen install, explicit build, tarball inventory, installed consumers, and standalone execution after deleting its build tree.",
+  "Clean source verified: frozen install, install:gw build/install, tarball inventory, installed consumers, and standalone execution after deleting its build tree.",
 );
 
-async function run(command: string[], cwd: string) {
-  const child = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
+async function run(command: string[], cwd: string, environment = process.env) {
+  const child = Bun.spawn(command, { cwd, env: environment, stdout: "pipe", stderr: "pipe" });
   let forced = false;
 
   const watchdog = setTimeout(() => {

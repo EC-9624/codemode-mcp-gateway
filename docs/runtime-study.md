@@ -17,6 +17,12 @@ host-side, retaining bounded per-request correlation for concurrent calls. The
 measurement artifacts are unchanged; these historical numbers are not a new
 performance baseline for the integrated tree.
 
+Archival note: the study scripts now live under `scripts/studies/`. The current
+executor directly uses Bun APIs, so the historical Node comparison is no longer
+supported against today's tree. The commands below identify archived study
+entrypoints; historical measurements require their recorded source/runtime
+combination, not a claim of current Node compatibility.
+
 The integrated tree separately passed 656 tests and packed-consumer verification,
 both examples, Bun/Node contract and four-way MCP smoke probes, and the reliability
 smoke diagnostic. The long measurement matrix was not rerun during integration.
@@ -41,12 +47,12 @@ credentials, providers, or model calls are used.
 - `.bun-version`, package runtime declarations, and current usage documentation now
   select Bun 1.4.3. Historical measurements are not rewritten. No global runtime is
   upgraded; the compatible existing Bun type declarations remain pinned separately.
-- `scripts/runtime-contract.ts` runs selected execution and MCP contracts using
+- `scripts/studies/runtime-contract.ts` runs selected execution and MCP contracts using
   compiled public exports under either runtime. Bun remains the full-suite runner.
-- `scripts/runtime-comparison.ts` measures fresh-worker controls, scalar execution,
+- `scripts/studies/runtime-comparison.ts` measures fresh-worker controls, scalar execution,
   1-MiB tool responses, guest arithmetic, microtask yielding, and an in-memory MCP
   discovery/schema/tool workflow. It validates every result and call summary.
-- `scripts/runtime-matrix.ts` runs children serially, rotates host order between
+- `scripts/studies/runtime-matrix.ts` runs children serially, rotates host order between
   repetitions, enforces a SIGKILL watchdog, and saves each child's JSONL and stderr.
 
 No worker pool, VM reuse, relaxed validation, global Bun upgrade, engine replacement,
@@ -94,9 +100,9 @@ Build first; omit the `development` export condition for all comparison commands
 ```sh
 bun install --frozen-lockfile --ignore-scripts
 bun run build
-node scripts/runtime-contract.ts
-bun scripts/runtime-contract.ts
-bun scripts/runtime-matrix.ts --directory /absolute/path/to/results \
+node scripts/studies/runtime-contract.ts
+bun scripts/studies/runtime-contract.ts
+bun scripts/studies/runtime-matrix.ts --directory /absolute/path/to/results \
   --bun /absolute/path/to/bun-1.4.2 --node /absolute/path/to/node-24.15.0 \
   --candidate /absolute/path/to/bun-1.4.3
 ```
@@ -303,7 +309,7 @@ Reproduce a longer run with each chosen executable, serially (use a separate out
 file per host; add the environment flag only for the 1.4.2 fallback):
 
 ```sh
-/absolute/path/to/runtime scripts/runtime-comparison.ts \
+/absolute/path/to/runtime scripts/studies/runtime-comparison.ts \
   --scenario scalar --runs 10000 --batch 1000 --concurrency 1 --footprint \
   > /absolute/path/to/host-soak.jsonl
 ```

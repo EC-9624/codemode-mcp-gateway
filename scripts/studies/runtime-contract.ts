@@ -5,7 +5,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-// Run against compiled public exports under either host, never repository internals.
+// Historical runtime study; see README.md here for the source revision and host limits.
 const executor = new CodeExecutor({ timeoutMs: 1000, totalTimeoutMs: 5000 });
 deepEqual(
   await executor.execute("let i = 0; while (i++ < 1000) await Promise.resolve(); return 42;"),

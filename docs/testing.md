@@ -205,7 +205,8 @@ installed executable without client configuration or installation-state writes.
 
 `verify:packages:clean` performs the same scenarios from a disposable copy of current
 source with no inherited installs/builds. It installs the frozen lockfile with scripts
-disabled, builds explicitly, then invokes the existing verifier. It does not create a
+disabled, invokes `install:gw` in an isolated HOME to build/install the app, then
+invokes the existing verifier. It does not create a
 Git worktree or weaken user lifecycle-script settings. This is opt-in because it
 performs an additional install and build.
 
@@ -215,8 +216,13 @@ checks explicit setup, token-file authentication, embedded version/WASM/workers,
 real HTTP upstream calls, cancellation propagation, timeout/recovery, and stdio.
 Cwd `.env` and `bunfig.toml` files must not influence the executable. The normal
 root `check` runs this probe after package verification. The clean-source check
-also compiles the app, removes its disposable source/dependency tree, then probes
-the detached binary; absolute build-tree fallbacks cannot hide missing assets.
+also exercises the one-command installation, removes its disposable source/dependency
+tree, then probes the installed binary; absolute build-tree fallbacks cannot hide missing assets.
+
+The gateway's `installation.test.ts` covers the installer as a real CLI process
+with a small build-process fixture: replacement guards, failed-build preservation,
+symlink-target preservation, destination races, executable permissions, PATH hints,
+and cleanup. The clean-source verifier owns the full real build/install contract.
 
 Timing-sensitive `validate:http-idle` and the managed-gateway smoke are separate
 local diagnostics. `validate:models --approve-model-calls` is a separately approved,

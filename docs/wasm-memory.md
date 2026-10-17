@@ -122,7 +122,7 @@ performance tradeoff.
 
 ## Reproduce locally
 
-The single-file [standalone reproduction](../scripts/wasm-memory-repro.ts) needs
+The single-file [standalone reproduction](../scripts/studies/wasm-memory-repro.ts) needs
 only the existing Bun runtime. Copy it outside the repository if desired. It
 defaults to 2,000 workers, accepts 1–3,000, validates replies and natural exits,
 has a five-minute watchdog, and prints bounded JSONL snapshots. `worker` is an
@@ -131,8 +131,8 @@ empty-worker control. No CMG, QuickJS, Zod, or compiled package is imported.
 Run these comparisons sequentially, without other memory-heavy workloads:
 
 ```sh
-bun scripts/wasm-memory-repro.ts wasm 2000
-bun scripts/wasm-memory-repro.ts worker 2000
+bun scripts/studies/wasm-memory-repro.ts wasm 2000
+bun scripts/studies/wasm-memory-repro.ts worker 2000
 
 bun run baseline:memory --scenario wasm-memory \
   --runs 2000 --batch-size 1000 --gc forced --worker-exit natural --profile

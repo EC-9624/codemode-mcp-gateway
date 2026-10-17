@@ -1,4 +1,5 @@
 import { deepEqual } from "node:assert/strict";
+// Historical runtime study; see README.md here before running against another revision.
 import { execFileSync } from "node:child_process";
 import { cpus, release } from "node:os";
 import { parseArgs } from "node:util";

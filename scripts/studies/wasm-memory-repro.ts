@@ -1,4 +1,5 @@
 // Standalone: copy this file anywhere and run `bun wasm-memory-repro.ts wasm 2000`.
+// Historical Bun 1.4.2 allocator reproduction; see README.md here for context.
 import { heapStats, memoryUsage } from "bun:jsc";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 import { setImmediate } from "node:timers/promises";

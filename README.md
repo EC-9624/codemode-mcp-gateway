@@ -9,18 +9,23 @@ The standalone `gw` executable includes its runtime. Package names are provision
 nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
-Build the **`gw`** application with `bun run build:standalone`; the result is
-`dist/gw` for the current platform. No release binaries have been published.
+Build and install **`gw`** with `bun run install:gw`; it produces `dist/gw` and
+installs the executable at `~/.local/bin/gw` for the current platform. No release binaries have been published.
 Installation, process supervision, upstream definitions, and MCP client configuration
 are user-managed. See [local deployment](docs/local-installation.md).
 
 ```sh
-bun run build:standalone
-./dist/gw setup
+bun run install:gw
+gw setup
 # Edit the displayed configuration to add your upstream MCP servers.
-./dist/gw check
-./dist/gw serve
+gw check
+gw serve
 ```
+
+Installation never runs setup or starts a process. Use `bun run install:gw --force`
+to replace an existing executable; shell files and configuration remain untouched.
+Add `~/.local/bin` to PATH yourself if needed. For build-only output, use
+`bun run build:standalone`. Dependencies must already be installed.
 
 `setup` explicitly creates a starter configuration and a private persistent token;
 it never replaces existing files, configures clients, or starts a process.
@@ -207,8 +212,10 @@ unrelated temporary consumers, declarations, workers, MCP, gateway API, and pack
 `gw`. Temporary overrides stand in for unpublished registry versions; nothing is
 published. Use `bun run typecheck` for typechecking and `bun run format` for formatting.
 The clean variant copies current source without inherited installs/builds, then
-performs a frozen install, explicit build, and the same consumer checks. Local
+performs a frozen install, `install:gw` in an isolated HOME, and the same consumer checks. Local
 packing does not rely on lifecycle hooks; script-disable settings remain respected.
+See the [script guide](scripts/README.md) for build/installation commands versus
+optional diagnostics and archived studies.
 
 Opt-in local integration diagnostics:
 

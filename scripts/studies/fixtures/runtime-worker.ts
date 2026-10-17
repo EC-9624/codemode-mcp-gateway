@@ -1,4 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
+// Control fixture for the historical host-runtime comparison.
 
 if (parentPort === null) throw new Error("Runtime probe requires a worker port.");
 

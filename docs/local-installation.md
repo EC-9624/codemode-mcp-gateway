@@ -4,20 +4,34 @@ The product/MCP name is **codemode-mcp-gateway**; the executable is **`gw`**.
 The standalone executable includes Bun and its application dependencies. Building
 or running source/packages requires Bun **1.4.3**. Installation, process supervision,
 upstream definitions, and MCP client configuration are user responsibilities.
-There is no custom installer, updater, rollback manager, or `gw service` command.
+There is no provisioning installer, updater, rollback manager, or `gw service` command.
 Nothing is published; build the native executable from this checkout for now.
 
 ## Build and install the application
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-bun run build:standalone
-./dist/gw --version
-mkdir -p "$HOME/.local/bin"
-install -m 755 dist/gw "$HOME/.local/bin/gw"
+bun run install:gw
+"$HOME/.local/bin/gw" --version
 ```
 
-Ensure `~/.local/bin` is on PATH yourself. This is one executable for the build
+`install:gw` runs the existing standalone build and installs only its executable
+at `~/.local/bin/gw` with mode 0755. It does not install dependencies, run setup,
+edit shell/client files, or start/register a service. Dependencies must already
+be installed. Existing files or symlinks are refused before building unless
+`--force` is supplied; directories and special files are always refused. A failed
+build leaves the installed executable untouched. A complete staged binary replaces
+the directory entry, never the contents of an existing inode or symlink target.
+The temporary installation directory is removed on completion or failure.
+
+For updates, stop the gateway yourself, then run `bun run install:gw --force`
+and restart it. No automatic restart or rollback is provided. For build-only use,
+run `bun run build:standalone` and deploy `dist/gw` yourself.
+
+Ensure `~/.local/bin` is on PATH yourself; the script warns rather than editing
+your shell configuration. The installation script supports macOS/Linux and has
+been tested on macOS arm64. Run builds serially within one checkout.
+This is one executable for the build
 machine's platform, not a universal binary. It includes the gateway and internal
 libraries, Bun runtime, worker entry, version metadata, and QuickJS WASM assets.
 No checkout, `node_modules`, sibling `package.json`, or external Bun executable is
@@ -84,8 +98,8 @@ The reusable libraries remain independently packable; see
 [external consumers](installed-validation.md#prepare-an-external-consumer).
 `bun run verify:packages` verifies those tarballs, while `bun run verify:standalone`
 checks the application in an isolated HOME with an empty PATH. The clean-source
-check additionally removes the disposable build/dependency tree before running
-its detached executable.
+check also exercises `install:gw` in an isolated HOME, then removes the disposable
+build/dependency tree before running the installed executable.
 
 ## HTTP authentication
 

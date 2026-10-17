@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+// Historical runtime study; current executor code does not support the Node host.
 import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

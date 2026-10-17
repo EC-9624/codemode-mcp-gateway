@@ -7,10 +7,10 @@ saved OS credentials and a real upstream from outside the repository.
 
 For a fresh-source synthetic check without credentials or live upstreams, run
 `bun run verify:packages:clean`. It automates a disposable source copy, frozen
-install with scripts disabled, explicit build, packing, and the existing isolated
+install with scripts disabled, `install:gw` in an isolated HOME, packing, and the existing isolated
 consumer checks. A global `ignore-scripts=true` setting is supported; no prepack
 hook is required. This is local artifact verification, not publication.
-It also builds a standalone gateway, removes its disposable source/dependency
+It also installs a standalone gateway without configuration or credentials, removes its disposable source/dependency
 tree, and verifies the detached executable. For application installation and
 explicit `gw setup`, see [local deployment](local-installation.md).
 

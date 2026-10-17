@@ -2,12 +2,11 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs } from "node:util";
 import { deepEqual, ok } from "node:assert/strict";
 import { z } from "zod";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const { values } = parseArgs({ options: { archives: { type: "string" } }, strict: true });
+ok(process.argv.length === 2, "Usage: bun run verify:packages");
 await using cleanup = new AsyncDisposableStack();
 const directory = await mkdtemp(join(tmpdir(), "cmg-packages-"));
 cleanup.defer(() => rm(directory, { recursive: true, force: true }));
@@ -18,14 +17,10 @@ for (const [workspace, file, required] of [
   ["packages/gateway", "gateway.tgz", "package/dist/cli.js"],
 ] as const) {
   const archive = join(directory, file);
-  if (values.archives === undefined) {
-    await run(
-      [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
-      join(root, workspace),
-    );
-  } else {
-    await Bun.write(archive, Bun.file(join(values.archives, file)));
-  }
+  await run(
+    [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
+    join(root, workspace),
+  );
 
   const entries = (await run(["tar", "-tf", archive], directory)).trim().split("\n");
   ok(entries.includes(required), `Missing built asset ${required}`);
@@ -173,7 +168,13 @@ console.log(
 /** A timeout bounds regressions that leave workers or child processes running. */
 async function run(command: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
-  const timeout = setTimeout(() => child.kill(), 30_000);
+  let forced = false;
+
+  const timeout = setTimeout(() => {
+    forced = true;
+    child.kill("SIGKILL");
+  }, 30_000);
+
   try {
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(),
@@ -181,11 +182,15 @@ async function run(command: string[], cwd: string): Promise<string> {
       child.exited,
     ]);
 
+    if (forced) throw new Error(`${command.join(" ")} exceeded 30 seconds.\n${stdout}${stderr}`);
+
     if (code !== 0) throw new Error(`${command.join(" ")} failed (${code}).\n${stdout}${stderr}`);
 
     return stdout;
   } finally {
     clearTimeout(timeout);
-    child.kill();
+    if (child.exitCode === null) child.kill("SIGKILL");
+
+    await child.exited;
   }
 }
