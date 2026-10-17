@@ -141,7 +141,7 @@ export async function logout(
   return await store.clear();
 }
 
-/** Registration changes are serialized, but browser consent never holds the credential lock. */
+/** Release the credential lock before browser consent so other credential operations can proceed. */
 async function prepareLogin(
   connection: OAuthConnection,
   store: CredentialStore,

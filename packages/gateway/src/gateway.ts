@@ -28,7 +28,10 @@ export type GatewayOptions = CredentialOptions & {
   onToolException?: (exception: ToolException) => void;
 };
 
-/** Owns upstream lifetimes and one executor, supplying a catalog snapshot for each execution. */
+/**
+ * Shares upstream connections and execution limits across MCP sessions,
+ * rather than creating a separate pool for each client.
+ */
 export class Gateway implements AsyncDisposable {
   private readonly shutdown = new AbortController();
   private readonly upstreams: Upstream[];

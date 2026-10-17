@@ -21,7 +21,10 @@ import {
 import { acquireLease } from "./lease.ts";
 import { isDeepStrictEqual } from "node:util";
 
-/** Shares refresh work in-process; a short lease coordinates stored grants across processes. */
+/**
+ * Shares refresh work within this session and locks across processes
+ * to avoid exchanging the same rotating refresh grant twice.
+ */
 export class OAuthSession implements AsyncDisposable {
   private readonly shutdown = new AbortController();
   private readonly signal: AbortSignal;

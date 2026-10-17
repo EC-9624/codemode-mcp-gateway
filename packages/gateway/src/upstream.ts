@@ -46,7 +46,10 @@ export type ConnectionSnapshot = {
   release(): void;
 };
 
-/** Owns one named upstream's recovery state and current/retired connections. */
+/**
+ * Keeps retired connections alive while executions still use their catalogs,
+ * so recovery does not close resources those executions need.
+ */
 export class Upstream {
   private state: State;
   private updatedAt = new Date().toISOString();
