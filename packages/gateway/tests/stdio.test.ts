@@ -19,7 +19,7 @@ describe("CMG stdio application", () => {
               type: "local",
               command: [
                 process.execPath,
-                fileURLToPath(new URL("../../../examples/mcp-server.ts", import.meta.url)),
+                fileURLToPath(new URL("../../../examples/shared/mcp-server.ts", import.meta.url)),
               ],
             },
           },

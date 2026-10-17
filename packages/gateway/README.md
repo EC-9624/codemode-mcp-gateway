@@ -9,9 +9,7 @@ The package remains private while its API matures.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-bun run gw setup
-bun run gw serve --config examples/cmg.json
-bun run example:server
+bun run --cwd packages/gateway example
 ```
 
 Source/package runs and builds require Bun **1.4.3**. `bun run build:standalone`
@@ -26,9 +24,27 @@ token without overwriting existing files. The starter needs user-supplied upstre
 before it can run. `gw serve` reads the saved token or `GW_HTTP_TOKEN` override.
 Client configuration, installation, and process supervision remain user-managed.
 The gateway never edits client configs. Existing upstream definitions and explicit OAuth login remain.
-`gw serve --stdio` explicitly selects direct stdio. `example:server` starts a client and the gateway,
+`gw serve --stdio` explicitly selects direct stdio. The package's `example` (root
+shortcut `example:server`) starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 In stdio mode stdout is exclusively MCP traffic; diagnostics use stderr.
+
+Examples live in `packages/gateway/examples/` in the checkout, not tarballs. They
+include a local stdio demo, authenticated HTTP client, and optional real-account
+Notion workflow. The default demo prints `5` and needs no setup, credentials, or model.
+
+For standalone use after building/installing, run `gw setup`, add your upstreams
+to its displayed configuration, validate with `gw check`, explicitly authorize
+OAuth upstreams with `gw login --server <name>`, then leave `gw serve` running.
+In another terminal, `gw doctor` queries that process and `gw token` explicitly
+reveals the private token for manual client registration. No configuration changes
+are watched; restart after editing upstream definitions.
+
+Clients use `http://127.0.0.1:4791/mcp` (or your configured port) with
+`Authorization: Bearer <your-private-token>`. Local upstreams can still require
+their own runtimes even when the gateway binary itself needs none. Stop the gateway,
+replace the binary, and restart for updates; gateway files and OAuth credentials
+remain separate from the executable.
 
 ## CLI and default configuration
 
@@ -39,8 +55,9 @@ from `--config <path>` (or a positional path), then
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
 
-For building and running outside source mode, HTTP credentials, and manual client
-configuration, see [local deployment](../../docs/local-installation.md).
+The repository's `docs/local-installation.md` expands installation and native client
+configuration. This README keeps the runtime and credential contracts self-contained
+for installed readers; `dist/index.d.ts` contains supported public API signatures.
 There is no client provisioning or OS service-management command. OAuth identity
 and lock storage are unchanged.
 
@@ -48,7 +65,7 @@ and lock storage are unchanged.
 gw setup                   # Prepare only gateway files; no connections or process startup
 gw token                   # Explicitly print the effective token; treat output as a secret
 gw serve                   # Foreground HTTP service; saved token or GW_HTTP_TOKEN
-gw serve --stdio --config ./cmg.json
+gw serve --stdio --config ./config.json
 gw check --json
 gw doctor --server notion --json
 gw login --server notion
@@ -82,8 +99,7 @@ HTTP status contains process/session/upstream information, not client registrati
 or installation state. CLI status requests reject redirects and validate the response;
 they do not cryptographically authenticate the server. A process occupying the port
 can capture the persistent token and impersonate an MCP/status server. Host/Origin
-checks do not prevent this; trust the local port owner or use direct stdio. See
-[HTTP authentication](../../docs/local-installation.md#http-authentication).
+checks do not prevent this; trust the local port owner or use direct stdio.
 Login/logout select a named server; the name
 can be omitted when exactly one OAuth connection is configured. Logout removes
 local credentials, not the upstream grant.
@@ -119,8 +135,10 @@ Server names contain letters, digits, `_`, or `-`; `__proto__` is rejected. Loca
 array, optional `cwd`, and optional `environment`. Remote entries use an HTTP(S)
 `url`, optional header templates, and explicit `oauth: {}` (or `{ "scope": "read" }`)
 to enable OAuth. Omitted/false `oauth` uses an unauthenticated or static-header
-connection. Each entry accepts `disabled: true`. Relative local paths resolve from
-the config directory. OAuth storage identity is the server name plus canonical URL.
+connection. Each entry accepts `disabled: true`. Local `cwd` defaults to the config
+directory; a relative `cwd` resolves from there. Command arguments pass through
+unchanged and the upstream interprets relative arguments from that working directory.
+OAuth storage identity is the server name plus canonical URL.
 
 Invalid configuration fails before connecting. Enabled upstreams initialize
 independently; the agent-facing server is available while they connect. Expected
@@ -183,9 +201,11 @@ closes owned connections. Remote session deletion is best-effort only when the
 transport has already closed or authorization is known unusable; local cleanup
 still completes. Unexpected infrastructure/cleanup failures remain host failures.
 
-[`examples/multi.json`](../../examples/multi.json) combines the synthetic math server
-and Notion. Run `bun run gw doctor examples/multi.json` or point an MCP client at
-`bun run gw examples/multi.json`. Configuration accepts only `mcp.servers`.
+The repository's `packages/gateway/examples/multi.json` combines the shared synthetic
+math server and Notion. Probe it with `bun run gw doctor --stdio --config
+packages/gateway/examples/multi.json`, or configure a client to spawn
+`gw serve --stdio --config <absolute-config-path>`. Upstream definitions use
+`mcp.servers`; optional top-level `sandbox` and `service` settings control policy/listening.
 
 ### Verified interoperability
 
@@ -232,12 +252,11 @@ if (response.isError) return response.content;
 return response.structuredContent.sum;
 ```
 
-For the included upstream, the response contains:
+For the synthetic upstream, the agent-facing MCP response is:
 
 ```json
 {
-  "result": { "ok": true, "value": 5 },
-  "calls": [{ "callId": 1, "name": "math.add", "status": "completed" }]
+  "content": [{ "type": "text", "text": "5" }]
 }
 ```
 
@@ -258,8 +277,8 @@ numeric code, and message, including SDK-generated output-schema errors. Error d
 and stacks are excluded; messages are public and are not redacted. Unknown exceptions
 still reject as `Host tool failed.`. For both cases, `gw` writes the qualified tool
 name, call ID, and original error name/message/code to stderr as one JSON line.
-Cancellation cannot roll back upstream side effects. See
-[execution contracts](../../docs/reference.md#execution-reports-and-call-summaries).
+Cancellation cannot roll back upstream side effects. Metadata-only call reports
+belong to the host executor; they are not sent in agent-facing MCP responses.
 
 ### Large output
 
@@ -318,7 +337,9 @@ For example, configure execution capacity and total tool calls without request o
 }
 ```
 
-Limits must be positive integers within [codemode's bounds](../codemode/README.md#limits-and-boundaries).
+Limits use codemode's exported `SandboxLimits` bounds: positive integers, at most
+2147483647 except the stack guard's 4 MiB maximum. The default stack is 1 MiB,
+source is 256 KiB, total calls are 100, and active calls are ten per execution.
 Startup has separate budgets: 5 seconds for the upstream handshake, including its
 initialized notification, and 15 seconds
 for discovery. Configuration is loaded once; recovery republishes catalog snapshots.
@@ -351,11 +372,10 @@ OAuth is opt-in for an explicitly named HTTP connection:
 From the repository root:
 
 ```sh
-bun run gw login examples/notion.json
-bun run example:notion examples/notion.json "your test page"
-bun run example:notion examples/notion.json "your test page" --page "<page-url-or-id>" --expect "<known text>" --runs 3
-bun run gw examples/notion.json
-bun run gw logout examples/notion.json
+bun run gw login --config packages/gateway/examples/notion.json --server notion
+bun run example:notion packages/gateway/examples/notion.json "your test page" \
+  --page "<page-url-or-id>" --expect "<known text>" --runs 3
+bun run gw logout --config packages/gateway/examples/notion.json --server notion
 ```
 
 `login` displays an authorization URL and attempts to open the browser. One
@@ -435,7 +455,8 @@ validating input schemas, provider response shapes, and expected page identity.
 It prints JSON-line validation/timing summaries rather than page bodies, stops on
 failure with a nonzero exit, and checks natural gateway exit after EOF. Its tool
 names target Notion's current user-authorized server, not older workspace-owned
-catalogs. See the [measured baseline](../../README.md#real-upstream-validation-and-execution-baseline).
+catalogs. The repository's `docs/archive/investigations.md` retains dated live-run
+evidence, not a fresh provider-compatibility or performance guarantee.
 
 Automated OAuth tests use synthetic servers and isolated stores. A live macOS
 login and subsequent Notion search/fetch workflow have been verified. Live runs
@@ -478,8 +499,7 @@ options?)`, call `await gateway.start()`, and attach `gateway.createServer()` to
 application-owned transport. `start()` waits for initial attempts; expected upstream
 failures are available from `gateway.status()`. Creating an MCP server before that
 promise settles exposes connecting statuses. `options.onStatus` receives updates;
-`options.onToolException` receives private tool exceptions (see the
-[codemode option](../codemode/README.md#results-and-failures));
+`options.onToolException` receives private tool exceptions while executions run;
 `gateway.failure` resolves with unexpected background infrastructure failures, which
 are also surfaced by `close()`. Close/dispose the gateway to stop maintenance,
 abort executions, and release all connections. Importing the package starts none
@@ -489,7 +509,7 @@ is the validated form with defaults applied. Local and remote entries keep the s
 The public entry also exports `Configuration`, `resolveHeaders`, and
 `serve(configurationPath)`. `serve` owns the complete stdio
 process lifetime, including configuration loading and shutdown listeners. Importing
-the package alone starts neither path. See the [public exports](src/index.ts).
+the package alone starts neither path. Public signatures ship in `dist/index.d.ts`.
 
 `GatewayHttpServer.listen(gateway, { port, bearerToken })` borrows the gateway and
 owns only its HTTP listener and MCP sessions. The caller supplies the persistent
@@ -533,28 +553,28 @@ HTTP shutdown requests session deletion when supported, with a 5-second DELETE
 request timeout. The agent-facing transport opens during upstream setup, so EOF
 can also cancel a stalled handshake or discovery.
 
-[`cli.ts`](src/cli.ts) is the executable entry; [`main.ts`](src/main.ts) handles
-arguments and exit status. [`gateway.ts`](src/gateway.ts) composes catalog snapshots and the executor;
-[`upstream.ts`](src/upstream.ts) owns each server's recovery state and retained connections,
-while [`connection.ts`](src/connection.ts) opens and cleans up one transport/OAuth session.
+In repository source, `src/cli.ts` is the executable entry; `src/main.ts` handles
+arguments and exit status. `src/gateway.ts` composes catalog snapshots and the executor;
+`src/upstream.ts` owns each server's recovery state and retained connections,
+while `src/connection.ts` opens and cleans up one transport/OAuth session.
 Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
-[`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
-[`daemon.ts`](src/daemon.ts) owns the foreground HTTP process; it does not supervise
-the process, provision clients, or create its HTTP token. [`setup.ts`](src/setup.ts)
-owns explicit first-run preparation; [`http-token.ts`](src/http-token.ts) owns
+`src/server.ts` explains stdio startup and cleanup ordering beside the code.
+`src/daemon.ts` owns the foreground HTTP process; it does not supervise
+the process, provision clients, or create its HTTP token. `src/setup.ts`
+owns explicit first-run preparation; `src/http-token.ts` owns
 private token-file creation and read-only environment/file resolution.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
-build, invoke it as `gw configuration.json`; dependencies are not bundled.
+build, invoke it as `gw serve --stdio --config configuration.json`; dependencies are not bundled.
 `bun run build:standalone` additionally emits the self-contained application at
 the repository's `dist/gw`; version metadata and the worker entry are embedded.
 The build wraps QuickJS's Emscripten loaders to supply embedded WASM bytes through
 their documented `wasmBinary` option, while retaining the patched SDK build.
 
 The Notion runner and metadata observer accept `--gateway <installed-gw-path>`
-to launch that executable instead of the source CLI. See the
-[external-consumer validation guide](../../docs/installed-validation.md) for local
-tarball installation, saved-credential reuse, and OpenCode V2 integration.
+to launch that executable instead of the source CLI. The repository's
+`docs/installed-validation.md` describes local tarball checks and saved-credential
+reuse. Examples and source references above are checkout-only, not shipped internals.
 
 ## Current scope
 
@@ -563,8 +583,8 @@ transports are authenticated loopback Streamable HTTP and explicit direct stdio.
 Users choose how to install and supervise the foreground `gw serve` process and
 configure its clients. There is no model loop, remote network hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
-are recorded; longer soak testing and aggregate/payload resource hardening remain
-future work. Local OAuth serves one
+are recorded; those finite runs do not establish production stability. Aggregate/payload
+resource hardening and sustained ordinary-provider testing remain future work. Local OAuth serves one
 OS user; team-member identity, hosted authentication, and shared credential management
 are not implemented.
 
@@ -589,4 +609,4 @@ lock ownership that the public serving API cannot expose precisely. The real OS 
 is exercised through public login/logout with scoped spies on Bun's secret service.
 Its helpers and upstream fixtures are package-local. Packed-consumer fixtures additionally verify the installed API
 and `gw` executable through the root distribution checks.
-See [testing conventions](../../docs/testing.md).
+Repository testing conventions live in `docs/testing.md`, not the shipped package.

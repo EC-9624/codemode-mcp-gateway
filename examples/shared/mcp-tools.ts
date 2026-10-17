@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-/** Synthetic tools for the stdio example. */
+/** Synthetic upstream shared by the MCP adapter and gateway examples. */
 export function createMcpServer() {
   const server = new McpServer({ name: "cmg-example", version: "0.0.0" });
 

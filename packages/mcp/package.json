@@ -19,6 +19,8 @@
     }
   },
   "scripts": {
+    "example": "bun --conditions=development run examples/client.ts",
+    "example:server": "bun --conditions=development run examples/server.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "bun --conditions=development test ./tests",

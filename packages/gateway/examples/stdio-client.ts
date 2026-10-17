@@ -10,8 +10,11 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [
     "--conditions=development",
-    fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
-    fileURLToPath(new URL("./cmg.json", import.meta.url)),
+    fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
+    "serve",
+    "--stdio",
+    "--config",
+    fileURLToPath(new URL("./local.json", import.meta.url)),
   ],
 });
 
@@ -32,7 +35,7 @@ console.log((await client.listTools()).tools.map((tool) => tool.name));
 for (const code of [
   'return await tools.searchTools({ query: "Add numbers" });',
   'return await tools.describeTool({ name: "math.add" });',
-  'return (await tools["math.add"]({ a: 2, b: 3 })).structuredContent.sum;',
+  'const response = await tools["math.add"]({ a: 2, b: 3 }); if (response.isError) throw new Error("The upstream add tool failed."); return response.structuredContent.sum;',
 ]) {
   console.log(responseText(await client.callTool({ name: "execute", arguments: { code } })));
 }

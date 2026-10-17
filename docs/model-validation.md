@@ -63,8 +63,11 @@ Against `4cf5806` plus the uncommitted slices 37–39, OpenCode **2.0.30**, Bun
 - Exactly four searches, fetches, and deliberate failures were observed; no replay.
 - All four saved files were removed; gateway exit was code zero, no signal, zero pending requests.
 
-Session IDs and compact outcomes are preserved in the
+Compact outcomes are preserved in the
 [measurement summary](measurements/model-validation-2026-10-16.json).
+Unnecessary local session IDs were redacted from this public copy; outcomes,
+counts, and executed-source hashes were not changed. Earlier Git revisions can
+still contain those IDs; this redaction does not rewrite history.
 Repository verification also passed `bun run check` (656 tests and installed-consumer
 checks), `bun run example`, and `bun run verify:packages:clean`.
 

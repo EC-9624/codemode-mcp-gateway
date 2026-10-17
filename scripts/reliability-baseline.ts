@@ -9,7 +9,7 @@ import {
   createDiscoveryTools,
   type ExecutionReport,
 } from "@codemode-mcp-gateway/codemode";
-import { responseText } from "../examples/output.ts";
+import { responseText } from "../packages/gateway/examples/output.ts";
 import { z } from "zod";
 import { observeWorkers } from "./reliability-workers.ts";
 

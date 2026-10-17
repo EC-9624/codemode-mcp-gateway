@@ -131,8 +131,8 @@ for (const [source, target] of [
   ["packages/gateway/tests/fixtures/packaged-consumer.ts", "consumer.ts"],
   ["packages/gateway/tests/fixtures/import-gateway.ts", "import-gateway.ts"],
   ["packages/gateway/tests/fixtures/packaged-service.ts", "service.ts"],
-  ["examples/mcp-server.ts", "upstream/mcp-server.ts"],
-  ["examples/mcp-tools.ts", "upstream/mcp-tools.ts"],
+  ["examples/shared/mcp-server.ts", "upstream/mcp-server.ts"],
+  ["examples/shared/mcp-tools.ts", "upstream/mcp-tools.ts"],
 ] as const) {
   await Bun.write(join(consumer, target), Bun.file(join(root, source)));
 }
@@ -165,7 +165,7 @@ console.log(
   "Packed packages verified: declarations, worker execution/cancellation, MCP adapter, CLI, and user-configured authenticated HTTP.",
 );
 
-/** A timeout bounds regressions that leave workers or child processes running. */
+/** Kill the immediate subprocess on timeout; descendant teardown and inherited-pipe EOF are not bounded here. */
 async function run(command: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
   let forced = false;

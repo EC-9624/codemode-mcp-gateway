@@ -19,6 +19,8 @@
     }
   },
   "scripts": {
+    "example": "bun --conditions=development run examples/basic.ts",
+    "example:contracts": "bun --conditions=development run examples/contracts.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && bun ../../scripts/build-codemode-runtime.ts",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "bun --conditions=development test ./tests",

@@ -4,6 +4,24 @@ A Bun-only library for running JavaScript inside QuickJS, a JavaScript engine
 compiled to WebAssembly. Supply host tools; scripts can call them but cannot
 access the host's filesystem, network, or process directly. MCP is not required.
 
+## Setup
+
+Source/package use requires **Bun 1.4.3**. This package is not published to a registry.
+From the full workspace root:
+
+```sh
+bun install --frozen-lockfile --ignore-scripts
+bun run --cwd packages/codemode example
+bun run --cwd packages/codemode example:contracts
+```
+
+The minimal example returns `42`; advanced examples demonstrate intentional
+failure/cancellation and recovery. Examples live in `packages/codemode/examples/`
+in the repository and are not shipped in tarballs. For local compiled consumers,
+build from the workspace root before packing; import the package root without the
+`development` condition. The snippets and contracts here are self-contained for
+installed readers; `dist/index.d.ts` contains the supported public signatures.
+
 ## Usage
 
 ```ts
@@ -45,9 +63,9 @@ Pre-aborted, oversized, and over-capacity submissions do not read execution tool
 Registry access failures reject with host-only `SandboxExecutionError` diagnostics,
 start no worker, and release admission. Tool snapshotting is outside execution deadlines.
 
-Requires Bun **1.4.3**. Import the package root; runtime deep imports are unsupported.
-Run [the complete example](../../examples/basic.ts) with `bun run example` from
-the workspace root.
+Import the package root; runtime deep imports are unsupported. The root shortcut
+`bun run example` runs the minimal example. Use the package's `example:contracts`
+command for the advanced behaviors described below.
 
 The gateway's standalone build embeds the executor's worker as a second entrypoint
 named `worker.js` beside the executable in Bun's virtual filesystem, and embeds
@@ -142,7 +160,8 @@ work that may not terminate. Configured limits must be positive integers; zero
 and infinity do not disable them. A total
 deadline can cover startup, but is not a hard response-latency cap: synchronous
 host work can delay enforcement, and cleanup may finish after the deadline.
-See [exact boundaries](../../docs/reference.md#resource-limits).
+All options use positive timer-sized integers up to 2147483647; the stack guard
+has a lower maximum of 4 MiB. Memory limits bound the guest heap, not process RSS.
 
 ### Execution capacity
 
@@ -184,7 +203,7 @@ This is a working MVP, not a production-hardened sandbox.
 
 ## Tools and discovery
 
-- [`defineTool`](src/catalog.ts) binds Standard Schema validation and exports an
+- `defineTool` binds Standard Schema validation and exports an
   input JSON Schema for discovery. The handler receives the validated arguments,
   including transformations. `validateTool` adapts a validator without requiring JSON export.
 - `ToolCatalog.create` snapshots callback bindings and public metadata. Manually
@@ -199,10 +218,11 @@ This is a working MVP, not a production-hardened sandbox.
   ahead of description-only matches, with stable ties.
 - `SandboxLimits` exposes shared defaults and upper bounds.
 
-See [validated tools](../../docs/reference.md#validated-tool-contracts) and
-[discovery](../../docs/reference.md#catalog-and-discovery) for examples. Exact
-signatures and field contracts live in the [public exports](src/index.ts) and
-[types](src/types.ts).
+Native schemas must implement both Standard Schema and Standard JSON Schema.
+`defineTool` exports the input schema once; transforms determine the handler's
+output type. Export/copy failures throw before execution. JSON boundary semantics
+apply: BigInt/circular values cannot cross; getters and `toJSON` participate in
+conversion. Exact public signatures are included in `dist/index.d.ts`.
 
 ## How it works
 
@@ -225,17 +245,17 @@ Arguments and results cross JSON, not shared object references. An undefined fin
 return becomes `null`; an undefined tool result remains `undefined`.
 
 The host selects the outcome, fixes the call snapshot, and awaits worker termination.
-The [supervisor](src/runtime/execution.ts), [engine](src/runtime/engine.ts), and
-[guest bridge](src/runtime/guest-bridge.ts) explain their lifetimes beside the code.
+In the repository, `src/runtime/execution.ts`, `engine.ts`, and `guest-bridge.ts`
+explain supervisor, VM, and bridge ownership. Those modules are internal, not exports.
 This package does not own tool connections, MCP setup, process signals, or an agent loop.
 
 ## Distribution
 
 The provisional package name has not been published. Builds emit ESM JavaScript,
 declarations, and the worker into `dist/`. The QuickJS SDK JavaScript is bundled
-with a [memory-growth fix](../../patches/README.md); WASM variants and other
+with a WASM memory-view fix for SDK 0.32.0; WASM variants and other
 dependencies remain external. This ensures the fix reaches standalone consumers
-without lifecycle scripts or consumer patches. See `THIRD_PARTY_NOTICES.md`. Installed
+without lifecycle scripts or consumer patches. See [third-party notices](THIRD_PARTY_NOTICES.md). Installed
 consumers use compiled exports; repository scripts select source with the
 `development` condition. Node compatibility is not supported.
 
@@ -257,8 +277,8 @@ The private ownership/fault probes explain why their observations cannot be made
 through `execute()`: VM handles, original worker-local causes, independent admission,
 transport listeners, and controlled cleanup races. Process fixtures separately prove
 actual exit; `fixtures/packaged-codemode.ts` checks the installed public package.
-See the [test ownership and migration map](tests/README.md) for named surviving contracts
+See the repository's `packages/codemode/tests/README.md` for named surviving contracts
 and the reasons for each private exception.
 
-See [testing conventions](../../docs/testing.md) and the
-[behavioral reference](../../docs/reference.md) for detailed semantics and fault handling.
+Repository-only references: `docs/testing.md` and `docs/reference.md` expand testing
+conventions and edge cases; they are not shipped in this package.

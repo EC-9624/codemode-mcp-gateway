@@ -26,6 +26,14 @@ within one checkout should run serially.
 
 These checks protect different boundaries; they are not installation prerequisites.
 
+## Examples
+
+Runnable demos live in each package's `examples/`, with the shared synthetic
+upstream under `examples/shared/`. Root `example`, `example:mcp`, and `example:server`
+forward to the owning package. `example:http` connects to an already-running gateway;
+`example:notion` remains an explicitly authorized real-account workflow. The
+[example index](../examples/README.md) lists commands and expected outcomes.
+
 ## Optional diagnostics
 
 Execution/memory/concurrency/reliability baselines, gateway soak, HTTP-idle probes,

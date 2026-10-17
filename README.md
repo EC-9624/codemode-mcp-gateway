@@ -1,39 +1,16 @@
 # codemode-mcp-gateway
 
-A code-mode gateway for MCP tools. An agent writes JavaScript; the gateway runs it
-in QuickJS with explicitly supplied tools. Reusable libraries provide execution
-and MCP adaptation without running an agent/model loop.
+A code-mode gateway for MCP tools. Connect your upstream MCP servers once, then let
+coding agents discover tools, compose calls, and filter results with JavaScript.
+The gateway exposes one MCP tool, `execute`, rather than putting every upstream
+schema into the client's tool catalog. It does not run a model or agent loop.
 
 Development and source/package runs require **Bun 1.4.3**, pinned in `.bun-version`.
 The standalone `gw` executable includes its runtime. Package names are provisional;
 nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
-Build and install **`gw`** with `bun run install:gw`; it produces `dist/gw` and
-installs the executable at `~/.local/bin/gw` for the current platform. No release binaries have been published.
-Installation, process supervision, upstream definitions, and MCP client configuration
-are user-managed. See [local deployment](docs/local-installation.md).
-
-```sh
-bun run install:gw
-gw setup
-# Edit the displayed configuration to add your upstream MCP servers.
-gw check
-gw serve
-```
-
-Installation never runs setup or starts a process. Use `bun run install:gw --force`
-to replace an existing executable; shell files and configuration remain untouched.
-Add `~/.local/bin` to PATH yourself if needed. For build-only output, use
-`bun run build:standalone`. Dependencies must already be installed.
-
-`setup` explicitly creates a starter configuration and a private persistent token;
-it never replaces existing files, configures clients, or starts a process.
-The starter has no upstreams and is not runnable until edited. `gw token` explicitly
-reveals the effective token for manual client setup. Local upstream commands may
-still require their own runtimes even though the gateway executable does not.
-
-## Quick start
+## Try the local demo
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
@@ -44,15 +21,44 @@ The example launches a client, gateway, and synthetic math MCP upstream, discove
 `add`, inspects its schema, and returns 5. Repository commands run source directly;
 these examples do not require a build.
 
-## Agent-facing service
+No configuration, credentials, model calls, or external provider is needed. See
+the [example index](examples/README.md) for package-specific commands and expected output.
+
+## Install and set up gw
 
 ```sh
-bun run gw setup
-bun run gw serve --config examples/multi.json
-bun run gw check examples/multi.json --json
-bun run gw doctor --stdio examples/multi.json --json
-bun run gw login examples/multi.json --server notion
+bun install --frozen-lockfile --ignore-scripts
+bun run install:gw
+"$HOME/.local/bin/gw" --version
 ```
+
+This builds `dist/gw` and installs it at `~/.local/bin/gw`. Add that directory to
+PATH yourself, or use the absolute path. No shell files, clients, or services are
+changed. Use `--force` to explicitly replace an installed executable; use
+`bun run build:standalone` for build-only output. Builds target the host platform;
+standalone checks currently establish macOS arm64, not a cross-platform release.
+No downloadable release binaries or registry packages are published yet.
+
+```sh
+gw setup
+# Edit ~/.config/codemode-mcp-gateway/config.json to define your upstreams.
+gw check
+gw login --server notion  # Only for a configured OAuth upstream named notion.
+gw serve
+```
+
+`setup` creates only missing configuration and a private persistent HTTP token;
+it never configures clients, authorizes upstreams, or starts a process. Its starter
+has no upstreams and is not runnable until edited. For example, a Notion-only
+configuration is `{ "mcp": { "servers": { "notion": { "type": "remote",
+"url": "https://mcp.notion.com/mcp", "oauth": {} } } } }`.
+
+Keep `gw serve` running in its terminal. In another terminal, `gw doctor` reports
+the running gateway's upstream status, and `gw token` explicitly prints the secret
+for manual client registration. Connect clients to `http://127.0.0.1:4791/mcp`
+with `Authorization: Bearer <your-private-token>`. Never log or commit that token.
+See [local deployment](docs/local-installation.md) for full Codex/Claude Code
+configuration examples, nondefault paths, updates, and token rotation.
 
 `gw serve` runs the foreground loopback HTTP MCP service. It reads the setup-created
 token or an explicit `GW_HTTP_TOKEN` override (32–256 letters, digits, underscores,
@@ -68,7 +74,8 @@ not a request to adopt or restart its owner. No per-client gateway or bridge is 
 Explicit `gw serve --stdio` and legacy positional-config invocations retain direct
 stdio for development and examples. Both transports expose `execute({ code })`.
 Diagnostics use stderr.
-Configure named upstreams under `mcp.servers`:
+Configure named upstreams under `mcp.servers`; this example assumes you supply a
+local `mcp-server.ts` beside your configuration:
 
 ```json
 {
@@ -82,7 +89,7 @@ Configure named upstreams under `mcp.servers`:
 ```
 
 Local paths resolve from the configuration directory. The included
-[`examples/multi.json`](examples/multi.json) supplies the math script and longer
+[`packages/gateway/examples/multi.json`](packages/gateway/examples/multi.json) references the shared math fixture and longer
 Notion deadlines. Serving and management commands use
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
 or a positional path overrides it. `check` validates without connecting; `doctor`
@@ -148,13 +155,27 @@ The hard final-output default is **16 MiB** in the gateway, **256 KiB** in the
 library. This is not streaming and does not bound temporary tool/transport
 allocations. See [output/failure details](packages/gateway/README.md#results-and-failures).
 
-## Packages
+## How it works
+
+```text
+MCP client -> execute({ code }) -> fresh worker + QuickJS guest
+                                -> host tool adapter -> upstream MCP server
+           <- returned value/error text, or a saved-output preview and local path
+```
+
+The host owns tool connections and callbacks; the guest sees only injected tools.
+Discovery and bindings are snapshotted for each execution. A running gateway shares
+one executor and its upstreams across its MCP sessions.
+
+### Packages
 
 | Package                                                         | Responsibility                                                                   |
 | --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | [`@codemode-mcp-gateway/codemode`](packages/codemode/README.md) | Execute JavaScript with host tools; no MCP dependency                            |
 | [`@codemode-mcp-gateway/mcp`](packages/mcp/README.md)           | Adapt connected MCP clients or expose a borrowed executor as an MCP server       |
 | [`codemode-mcp-gateway`](packages/gateway/README.md)            | Compose upstreams, discovery, configuration, OAuth, lifecycle, API, and `gw` CLI |
+
+Each package has its own README, runnable `examples/`, public entry, and tests.
 
 Codemode owns workers/VMs; MCP uses only codemode's public contracts. Gateway owns
 connections and selects QuickJS. Importing its programmatic entry starts no CLI or
@@ -217,70 +238,16 @@ packing does not rely on lifecycle hooks; script-disable settings remain respect
 See the [script guide](scripts/README.md) for build/installation commands versus
 optional diagnostics and archived studies.
 
-Opt-in local integration diagnostics:
+## Documentation and release status
 
-```sh
-bun run validate:agents
-bun run baseline:gateway --smoke
-bun run baseline:gateway --minutes 30
-bun run validate:http-idle
-```
+- [Documentation index](docs/README.md): current user/developer guides and optional diagnostics.
+- [Behavior and ownership reference](docs/reference.md): exact execution/MCP contracts.
+- [Historical evidence](docs/archive/README.md): dated investigations, interoperability,
+  and retired deployment workflows; not current onboarding or fresh validation.
+- [Distribution checklist](docs/distribution-readiness.md): public-source, binary,
+  license, and registry decisions tracked separately.
+- [Project conventions](AGENTS.md): development rules.
 
-The [four-workflow diagnostic](docs/agent-validation.md) checks the real CLI and
-saved-output retrieval. The [managed transport soak](docs/gateway-soak.md) exercises
-stdio and loopback HTTP upstreams; run measurements serially. Both use scripted
-synthetic traffic, not language-model agents or live providers.
-
-For separately approved **actual model-agent calls**, use
-`bun run validate:models --approve-model-calls`. This runs four Sol Fast sessions
-against synthetic local documents and can incur provider charges. See
-[actual-agent validation](docs/model-validation.md) for permissions, evidence, and limits.
-
-Builds emit ESM/declarations and the worker into `dist/`. Repository scripts use the
-`development` export condition; installed consumers use compiled exports. The
-patched QuickJS SDK JavaScript is bundled so standalone consumers receive its
-memory-growth fix; WASM variants remain external. See [patch notes](patches/README.md).
-
-## Real-upstream validation and execution baseline
-
-After explicit login, run the read-only Notion workflow with private test inputs:
-
-```sh
-bun run gw login examples/notion.json
-bun run example:notion examples/notion.json "specific search phrase" \
-  --page "<page-url-or-id>" --expect "<known text>" --runs 3
-```
-
-`--agents` supports overlapping scripted workflows, not LLM agents. See the
-[historical baseline and measurement methods](docs/investigations.md#real-upstream-validation-and-execution-baseline)
-and [installed validation](docs/installed-validation.md) for saved-credential checks
-and recorded external-consumer/OpenCode evidence. Do not commit private queries or page data.
-
-## Current status and evidence
-
-The [finite host-runtime study](docs/runtime-study.md) supports Bun 1.4.3 for the
-identified allocator-retention issue rather than a Node migration. It does not
-establish a hard memory bound, indefinite stability, or global leak freedom. The
-separate QuickJS SDK memory-growth patch remains necessary in the integrated tree.
-
-Historical measurements, agent sessions, response formats, and slices 1–32 are
-preserved in [investigations](docs/investigations.md), not presented as fresh runs
-against today's tree. The current [stdio observer](scripts/observe-gateway.ts)
-records MCP outcomes, timing, and request/session/process correlation/overlap—not
-host-only call counts or execution failure categories. The new four-workflow CLI
-diagnostic, managed-gateway smoke, and a 30-minute managed transport soak passed
-locally on Bun 1.4.3. The soak completed 180 cycles and 3,192 requests; its guide
-records one HTTP idle-timeout warning and the scope of its memory observations.
-The later idle probe characterized resets/warnings; the updated fixture smoke
-passed with a justified explicit idle timeout, without rewriting the old soak.
-Four actual Sol Fast sessions also passed shared-gateway, hidden saved-output
-retrieval, actionable-error, and cleanup checks. Longer ordinary agent/provider use
-and aggregate/payload hardening remain gaps; bounded local runs are not production evidence.
-
-The [distribution checklist](docs/distribution-readiness.md) records release blockers
-and owner decisions. Local use is the current goal; release work is deferred and
-this project is not approved for publication.
-
-Further reading: [behavior/ownership reference](docs/reference.md),
-[testing conventions](docs/testing.md), [bounded reliability diagnostic](docs/reliability.md),
-[WASM memory investigation](docs/wasm-memory.md), and [project conventions](AGENTS.md).
+This project is unreleased. A public source repository does not imply published
+packages, downloadable binaries, or production readiness. The project license has
+not yet been chosen; third-party notices are not a license for the surrounding code.

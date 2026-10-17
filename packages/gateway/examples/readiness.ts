@@ -30,7 +30,9 @@ export async function waitForServer(client: Client, name: string, timeoutMs = 30
     if (state === "connected") return;
 
     if (state !== "connecting")
-      throw new Error(`Server ${name} is ${state}. Check cmg doctor --server ${name}.`);
+      throw new Error(
+        `Server ${name} is ${state}. Run gw doctor --stdio --server ${name} with the same --config path, or gw doctor for a running HTTP gateway.`,
+      );
 
     await setTimeout(50, undefined, { signal });
   }

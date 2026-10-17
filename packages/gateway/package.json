@@ -22,6 +22,9 @@
     }
   },
   "scripts": {
+    "example": "bun --conditions=development run examples/stdio-client.ts",
+    "example:http": "bun --conditions=development run examples/http-client.ts",
+    "example:notion": "bun --conditions=development run examples/notion-client.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "bun --conditions=development test ./tests",

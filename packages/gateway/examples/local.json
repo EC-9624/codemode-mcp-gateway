@@ -1,0 +1,11 @@
+{
+  "mcp": {
+    "servers": {
+      "math": { "type": "local", "command": ["bun", "../../../examples/shared/mcp-server.ts"] }
+    }
+  },
+  "sandbox": {
+    "timeoutMs": 5000,
+    "totalTimeoutMs": 10000
+  }
+}

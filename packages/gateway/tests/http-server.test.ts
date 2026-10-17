@@ -174,11 +174,17 @@ describe("shared HTTP gateway", () => {
     const pathA = spillPath(responseText(await a.call('return "a".repeat(50_000);')));
     const pathB = spillPath(responseText(await b.call('return "b".repeat(50_000);')));
 
+    const description = (await a.client.listTools()).tools.find(
+      (tool) => tool.name === "execute",
+    )?.description;
+
     expect(await Bun.file(pathA).text()).toBe("a".repeat(50_000));
     await a.transport.terminateSession();
 
     expect(await Bun.file(pathA).exists()).toBe(false);
     expect(await Bun.file(pathB).text()).toBe("b".repeat(50_000));
+    expect(description).toContain("removed when it closes or retires");
+    expect(description).toContain("before gateway shutdown");
     await b.transport.terminateSession();
     expect(await Bun.file(pathB).exists()).toBe(false);
   });

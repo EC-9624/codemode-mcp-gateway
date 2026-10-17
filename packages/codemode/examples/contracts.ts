@@ -1,4 +1,5 @@
 import { z } from "zod";
+// Advanced contract examples; basic.ts is the minimal execution example.
 import {
   CodeExecutor,
   createDiscoveryTools,

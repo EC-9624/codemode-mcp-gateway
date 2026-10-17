@@ -1,7 +1,0 @@
-{
-  "mcp": { "servers": { "math": { "type": "local", "command": ["bun", "mcp-server.ts"] } } },
-  "sandbox": {
-    "timeoutMs": 5000,
-    "totalTimeoutMs": 10000
-  }
-}

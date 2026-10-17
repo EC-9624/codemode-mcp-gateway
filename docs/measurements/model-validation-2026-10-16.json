@@ -20,11 +20,12 @@
     "observedVariant": "default"
   },
   "elapsedMs": 18032,
+  "publicRedaction": "Local session IDs omitted; workflow names, counts, outcomes, and source hashes are unchanged.",
   "sessions": [
-    { "workflow": "alpha", "id": "ses_ebd1fb92cffe51y38MWrhDpQHl", "toolCalls": 6 },
-    { "workflow": "delta", "id": "ses_ebd1fb924ffdKzPGN5B9SantuA", "toolCalls": 6 },
-    { "workflow": "bravo", "id": "ses_ebd1fb924ffeP1u5A5BqPXGusG", "toolCalls": 6 },
-    { "workflow": "charlie", "id": "ses_ebd1fb915ffeNJtDyGsuWyhkZz", "toolCalls": 6 }
+    { "workflow": "alpha", "toolCalls": 6 },
+    { "workflow": "delta", "toolCalls": 6 },
+    { "workflow": "bravo", "toolCalls": 6 },
+    { "workflow": "charlie", "toolCalls": 6 }
   ],
   "observations": {
     "gatewayProcesses": 1,

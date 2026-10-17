@@ -8,7 +8,7 @@ const client = new Client({ name: "cmg-example", version: "0.0.0" });
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("./mcp-server.ts", import.meta.url))],
+  args: [fileURLToPath(new URL("../../../examples/shared/mcp-server.ts", import.meta.url))],
 });
 
 await using cleanup = new AsyncDisposableStack();

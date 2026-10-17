@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
+import { chmod, copyFile, mkdir, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { configuration } from "./support/configuration.ts";
@@ -101,6 +103,53 @@ describe("Notion validation example", () => {
       status: "passed",
       summary: { results: 0 },
     });
+  });
+
+  test("the copied Notion client and its helpers run outside the checkout with an explicit gateway", async () => {
+    const server = new McpServer({ name: "notion-fixture", version: "0" });
+    server.registerTool("notion-search", { inputSchema: z.object({ query: z.string() }) }, () => ({
+      content: [{ type: "text", text: JSON.stringify({ type: "workspace_search", results: [] }) }],
+    }));
+    await using upstream = await httpServer(server);
+    await using config = await configuration({ type: "remote", url: upstream.url }, "notion");
+    const directory = join(dirname(config.path), "external consumer");
+    await mkdir(directory);
+    for (const name of ["notion-client.ts", "readiness.ts", "output.ts"])
+      await copyFile(
+        fileURLToPath(new URL(`../examples/${name}`, import.meta.url)),
+        join(directory, name),
+      );
+
+    await symlink(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(directory, "node_modules"),
+      "dir",
+    );
+    const gateway = join(directory, "gw");
+    // Wrap the real source CLI only to select development exports. The packed
+    // consumer verifier separately owns compiled-executable behavior.
+    await Bun.write(
+      gateway,
+      '#!/bin/sh\nexec "$EXAMPLE_BUN" --conditions=development "$EXAMPLE_CLI" "$@"\n',
+    );
+    await chmod(gateway, 0o755);
+
+    const result = await runExample([config.path, "no matches", "--gateway", gateway], {
+      entry: join(directory, "notion-client.ts"),
+      cwd: directory,
+      environment: {
+        EXAMPLE_BUN: process.execPath,
+        EXAMPLE_CLI: fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
+      },
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.records.find((record) => record.step === "search")).toMatchObject({
+      status: "passed",
+      summary: { results: 0 },
+    });
+    expect(result.records.at(-1)).toMatchObject({ step: "shutdown", status: "passed", code: 0 });
+    expect(upstream.methods).toContain("DELETE");
   });
 
   test.each([
@@ -322,10 +371,16 @@ async function httpServer(server: McpServer) {
   };
 }
 
-async function runExample(args: string[]) {
-  const entry = fileURLToPath(new URL("../../../examples/notion-client.ts", import.meta.url));
+async function runExample(
+  args: string[],
+  options: { entry?: string; cwd?: string; environment?: NodeJS.ProcessEnv } = {},
+) {
+  const entry =
+    options.entry ?? fileURLToPath(new URL("../examples/notion-client.ts", import.meta.url));
 
   const child = Bun.spawn([process.execPath, "--conditions=development", entry, ...args], {
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    env: { ...process.env, ...options.environment },
     stdout: "pipe",
     stderr: "pipe",
   });

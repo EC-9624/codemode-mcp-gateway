@@ -127,10 +127,13 @@ const child = spawn(
   gateway === undefined
     ? [
         "--conditions=development",
-        fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
+        fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
+        "serve",
+        "--stdio",
+        "--config",
         resolve(configuration),
       ]
-    : [resolve(configuration)],
+    : ["serve", "--stdio", "--config", resolve(configuration)],
   { stdio: ["pipe", "pipe", "inherit"] },
 );
 

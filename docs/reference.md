@@ -37,7 +37,7 @@ no `close()` call. Every execution awaits its own worker cleanup.
 An agent-facing MCP handler accepts `{ code }` and supplies request cancellation
 separately; tool selection remains host-owned. Migration from `execute(code, tools, options)`:
 move limits into the constructor and supply tools as constructor defaults or per-run
-options. See [the runnable example](../examples/basic.ts).
+options. See [the advanced example](../packages/codemode/examples/contracts.ts).
 
 Input is the body of an async function, not an expression or a module. Each call
 runs in a fresh worker with a fresh QuickJS runtime and context. Only explicitly
@@ -331,7 +331,7 @@ const report = {
 };
 ```
 
-`bun run example` demonstrates this sequence using an explicit start gate.
+`bun run --cwd packages/codemode example:contracts` demonstrates this sequence using an explicit start gate.
 
 `SandboxExecutionError` carries the same snapshot in `calls`; its `cause`
 preserves the original host-side failure. If execution and cleanup both
@@ -486,13 +486,13 @@ const catalog = ToolCatalog.create({
       .string()
       .min(1)
       .transform((text) => text.length),
-    execute: (length) => ToolResult.success(length + 1), // length is inferred as number
+    execute: (length) => ToolResult.success(length), // length is inferred as number
   }),
 });
 
 const sandbox = new CodeExecutor({ tools: catalog.tools });
 await sandbox.execute('return await tools.length("hello");');
-// result: { ok: true, value: 6 }
+// result: { ok: true, value: 5 }
 ```
 
 ```text
@@ -556,8 +556,8 @@ const report = await sandbox.execute(
 ```
 
 Run `bun run example:mcp` for the complete stdio workflow. It starts
-`examples/mcp-server.ts` as a Bun child process, calls the synthetic `add`, `fail`,
-and `dataset` tools, then closes the client. `examples/mcp-tools.ts` also exposes
+`examples/shared/mcp-server.ts` as a Bun child process, calls the synthetic `add`, `fail`,
+and `dataset` tools, then closes the client. `examples/shared/mcp-tools.ts` also exposes
 `wait`, whose handler cooperates with request cancellation. Server diagnostics
 belong on stderr; stdout is reserved for protocol messages.
 
@@ -1130,4 +1130,5 @@ ordinary argument and result conversion still observes native guest semantics.
 See [project conventions](../AGENTS.md) for code, comment, and ownership rules,
 and [testing conventions](testing.md) for package ownership, fault injection,
 async ordering, and focused commands. Root `bun run check` builds, typechecks,
-lints, checks formatting, runs package tests, and verifies packed consumers.
+lints, checks formatting, runs package tests, and verifies packed consumers and the
+standalone executable. Package examples are source-only and use public root imports.

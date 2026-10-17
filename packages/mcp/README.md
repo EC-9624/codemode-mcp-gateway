@@ -6,6 +6,24 @@ Two adapters between MCP and code-mode execution:
 2. `createCodemodeServer({ execute })` exposes an application-supplied executor as
    one MCP tool, `execute({ code })`.
 
+## Setup
+
+Requires **Bun 1.4.3** and the full workspace for source examples. This package
+remains registry-private; no registry installation command is established.
+From the workspace root:
+
+```sh
+bun install --frozen-lockfile --ignore-scripts
+bun run --cwd packages/mcp example
+bun run --cwd packages/mcp example:server
+```
+
+The first example adapts a synthetic stdio upstream and returns sum `5` in a host
+report; the second exposes a borrowed executor and returns MCP text `42`. Their
+sources and expected outcomes are in `packages/mcp/examples/` in the repository,
+not tarballs. Build from the full workspace before packing local compiled consumers.
+Import package roots without the `development` condition in installed consumers.
+
 ## Usage
 
 ```ts
@@ -36,9 +54,10 @@ The server returns only useful display text:
 ```
 
 The MCP server does not instantiate QuickJS or inject discovery. Use
-`createDiscoveryTools` explicitly, or use the [gateway](../gateway/README.md),
-which supplies discovery and rejects helper-name collisions. The complete
-[upstream example](../../examples/mcp.ts) runs with `bun run example:mcp`.
+`createDiscoveryTools` explicitly, or use `codemode-mcp-gateway`, which supplies
+discovery and qualifies upstream names so they cannot overwrite its helpers.
+An upstream `searchTools` stays callable as `tools["server.searchTools"]`.
+The root shortcut `bun run example:mcp` runs the client-adapter example.
 
 ## Results and failures
 
@@ -89,8 +108,10 @@ there is no automatic refresh or subscription to upstream changes.
 
 The server's `execute` tool accepts only `{ code: string }`. Limits stay in the supplied
 executor; request arguments cannot override them. This adapter adds no tool-payload
-byte limit. Scripts receive complete upstream responses. See
-[schema and protocol details](../../docs/reference.md#mcp-upstream-adapter).
+byte limit. Scripts receive the complete retained content/structured content.
+Unsupported schema dialects, external references, and asynchronous JSON Schemas
+reject catalog setup; no external schemas are fetched. Upstream messages must
+not contain credentials because public protocol messages are deliberately preserved.
 
 ## How it works
 
@@ -113,8 +134,9 @@ types alone does not establish equivalent completion, limit, privacy, or report 
 
 This package depends only on codemode's public contracts. It does not create
 upstream transports, perform authentication, read configuration, or install process
-listeners. See the [catalog](src/catalog.ts), [server](src/server.ts), and
-[public options](src/types.ts) for the boundary contracts.
+listeners. `dist/index.d.ts` contains the supported public signatures and options.
+Repository implementation references (`src/catalog.ts`, `src/server.ts`, and
+`src/types.ts`) are not shipped or supported deep imports.
 
 Migration: `createCodemodeServer` now takes `execute`, not `catalog` and `sandbox`.
 Discovery injection and collision handling belong to application composition.
@@ -138,4 +160,4 @@ validate upstream schemas through discovered tools; server tests use real SDK
 requests and injected executors. A small transport suite checks real execution,
 cancellation, and child cleanup through public APIs. Helpers and synthetic
 upstream fixtures stay package-local.
-See [testing conventions](../../docs/testing.md).
+Repository testing conventions live in `docs/testing.md`; it is not shipped here.

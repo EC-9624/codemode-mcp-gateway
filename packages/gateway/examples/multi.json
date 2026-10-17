@@ -3,7 +3,7 @@
     "servers": {
       "math": {
         "type": "local",
-        "command": ["bun", "mcp-server.ts"]
+        "command": ["bun", "../../../examples/shared/mcp-server.ts"]
       },
       "notion": {
         "type": "remote",

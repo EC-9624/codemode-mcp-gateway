@@ -2,7 +2,7 @@
 
 Moved from the root README in slice 35. Measurements below retain their original
 runtime versions, limits, response formats, and qualifications; moving them did
-not rerun any validation. Use the [current README](../README.md) for setup and
+not rerun any validation. Use the [current README](../../README.md) for setup and
 current contracts. Run reproduction commands from the repository root; historical
 OpenCode configuration and model identifiers describe the measured setup, not a
 current compatibility promise.
@@ -17,33 +17,35 @@ current compatibility promise.
 - [Saved-output reads](#saved-output-reads)
 - [Milestone log](#status-and-milestones)
 
-The later [host-runtime study](runtime-study.md) supports the current Bun 1.4.3
+The later [host-runtime study](runtime-study.md) supports the Bun 1.4.3
 pin for the identified allocator-retention issue. Its finite macOS workloads do
 not prove a hard memory bound or global leak freedom. The separate QuickJS SDK
-memory-growth fix remains bundled; see [patch notes](../patches/README.md).
+memory-growth fix remains bundled; see [patch notes](../../patches/README.md).
 The earlier [WASM investigation](wasm-memory.md) remains historical evidence.
 
 **Historical formats:** early measurements included retained tool bodies and/or
 duplicate text/structured reports, 64-MiB guest heaps, and older tool-call admission
 behavior. Current MCP responses are text-only returned values/errors with optional
-output spill files. The current [stdio observer](../scripts/observe-gateway.ts)
+output spill files. The current [stdio observer](../../scripts/observe-gateway.ts)
 records only MCP outcomes, timing, and correlation/overlap metadata, not execution
 failure categories or host-only call counts. Tool-call counts in the historical
 agent tables describe the earlier report-bearing wire format and observer; they
 are not counters available from today's observer. In-process diagnostics can
-inspect reports on the host. See also [installed validation](installed-validation.md)
-and [bounded reliability evidence](reliability.md).
+inspect reports on the host. See also [current installed validation](../installed-validation.md)
+and [bounded reliability evidence](../reliability.md).
 
 ## Real-upstream validation and execution baseline
 
-Run the read-only Notion workflow after explicit login:
+The following reproduction commands are adapted to the current checkout layout.
+Run the read-only Notion workflow after explicit login; recorded results below
+remain at their original revisions and were not regenerated.
 
 ```sh
-bun run cmg login examples/notion.json
-bun run example:notion examples/notion.json "specific search phrase" \
+bun run gw login --config packages/gateway/examples/notion.json --server notion
+bun run example:notion packages/gateway/examples/notion.json "specific search phrase" \
   --page "<page-url-or-id>" --expect "<known text on the page>" --runs 3
 # Overlap independent read-only workflows through the same gateway connection:
-bun run example:notion examples/notion.json "specific search phrase" \
+bun run example:notion packages/gateway/examples/notion.json "specific search phrase" \
   --page "<page-url-or-id>" --expect "<known text on the page>" --agents 4 --runs 3
 bun run baseline 200
 ```
@@ -56,11 +58,11 @@ nonempty text without a content marker. `--runs` defaults to 1 and accepts 1–2
 `--agents` defaults to 1 and accepts 1–8 overlapping workflows per iteration, sharing
 one executor. These are scripted workflows, not LLM agents. A failed workflow stops;
 its peers finish before the runner exits nonzero, without starting another iteration.
-Records identify the agent, step, and execution failure resource without printing
+Current records identify the agent, step, and failure kind, not host-only execution resources, without printing
 provider bodies. Capacity rejection is a smoke failure and is never retried. Login
 remains interactive; serving uses saved credentials.
 
-`examples/notion.json` sets `maxConcurrentExecutions` to 8 for multi-agent usage,
+`packages/gateway/examples/notion.json` sets `maxConcurrentExecutions` to 8 for multi-agent usage,
 with its existing 30-second guest / 45-second total
 deadlines. The library and gateway defaults remain 4 concurrent executions.
 Guest memory now defaults to 256 MiB; historical measurements below used 64 MiB.
@@ -127,7 +129,7 @@ bun run --cwd packages/codemode build
 bun run baseline:memory --scenario executor --runs 1000 --mode compiled
 ```
 
-[`scripts/memory-baseline.ts`](../scripts/memory-baseline.ts) launches a fresh subprocess
+[`scripts/memory-baseline.ts`](../../scripts/memory-baseline.ts) launches a fresh subprocess
 per invocation. `--scenario` selects increasingly complete workloads:
 
 | Scenario      | Work performed per iteration                                                               |
@@ -195,7 +197,7 @@ The exact retained native allocation is not identified, and these measurements d
 not exclude additional CMG overhead or prove indefinite growth. No CMG ownership
 defect was demonstrated, so this investigation adds diagnostics rather than changing
 execution lifetimes. The small reproduction is preserved in
-[`scripts/fixtures/memory-worker.ts`](../scripts/fixtures/memory-worker.ts).
+[`scripts/fixtures/memory-worker.ts`](../../scripts/fixtures/memory-worker.ts).
 
 Report-body retention has since been removed independently of this runtime finding.
 Runtime-level investigation can use the WASM-memory reproduction; metadata-only
@@ -203,7 +205,7 @@ reports do not fix growth already observable with scalar executions.
 
 The [WASM follow-up](wasm-memory.md) narrows this to the fast-memory allocation
 path and documents matching upstream page-map findings. It includes a dependency-free
-[standalone reproduction](../scripts/studies/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
+[standalone reproduction](../../scripts/studies/wasm-memory-repro.ts), ArrayBuffer/untouched-memory
 controls, and opt-in macOS allocator/VM profiling (`--profile`).
 
 The [host-runtime study](runtime-study.md) compares actual executor memory and
@@ -333,7 +335,7 @@ initialize handshake without a discovery-probe process. Use two sessions from th
 same directory and shared OpenCode service, with read-only document tasks. The
 agents should discover tool schemas and choose their own JavaScript calls.
 
-The historical version of [`scripts/observe-gateway.ts`](../scripts/observe-gateway.ts)
+The historical version of [`scripts/observe-gateway.ts`](../../scripts/observe-gateway.ts)
 forwarded the original stdio bytes to one real gateway child. Its append-only local JSONL records contained
 observer/gateway PIDs, request IDs, OpenCode session IDs, in-flight request counts,
 elapsed request times, execution outcome categories, and tool-call counts from

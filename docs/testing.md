@@ -234,6 +234,14 @@ with a small build-process fixture: replacement guards, failed-build preservatio
 symlink-target preservation, destination races, executable permissions, PATH hints,
 and cleanup. The clean-source verifier owns the full real build/install contract.
 
+Package examples live in `packages/<package>/examples/`, use public root imports,
+and run without a build using their package-local `example` commands. Codemode's
+`example:contracts` retains the advanced success/failure/cancellation demonstrations.
+Gateway example tests exercise synthetic Notion responses, including a copied runner
+with its helper files outside the checkout. They do not authorize a real provider.
+HTTP session tests also check that advertised output-lifetime guidance matches
+observed session cleanup. Package verification requires README assets.
+
 Timing-sensitive `validate:http-idle` and the managed-gateway smoke are separate
 local diagnostics. `validate:models --approve-model-calls` is a separately approved,
 paid actual-agent run; never add it to routine package or CI checks.

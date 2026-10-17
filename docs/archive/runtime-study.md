@@ -10,6 +10,9 @@ Investigation started 2026-10-16 on macOS arm64, from `9ce90ed`.
 The earlier [WASM allocation investigation](wasm-memory.md) remains historical evidence;
 this study measures the real executor and the cost of potential mitigations.
 
+This is archived evidence, not a current setup or Node-support guide. See the
+[documentation index](../README.md) for supported usage and verification.
+
 Integration note: the recorded measurements use that source revision plus the
 portability changes below, before `45dec3e`'s text-only MCP output and bundled
 QuickJS patch. The current probes now check text output and inspect reports
@@ -180,7 +183,7 @@ and Bun 1.4.3. No global runtime installation was changed.
 All 96 children exited zero, with no stderr, forced kills, or result mismatches:
 **85,200 measured operations**, plus 960 warmup operations. Direct controls observed
 every expected worker reply and natural exit. Machine-readable observations are
-preserved in [the measurement artifact](measurements/runtime-matrix-2026-10-16.json).
+preserved in [the measurement artifact](../measurements/runtime-matrix-2026-10-16.json).
 
 ### Growth between operations 1,000 and 3,000
 
@@ -242,7 +245,7 @@ Four additional serial scalar runs completed **10,000 measured operations each**
 plus ten warmups. All returned correct results and exited zero with empty stderr.
 They add a common macOS `footprint` probe at quiescent checkpoints to distinguish
 resident/reclaimable pages from kernel-charged physical footprint. Data is preserved
-in [the soak artifact](measurements/runtime-soak-2026-10-16.json).
+in [the soak artifact](../measurements/runtime-soak-2026-10-16.json).
 
 This is one longer run per host, not three more performance repetitions. Each uses
 1,000-operation batches, natural GC, and the same compiled executor. Observations
@@ -302,7 +305,7 @@ used. Overall evidence covers **125,200 measured operations** and 1,000 warmups.
 This addresses the Bun allocator-retention finding, not the separate audited
 QuickJS 0.32.0 context-pointer/disposal fault when WASM memory grows during queued
 jobs. The SDK was unpatched during these measurements. The current integrated tree
-includes `45dec3e`'s separate fix, described in [the patch notes](../patches/README.md).
+includes `45dec3e`'s separate fix, described in [the patch notes](../../patches/README.md).
 Passing these bounded workloads must not be described as resolving every sandbox issue.
 
 Reproduce a longer run with each chosen executable, serially (use a separate output

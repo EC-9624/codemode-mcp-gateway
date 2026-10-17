@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, type CallToolResult } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { waitForServer } from "../examples/readiness.ts";
+import { waitForServer } from "../packages/gateway/examples/readiness.ts";
 
 const workflows = ["alpha", "bravo", "charlie", "delta"];
 const saved = new Set<string>();

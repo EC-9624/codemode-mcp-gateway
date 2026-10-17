@@ -1,6 +1,7 @@
 # Bun/WASM memory follow-up
 
-Local investigation, 2026-10-15. Nothing published upstream.
+Archived local investigation, 2026-10-15. Nothing published upstream. Runtime
+versions and source inspections below describe that run, not today's upstream state.
 
 Follow-up, 2026-10-16: the [host-runtime study](runtime-study.md) verifies the relevant
 allocator fix in Bun 1.4.3 and compares real executor memory, throughput, and Node
@@ -122,7 +123,7 @@ performance tradeoff.
 
 ## Reproduce locally
 
-The single-file [standalone reproduction](../scripts/studies/wasm-memory-repro.ts) needs
+The single-file [standalone reproduction](../../scripts/studies/wasm-memory-repro.ts) needs
 only the existing Bun runtime. Copy it outside the repository if desired. It
 defaults to 2,000 workers, accepts 1–3,000, validates replies and natural exits,
 has a five-minute watchdog, and prints bounded JSONL snapshots. `worker` is an
