@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "bun --conditions=development test ./tests",
     "check": "bun run typecheck && oxlint --deny-warnings . && oxfmt --check . && bun run test",
     "prepack": "bun run build"

@@ -33,6 +33,16 @@ typechecks remain available for focused work. Tests can import another package's
 internals or test files. Small mechanical helpers may be repeated locally rather
 than creating a shared test-framework package.
 
+### TypeScript workspace navigation
+
+The root `tsconfig.json` is the editor project for all packages, examples, and
+scripts, so reference searches include cross-package callers without opening them
+first. Package-local checks explicitly select `tsconfig.check.json`; builds select
+`tsconfig.build.json`. Keep package configs explicitly named rather than adding
+nested `tsconfig.json` files, which split editor navigation into separate projects.
+Workspace imports resolve public source entries through the `development` condition;
+builds resolve compiled package entries instead.
+
 ## The module is the unit
 
 Import contract subjects from `@codemode-mcp-gateway/codemode`, `@codemode-mcp-gateway/mcp`, or
