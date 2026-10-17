@@ -49,6 +49,12 @@ Requires Bun **1.4.3**. Import the package root; runtime deep imports are unsupp
 Run [the complete example](../../examples/basic.ts) with `bun run example` from
 the workspace root.
 
+The gateway's standalone build embeds the executor's worker as a second entrypoint
+named `worker.js` beside the executable in Bun's virtual filesystem, and embeds
+the QuickJS WASM assets. Custom standalone hosts must preserve this worker name
+and supply the corresponding embedded WASM loading; copying only an emitted
+executor module is not a complete application distribution.
+
 ## Results and failures
 
 `execute()` returns `{ result, calls }`. Expected failures resolve rather than throw:

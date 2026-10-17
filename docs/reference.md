@@ -790,8 +790,12 @@ DELETE retires only its own session; open HTTP requests/event streams retain the
 session, and disconnected sessions receive a 60-second grace. Closing clients does
 not stop the HTTP process. Installation, process supervision, and client configuration
 are user-managed; there is no custom installer or `gw service` command. HTTP serving
-and live `doctor` checks use a user-supplied persistent `GW_HTTP_TOKEN`; it is never
-generated or saved by the gateway. Restarting does not revoke an unchanged token.
+and live `doctor` checks read the private setup-created token, overridden by an
+explicit `GW_HTTP_TOKEN`. Invalid overrides fail rather than falling back. Only
+explicit `gw setup` creates a token; `gw token` explicitly reveals it. Neither
+command configures clients or upstream authorization. Restarting does not revoke
+an unchanged token. `bun run build:standalone` creates a self-contained `dist/gw`
+with its Bun runtime, worker entry, version metadata, and QuickJS WASM embedded.
 See [local deployment](local-installation.md) for rotation, migration, and the local
 port-impersonation limitation.
 

@@ -99,9 +99,12 @@ export class CodeExecutor {
       };
 
       try {
+        const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+
+        // Standalone builds embed worker.js as a second entrypoint beside the executable.
         worker = new Worker(
           new URL(
-            import.meta.url.endsWith(".ts") ? "./runtime/worker.ts" : "./runtime/worker.js",
+            Bun.isStandaloneExecutable ? "./worker.js" : `./runtime/worker.${extension}`,
             import.meta.url,
           ),
           {

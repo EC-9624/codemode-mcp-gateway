@@ -10,6 +10,9 @@ For a fresh-source synthetic check without credentials or live upstreams, run
 install with scripts disabled, explicit build, packing, and the existing isolated
 consumer checks. A global `ignore-scripts=true` setting is supported; no prepack
 hook is required. This is local artifact verification, not publication.
+It also builds a standalone gateway, removes its disposable source/dependency
+tree, and verifies the detached executable. For application installation and
+explicit `gw setup`, see [local deployment](local-installation.md).
 
 ## Prepare an external consumer
 

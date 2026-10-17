@@ -43,6 +43,9 @@ describe("gw executable", () => {
     { name: "unknown option", args: ["--unknown"] },
     { name: "removed service command", args: ["service"] },
     { name: "removed service action", args: ["service", "install"] },
+    { name: "setup stdio", args: ["setup", "--stdio"] },
+    { name: "setup server selection", args: ["setup", "--server", "notes"] },
+    { name: "token configuration", args: ["token", "--config", "unused.json"] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);
 

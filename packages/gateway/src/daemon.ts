@@ -1,7 +1,8 @@
 import { dirname } from "node:path";
 import { readConfiguration } from "./config.ts";
 import { Gateway } from "./gateway.ts";
-import { GatewayHttpServer, httpToken } from "./http.ts";
+import { GatewayHttpServer } from "./http.ts";
+import { httpToken } from "./http-token.ts";
 import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 import { reportToolException } from "./diagnostics.ts";
@@ -9,7 +10,7 @@ import { reportToolException } from "./diagnostics.ts";
 /** Foreground HTTP process; deployment and client configuration belong to the caller. */
 export async function serveHttp(path: string, options: CredentialOptions = {}) {
   const config = await readConfiguration(path);
-  const bearerToken = httpToken();
+  const bearerToken = await httpToken();
   await using cleanup = new AsyncDisposableStack();
   const shutdown = new AbortController();
   const stopped = Promise.withResolvers<void>();

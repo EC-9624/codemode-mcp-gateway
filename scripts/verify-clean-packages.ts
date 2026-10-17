@@ -1,5 +1,5 @@
 import { ok, strictEqual } from "node:assert";
-import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,8 +53,15 @@ await run([process.execPath, "install", "--frozen-lockfile", "--ignore-scripts"]
 // make implicit lifecycle hooks run. The normal verifier packs with scripts off.
 await run([process.execPath, "run", "build"], source);
 await run([process.execPath, "run", "scripts/verify-packages.ts"], source);
+await run([process.execPath, "run", "scripts/build-standalone.ts"], source);
+const binary = join(directory, "gw");
+await copyFile(join(source, "dist/gw"), binary);
+// Remove this task's disposable build tree before probing: absolute source/dependency
+// fallbacks cannot make a broken single-file distribution appear to work.
+await rm(source, { recursive: true, force: true });
+await run([process.execPath, join(root, "scripts/verify-standalone.ts"), binary], root);
 console.log(
-  "Clean source verified: frozen install, explicit build, tarball inventory, and installed consumers.",
+  "Clean source verified: frozen install, explicit build, tarball inventory, installed consumers, and standalone execution after deleting its build tree.",
 );
 
 async function run(command: string[], cwd: string) {

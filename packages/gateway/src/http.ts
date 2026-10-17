@@ -5,31 +5,14 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type Gateway } from "./gateway.ts";
-import { GatewayError } from "./errors.ts";
+import { httpCredential } from "./http-token.ts";
 import { type HttpStatus } from "./status.ts";
-
-const credential = z
-  .string()
-  .min(32)
-  .max(256)
-  .regex(/^[A-Za-z0-9_-]+$/);
 
 const optionsSchema = z.strictObject({
   port: z.number().int().min(0).max(65535),
   orphanGraceMs: z.number().int().positive().default(60_000),
-  bearerToken: credential,
+  bearerToken: httpCredential,
 });
-
-/** CLI credentials are user-owned: never generate, persist, or render the token. */
-export function httpToken(): string {
-  const parsed = credential.safeParse(process.env.GW_HTTP_TOKEN);
-  if (!parsed.success)
-    throw new GatewayError(
-      "Set GW_HTTP_TOKEN to a private bearer token of 32–256 letters, digits, underscores, or hyphens. Use the same token in your MCP client configuration.",
-    );
-
-  return parsed.data;
-}
 
 export type HttpOptions = z.input<typeof optionsSchema>;
 export type HttpListenResult =

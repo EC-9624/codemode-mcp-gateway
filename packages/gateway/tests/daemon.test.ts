@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,34 @@ test("the supplied HTTP token remains usable across process restarts", async () 
   expect(await second.logs).not.toContain(token);
 });
 
+test("HTTP serving and live doctor use the private token file without an environment variable", async () => {
+  await using files = await fixture();
+  const directory = join(files.directory, "codemode-mcp-gateway");
+  await mkdir(directory, { mode: 0o700 });
+  const path = join(directory, "token");
+  await Bun.write(path, token + "\n");
+  await chmod(path, 0o600);
+
+  const first = await start(files, { GW_HTTP_TOKEN: undefined });
+  await first.stop();
+  const second = await start(files, { GW_HTTP_TOKEN: undefined });
+  await using agent = await connect(files);
+
+  expect(
+    (await agent.client.callTool({ name: "execute", arguments: { code: "return 42;" } })).content,
+  ).toEqual([{ type: "text", text: "42" }]);
+
+  const doctor = files.spawn(["doctor", "--config", files.config, "--json"], {
+    GW_HTTP_TOKEN: undefined,
+  });
+
+  const output = new Response(doctor.stdout).json();
+  expect(await doctor.exited).toBe(0);
+  expect(await output).toMatchObject({ ok: true, service: { pid: second.child.pid } });
+  expect(await Bun.file(path).text()).toBe(token + "\n");
+  await second.stop();
+});
+
 test("explicit token rotation rejects the previous token after restart", async () => {
   await using files = await fixture();
   const first = await start(files);
@@ -123,12 +151,16 @@ test("HTTP serving needs no installed clients and creates no client or service-s
 });
 
 test.each([
-  { name: "missing", value: undefined },
+  {
+    name: "missing",
+    value: undefined,
+    message: "No HTTP token is configured. Run gw setup or set GW_HTTP_TOKEN.\n",
+  },
   { name: "empty", value: "" },
   { name: "short", value: "synthetic-secret-too-short" },
   { name: "oversized", value: "x".repeat(257) },
   { name: "invalid characters", value: "synthetic-private-token-with-a space" },
-])("HTTP serving refuses a $name token without creating state", async ({ value }) => {
+])("HTTP serving refuses a $name token without creating state", async ({ value, message }) => {
   await using files = await fixture();
   const child = files.spawn(["serve", "--config", files.config], { GW_HTTP_TOKEN: value });
   const logs = new Response(child.stderr).text();
@@ -136,7 +168,8 @@ test.each([
 
   expect(await child.exited).toBe(1);
   expect(await logs).toBe(
-    "Set GW_HTTP_TOKEN to a private bearer token of 32–256 letters, digits, underscores, or hyphens. Use the same token in your MCP client configuration.\n",
+    message ??
+      "GW_HTTP_TOKEN must contain 32–256 letters, digits, underscores, or hyphens. Unset it to use the setup-created token file.\n",
   );
   expect(await output).toBe("");
   expect(await readdir(files.directory)).not.toContain("codemode-mcp-gateway");

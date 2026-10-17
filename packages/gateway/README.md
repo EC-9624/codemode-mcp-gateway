@@ -9,15 +9,20 @@ The package remains private while its API matures.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-# Supply GW_HTTP_TOKEN from your private environment before HTTP serving.
+bun run gw setup
 bun run gw serve --config examples/cmg.json
 bun run example:server
 ```
 
-Requires Bun **1.4.3**. `gw serve` hosts authenticated MCP on loopback HTTP using
-the user-supplied persistent `GW_HTTP_TOKEN`. Client configuration, installation,
-and process supervision are user-managed. The gateway never edits client configs
-or creates a local HTTP credential file. Existing upstream definitions and explicit OAuth login remain.
+Source/package runs and builds require Bun **1.4.3**. `bun run build:standalone`
+produces `dist/gw` for the current platform, with Bun, internal libraries, workers,
+and QuickJS WASM embedded. It runs outside the checkout without dependencies or
+a separate Bun installation. No release binaries are published yet.
+`gw setup` explicitly prepares a starter configuration and private persistent HTTP
+token without overwriting existing files. The starter needs user-supplied upstreams
+before it can run. `gw serve` reads the saved token or `GW_HTTP_TOKEN` override.
+Client configuration, installation, and process supervision remain user-managed.
+The gateway never edits client configs. Existing upstream definitions and explicit OAuth login remain.
 `gw serve --stdio` explicitly selects direct stdio. `example:server` starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 In stdio mode stdout is exclusively MCP traffic; diagnostics use stderr.
@@ -37,7 +42,9 @@ There is no custom installer or OS service-management command. OAuth identity
 and lock storage are unchanged.
 
 ```sh
-gw serve                   # Foreground HTTP service; requires GW_HTTP_TOKEN
+gw setup                   # Prepare only gateway files; no connections or process startup
+gw token                   # Explicitly print the effective token; treat output as a secret
+gw serve                   # Foreground HTTP service; saved token or GW_HTTP_TOKEN
 gw serve --stdio --config ./cmg.json
 gw check --json
 gw doctor --server notion --json
@@ -47,16 +54,26 @@ gw --help
 gw --version
 ```
 
-Commands accept `--config` or an optional positional configuration path.
+Configuration-based commands accept `--config` or an optional positional path;
+`token` needs no configuration and accepts neither.
 `check` validates without connecting. `doctor` reads authenticated status from the
-actual HTTP process using the same `GW_HTTP_TOKEN`; `doctor --stdio` explicitly
+actual HTTP process using the same token; `doctor --stdio` explicitly
 opens/closes fresh diagnostic connections without requiring that token.
-`GW_HTTP_TOKEN` must contain 32–256 letters, digits, underscores, or hyphens.
-Set it from a private environment, not a command argument or tracked configuration.
+`setup` creates `~/.local/state/codemode-mcp-gateway/token` (or under `XDG_STATE_HOME`),
+with mode 0600 inside an owned, non-symlinked 0700 directory. Symlinked, nonprivate,
+or invalid token files are refused, never fixed or replaced silently. Concurrent
+setup publishes one complete token without clobbering another setup's value.
+A supplied `GW_HTTP_TOKEN` overrides the file, including invalid/empty overrides,
+which fail instead of falling back. It must contain 32–256 letters, digits,
+underscores, or hyphens. Environment-managed setup validates the override but
+does not save it or create another token. Set it from a private environment,
+not a command argument or tracked configuration. The standalone executable does
+not auto-load cwd `.env` or `bunfig.toml`; inject environment settings explicitly.
 Clients send the same token in their bearer header. Restarting with the same token
 does not revoke it. Rotation requires a changed token, gateway restart, and client
-updates; leaked tokens remain usable until rotation. The gateway never generates,
-persists, or prints this credential. An occupied port always fails without probing
+updates; leaked tokens remain usable until rotation. Only explicit `setup` creates
+credentials and only explicit `token` prints one; normal serving, setup output,
+and diagnostics never print it. An occupied port always fails without probing
 or adopting the owning process, and no additional upstreams are started.
 HTTP status contains process/session/upstream information, not client registration
 or installation state. CLI status requests reject redirects and validate the response;
@@ -71,7 +88,9 @@ local credentials, not the upstream grant.
 Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
 failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
 The gateway remains running with failed upstreams; a failed doctor check
-returns 1. `--json` is accepted by check/doctor, never stdio serving.
+returns 1. `--json` is accepted by check/doctor, never stdio serving. Setup exit 0
+means files were prepared, not that upstream definitions, authorization, or clients
+are ready; it reports configuration that still needs editing.
 
 ## Named upstreams and hot recovery
 
@@ -518,10 +537,16 @@ while [`connection.ts`](src/connection.ts) opens and cleans up one transport/OAu
 Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
 [`server.ts`](src/server.ts) explains startup and cleanup ordering beside the code.
 [`daemon.ts`](src/daemon.ts) owns the foreground HTTP process; it does not supervise
-the process, provision clients, or persist its HTTP token.
+the process, provision clients, or create its HTTP token. [`setup.ts`](src/setup.ts)
+owns explicit first-run preparation; [`http-token.ts`](src/http-token.ts) owns
+private token-file creation and read-only environment/file resolution.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
 build, invoke it as `gw configuration.json`; dependencies are not bundled.
+`bun run build:standalone` additionally emits the self-contained application at
+the repository's `dist/gw`; version metadata and the worker entry are embedded.
+The build wraps QuickJS's Emscripten loaders to supply embedded WASM bytes through
+their documented `wasmBinary` option, while retaining the patched SDK build.
 
 The Notion runner and metadata observer accept `--gateway <installed-gw-path>`
 to launch that executable instead of the source CLI. See the
@@ -547,6 +572,7 @@ From the workspace root:
 ```sh
 bun run --cwd packages/gateway test
 bun run --cwd packages/gateway check
+bun run verify:standalone
 ```
 
 This package owns configuration, composition, CLI, end-to-end gateway, and

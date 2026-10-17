@@ -209,6 +209,15 @@ disabled, builds explicitly, then invokes the existing verifier. It does not cre
 Git worktree or weaken user lifecycle-script settings. This is opt-in because it
 performs an additional install and build.
 
+`verify:standalone` builds the native `dist/gw` application and runs it from a
+temporary directory with an empty PATH and isolated HOME/XDG directories. It
+checks explicit setup, token-file authentication, embedded version/WASM/workers,
+real HTTP upstream calls, cancellation propagation, timeout/recovery, and stdio.
+Cwd `.env` and `bunfig.toml` files must not influence the executable. The normal
+root `check` runs this probe after package verification. The clean-source check
+also compiles the app, removes its disposable source/dependency tree, then probes
+the detached binary; absolute build-tree fallbacks cannot hide missing assets.
+
 Timing-sensitive `validate:http-idle` and the managed-gateway smoke are separate
 local diagnostics. `validate:models --approve-model-calls` is a separately approved,
 paid actual-agent run; never add it to routine package or CI checks.

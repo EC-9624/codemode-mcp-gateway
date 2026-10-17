@@ -13,13 +13,19 @@ import {
 } from "./config.ts";
 import { Gateway, type ServerStatus } from "./gateway.ts";
 import { serveHttp } from "./daemon.ts";
-import { httpToken } from "./http.ts";
+import { httpToken } from "./http-token.ts";
 import { httpStatus } from "./status.ts";
+import { setup } from "./setup.ts";
 
-const help = `Usage: gw [serve|check|doctor|login|logout] [configuration.json] [options]
+// Standalone builds embed this value; ordinary package/source runs read their manifest.
+declare const GW_BUILD_VERSION: string;
+
+const help = `Usage: gw [setup|token|serve|check|doctor|login|logout] [configuration.json] [options]
 
   gw                         Show this help
-  gw serve                   Run foreground HTTP MCP using GW_HTTP_TOKEN
+  gw setup                   Prepare gateway configuration and a private HTTP token
+  gw token                   Print the effective HTTP token (sensitive; explicit use only)
+  gw serve                   Run foreground HTTP MCP using saved setup or GW_HTTP_TOKEN
   gw serve --stdio           Run an explicit direct stdio gateway
   gw <configuration.json>    Legacy explicit-path stdio mode
   gw check                   Validate configuration without connecting
@@ -36,13 +42,15 @@ Options:
   -v, --version        Show the installed version
 
 Default: $XDG_CONFIG_HOME/codemode-mcp-gateway/config.json, or ~/.config/codemode-mcp-gateway/config.json.
-HTTP serve/doctor require GW_HTTP_TOKEN: 32–256 letters, digits, underscores, or hyphens.
+Run gw setup once, configure your upstreams and clients, then gw serve.
+HTTP serve/doctor use GW_HTTP_TOKEN when set, otherwise the private setup-created token.
+Tokens contain 32–256 letters, digits, underscores, or hyphens.
 Supply the same persistent token in your MCP clients; rotate it explicitly when needed.
 Client configuration, installation, and process supervision are user-managed.
 Stdio serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
 running multi-upstream gateways recover automatically after credentials change.`;
 
-type Command = "serve" | "check" | "doctor" | "login" | "logout";
+type Command = "setup" | "token" | "serve" | "check" | "doctor" | "login" | "logout";
 
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
@@ -76,11 +84,14 @@ export async function main(
   }
 
   if (parsed.values.version) {
-    const manifest = z
-      .object({ version: z.string() })
-      .parse(await Bun.file(new URL("../package.json", import.meta.url)).json());
+    const version =
+      typeof GW_BUILD_VERSION === "undefined"
+        ? z
+            .object({ version: z.string() })
+            .parse(await Bun.file(new URL("../package.json", import.meta.url)).json()).version
+        : GW_BUILD_VERSION;
 
-    console.log(`gw ${manifest.version}`);
+    console.log(`gw ${version}`);
 
     return 0;
   }
@@ -89,6 +100,8 @@ export async function main(
   const first = positionals[0];
   let command: Command = "serve";
   if (
+    first === "setup" ||
+    first === "token" ||
     first === "serve" ||
     first === "check" ||
     first === "doctor" ||
@@ -103,6 +116,8 @@ export async function main(
   const server = parsed.values.server;
   if (
     first === "service" ||
+    (command === "token" &&
+      (explicit !== undefined || parsed.values.json || parsed.values.stdio)) ||
     positionals.length > 1 ||
     (parsed.values.config !== undefined && positionals.length !== 0) ||
     (explicit !== undefined && !explicit.trim()) ||
@@ -127,7 +142,22 @@ export async function main(
   }
 
   try {
+    if (command === "token") {
+      const token = await httpToken();
+      if (shutdown.signal.aborted) return 130;
+
+      console.log(token);
+
+      return 0;
+    }
+
     const path = configurationPath(explicit);
+    if (command === "setup") {
+      await setup(path);
+
+      return shutdown.signal.aborted ? 130 : 0;
+    }
+
     if (command === "login" || command === "logout") {
       const selected = { ...options, ...(server === undefined ? {} : { server }) };
 
@@ -168,7 +198,7 @@ export async function main(
 
       const remote = parsed.values.stdio
         ? undefined
-        : await httpStatus(config.service.port, httpToken(), shutdown.signal);
+        : await httpStatus(config.service.port, await httpToken(), shutdown.signal);
 
       let statuses: ServerStatus[];
       if (remote === undefined) {

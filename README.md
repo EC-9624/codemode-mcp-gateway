@@ -4,13 +4,29 @@ A code-mode gateway for MCP tools. An agent writes JavaScript; the gateway runs 
 in QuickJS with explicitly supplied tools. Reusable libraries provide execution
 and MCP adaptation without running an agent/model loop.
 
-Requires **Bun 1.4.3**, pinned in `.bun-version`. Package names are provisional;
+Development and source/package runs require **Bun 1.4.3**, pinned in `.bun-version`.
+The standalone `gw` executable includes its runtime. Package names are provisional;
 nothing has been published. This is a working MVP, not an OS-isolated or
 production-hardened sandbox.
 
-Run the **`gw`** CLI from the checkout or a built local package. Installation,
-process supervision, and client configuration are user-managed. See
-[local deployment](docs/local-installation.md) for HTTP credentials and client examples.
+Build the **`gw`** application with `bun run build:standalone`; the result is
+`dist/gw` for the current platform. No release binaries have been published.
+Installation, process supervision, upstream definitions, and MCP client configuration
+are user-managed. See [local deployment](docs/local-installation.md).
+
+```sh
+bun run build:standalone
+./dist/gw setup
+# Edit the displayed configuration to add your upstream MCP servers.
+./dist/gw check
+./dist/gw serve
+```
+
+`setup` explicitly creates a starter configuration and a private persistent token;
+it never replaces existing files, configures clients, or starts a process.
+The starter has no upstreams and is not runnable until edited. `gw token` explicitly
+reveals the effective token for manual client setup. Local upstream commands may
+still require their own runtimes even though the gateway executable does not.
 
 ## Quick start
 
@@ -26,20 +42,22 @@ these examples do not require a build.
 ## Agent-facing service
 
 ```sh
-# Supply a persistent GW_HTTP_TOKEN from your private environment for HTTP serving.
+bun run gw setup
 bun run gw serve --config examples/multi.json
 bun run gw check examples/multi.json --json
 bun run gw doctor --stdio examples/multi.json --json
 bun run gw login examples/multi.json --server notion
 ```
 
-`gw serve` runs the foreground loopback HTTP MCP service. Set `GW_HTTP_TOKEN` to a
-private token of 32–256 letters, digits, underscores, or hyphens; configure clients
+`gw serve` runs the foreground loopback HTTP MCP service. It reads the setup-created
+token or an explicit `GW_HTTP_TOKEN` override (32–256 letters, digits, underscores,
+or hyphens); configure clients
 to send the same token as `Authorization: Bearer <token>` to `/mcp`.
 The token survives restarts when supplied unchanged. Rotate it explicitly by
 changing it, restarting the gateway, and updating clients; a leaked token remains
-valid until rotation. The gateway never generates/persists this token, edits client
-configs, installs itself, or manages an OS service. An occupied port is an error,
+valid until rotation. Only `gw setup` may create a token; serving never provisions
+or rotates it. The gateway never edits client configs, installs itself, or manages
+an OS service. An occupied port is an error,
 not a request to adopt or restart its owner. No per-client gateway or bridge is needed.
 `gw` alone shows help.
 Explicit `gw serve --stdio` and legacy positional-config invocations retain direct
@@ -63,7 +81,7 @@ Local paths resolve from the configuration directory. The included
 Notion deadlines. Serving and management commands use
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
 or a positional path overrides it. `check` validates without connecting; `doctor`
-queries the actual running service using `GW_HTTP_TOKEN` (`doctor --stdio` explicitly
+queries the actual running service using the same saved token or override (`doctor --stdio` explicitly
 probes fresh connections and needs no gateway HTTP token).
 Login is explicit and interactive; serving
 uses saved OS credentials and noninteractive refresh. Logout removes local
