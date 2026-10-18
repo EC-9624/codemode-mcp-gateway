@@ -1,4 +1,4 @@
 #!/usr/bin/env bun
-import { main } from "./main.ts";
+import { main } from "./cli/main.ts";
 
 process.exitCode = await main(process.argv.slice(2));

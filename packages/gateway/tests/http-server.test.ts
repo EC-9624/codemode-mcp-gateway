@@ -134,14 +134,39 @@ describe("shared HTTP gateway", () => {
     expect((await app.status()).sessions).toBe(0);
   });
 
-  test("allows liveness without exposing authenticated status", async () => {
+  test.each(["/status", "/tools"])(
+    "allows liveness without exposing authenticated %s",
+    async (path) => {
+      await using app = await open();
+
+      const health = await fetch(new URL("/health", app.host.url));
+      const status = await fetch(new URL(path, app.host.url));
+
+      expect(await health.text()).toBe("ok");
+      expect(status.status).toBe(401);
+    },
+  );
+
+  test.each([
+    { name: "incorrect bearer", headers: { authorization: "Bearer incorrect" }, status: 401 },
+    {
+      name: "browser origin",
+      headers: { authorization: `Bearer ${token}`, origin: "https://untrusted.example" },
+      status: 403,
+    },
+    {
+      name: "forged host",
+      headers: { authorization: `Bearer ${token}`, host: "untrusted.example" },
+      status: 403,
+    },
+  ])("rejects $name before exposing the upstream catalog", async ({ headers, status }) => {
     await using app = await open();
 
-    const health = await fetch(new URL("/health", app.host.url));
-    const status = await fetch(new URL("/status", app.host.url));
+    const response = await fetch(new URL("/tools", app.host.url), { headers });
 
-    expect(await health.text()).toBe("ok");
-    expect(status.status).toBe(401);
+    expect(response.status).toBe(status);
+    expect(await response.text()).not.toContain("tools");
+    expect((await app.status()).sessions).toBe(0);
   });
 
   test("accepts the case-insensitive HTTP bearer authentication scheme", async () => {

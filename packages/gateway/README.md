@@ -59,6 +59,8 @@ from `--config <path>` (or `-c`), then
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise `~/.config/codemode-mcp-gateway/config.json`.
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
+Root help groups getting-started, inspection, and authentication commands and shows
+only root flags. Focused help documents command-specific flags, defaults, and examples.
 
 The repository's `docs/local-installation.md` expands installation and native client
 configuration. This README keeps the runtime and credential contracts self-contained
@@ -76,6 +78,13 @@ gw auth logout notion
 gw setup --transport http  # Explicitly prepare an HTTP token as well
 gw serve --transport stdio # Client-owned stdio; stdout is exclusively MCP
 gw status notion --json    # Read only the running HTTP gateway
+gw tools list              # First 50 tools across upstreams
+gw tools list notion       # First 50 tools from one upstream
+gw tools list --offset 50  # Next page across upstreams
+gw tools list notion --offset 50 # Next page from one upstream
+gw tools list notion --all # Print every tool for this upstream
+gw tools list --all        # Print every tool across all upstreams
+gw tools list notion --json # Complete, unpaginated metadata
 gw token show              # Explicitly reveal the HTTP token; output is a secret
 gw --help
 gw --version
@@ -91,7 +100,31 @@ creates a token only with `--transport http`. `config check` validates without c
 without requiring a gateway HTTP token. `status [server]` reads authenticated
 status from the actual HTTP process and never probes upstreams. It selects from
 the running service, not local upstream definitions, and fails if that server is
-absent. It cannot inspect an existing stdio process.
+absent. It cannot inspect an existing stdio process. Terminal status includes the
+gateway endpoint, PID, uptime, session count, and upstream table; public failure
+details are wrapped, not truncated. `probe` uses the same table but explicitly
+identifies a fresh connectivity check. Piped status/probe output has no headers:
+TSV columns are upstream name, state, tool count, and public error message (empty
+when absent). Records are not width-truncated; JSON retains service metadata.
+`tools list [server]` also reads only the running HTTP gateway. It lists actual
+tools across upstreams, or filters to one server, with 50 tools per page.
+`--offset 50` selects the next page, with or without a server argument.
+`--all` prints every tool for the selection (all upstreams if no server is supplied).
+Terminal tables fit the available width and use single-line description previews.
+Selected upstreams display original tool names; cross-upstream listings use qualified
+names. Piped output has headerless TSV columns: qualified tool name and description,
+without width truncation or styling. Descriptions are normalized to one line. Text
+pagination hints move to stderr when piped; `--all` emits only records unless there
+are unavailable-upstream warnings. Empty connected catalogs emit zero piped records.
+Failed, connecting, and disabled upstreams produce brief stderr warnings; `gw status`
+provides public failure details instead of duplicating its table in the tool listing.
+Selection uses the running service's names, not local upstream definitions. No
+connections, discovery refreshes, or tool calls are initiated. `--offset` cannot be
+combined with `--all`. JSON is always complete, unpaginated,
+and untruncated; combining `--json` with `--offset` or `--all` is an argument error.
+JSON returns `{ ok: true, tools, servers }` with qualified names;
+each tool has `server`, `name`, and its full `description`, without schemas or callbacks.
+Older HTTP processes must be restarted with the updated executable to support listing.
 Only `setup --transport http` creates `~/.local/state/codemode-mcp-gateway/token` (or under `XDG_STATE_HOME`),
 with mode 0600 inside an owned, non-symlinked 0700 directory. Symlinked, nonprivate,
 or invalid token files are refused, never fixed or replaced silently. Concurrent
@@ -110,7 +143,7 @@ and diagnostics never print it. Stdio setup/serving ignore gateway HTTP credenti
 An occupied HTTP port always fails without probing
 or adopting the owning process, and no additional upstreams are started.
 HTTP status contains process/session/upstream information, not client registration
-or installation state. CLI status requests reject redirects and validate the response;
+or installation state. CLI status and tool-list requests reject redirects and validate the response;
 they do not cryptographically authenticate the server. A process occupying the port
 can capture the persistent token and impersonate an MCP/status server. Host/Origin
 checks do not prevent this; trust the local port owner or use direct stdio.
@@ -123,11 +156,16 @@ Exit codes: 0 for success, 1 for configuration/connection/authentication or runt
 failure, 2 for invalid arguments, 130 for SIGINT, and 143 for SIGTERM after cleanup.
 The gateway remains running with failed upstreams. `probe` returns 1 when an enabled
 upstream cannot connect; `status` returns 0 when status was retrieved, even for
-degraded upstreams. `--json` is accepted by `config check`, `probe`, and `status`,
+degraded upstreams. `tools list` likewise returns 0 when the catalog was retrieved;
+consult `servers` for availability. `--json` is accepted by `config check`, `probe`, `status`, and `tools list`,
 never serving. These commands emit one JSON result for success or operational
 failure; argument errors use stderr and exit 2. Setup exit 0
 means files were prepared, not that upstream definitions, authorization, or clients
 are ready; it reports configuration that still needs editing.
+Setup next steps preserve the selected configuration path and show only the relevant
+transport workflow. Slow probes and browser authorization show a delayed, transient
+progress hint only on terminal stderr, never in JSON mode. Cancellation and failures
+clear the hint before returning; no prompts or progress are introduced into MCP stdout.
 
 ## Named upstreams and hot recovery
 
@@ -161,7 +199,8 @@ OAuth storage identity is the server name plus canonical URL.
 Invalid configuration fails before connecting. Enabled upstreams initialize
 independently; the agent-facing server is available while they connect. Expected
 failures leave other upstreams usable, including when no upstream is ready yet.
-State changes are reported as JSON lines on stderr. States are `disabled`,
+State changes use readable messages on interactive HTTP stderr, and JSON lines on
+redirected HTTP stderr and stdio stderr. States are `disabled`,
 `connecting`, `connected`, `needs-auth`, and `failed`, with tool counts and controlled
 error messages. Status is last-observed connection state, not an active health check.
 
@@ -567,6 +606,11 @@ abort executions, and release all connections. Importing the package starts none
 of these activities. `ConfigurationInput` describes the JSON input; `Configuration`
 is the validated form with defaults applied. Local and remote entries keep the same shape.
 
+`gateway.listTools()` returns a `ToolList` snapshot of current upstream names,
+descriptions, and server statuses without making requests or executing tools. It
+does not include discovery helpers or input schemas. The HTTP host exposes this
+snapshot through authenticated `GET /tools`, without creating an MCP session.
+
 The public entry also exports `Configuration`, `resolveHeaders`, and
 `serve(configurationPath)`. `serve` owns the complete stdio
 process lifetime, including configuration loading and shutdown listeners. Importing
@@ -615,18 +659,59 @@ HTTP shutdown requests session deletion when supported, with a 5-second DELETE
 request timeout. The agent-facing transport opens during upstream setup, so EOF
 can also cancel a stalled handshake or discovery.
 
-In repository source, `src/cli.ts` is the executable entry; `src/main.ts` handles
-arguments and exit status. `src/gateway.ts` composes catalog snapshots and the executor;
-`src/catalog.ts` binds discovery to each fixed catalog/status revision.
-`src/upstream.ts` selects credential stores and owns each server's recovery state and
-retained connections, while `src/connection.ts` opens and cleans up one transport/OAuth
-session using resolved authentication inputs.
-Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
-`src/server.ts` explains stdio startup and cleanup ordering beside the code.
-`src/daemon.ts` owns the foreground HTTP process; it does not supervise
-the process, provision clients, or create its HTTP token. `src/setup.ts`
-owns explicit first-run preparation; `src/http-token.ts` owns
-private token-file creation and read-only environment/file resolution.
+### Source layout
+
+The two transport directions are separate: `http/` and `stdio/` accept MCP clients;
+`upstream/` connects outward to MCP servers using either stdio or HTTP.
+
+```text
+MCP clients → http/ or stdio/ → Gateway → upstream/ → MCP servers
+```
+
+All paths below are relative to this package's `src/` directory:
+
+```text
+cli.ts                 Executable entry; no CLI startup from index.ts
+index.ts               Public programmatic API
+gateway.ts             Shared connections, catalog snapshots, and executor
+catalog.ts             Discovery bindings for a fixed catalog/status revision
+tool-list.ts           Shared tool metadata contract; no HTTP or formatting
+config.ts              Configuration parsing and resolution
+output.ts              Session-owned output files
+instructions.ts        Guest-facing execution instructions
+diagnostics.ts         Host diagnostic projections
+errors.ts              Controlled public gateway errors
+
+cli/
+  main.ts              Command dispatch, signals, and exit codes
+  command.ts           Arguments and focused help
+  presentation.ts      Terminal and pipe output primitives
+  status.ts            Status/probe presentation
+  tool-list.ts         Tool pagination and presentation
+  setup.ts             Explicit first-run preparation
+
+stdio/
+  serve.ts             Client-owned process, MCP transport, and EOF cleanup
+
+http/
+  serve.ts             Foreground HTTP process lifetime
+  server.ts            Listener, routes, authentication, and MCP sessions
+  client.ts            Read-only authenticated status/tool-list requests
+  protocol.ts          HTTP management status contract
+  token.ts             Private bearer token creation and resolution
+
+upstream/
+  upstream.ts          Credential selection, availability, recovery, and leases
+  connection.ts        One outgoing transport/OAuth session and its cleanup
+
+auth/                  Upstream OAuth, credential stores, and login/logout
+```
+
+Gateway startup and recovery passes are serialized, so no separate connection-attempt
+registry is needed. The serving modules own process lifetime, not process supervision,
+client provisioning, or token creation. HTTP response validation is separate from CLI
+presentation; shared tool metadata does not depend on either. Public imports still
+use the package root, not these internal paths.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
 build, invoke it as `gw serve --transport stdio --config configuration.json` for stdio; dependencies are not bundled.

@@ -231,22 +231,39 @@ Crashes can leave output behind. Scripts are never automatically replayed.
 
 `gw probe [server]` explicitly opens and closes fresh upstream connections and
 needs no gateway HTTP token. `gw status [server]` reads the running HTTP gateway
-rather than starting another set. Neither command changes saved configuration.
+rather than starting another set. `gw tools list [server]` lists that process's
+current tool catalog in a width-aware table of 50 names/descriptions. Select a server
+to filter the list; use `--offset 50` for the next page (with or without a server) or `--all`
+for a full listing. `--json` remains complete and cannot be combined with `--offset`
+or `--all`. Listing never connects upstreams or executes tools. These commands never
+change saved configuration. Restart an
+older running gateway after updating the executable to enable tool listing.
+
+Interactive `status` shows the gateway endpoint, PID, uptime, session count, and
+upstream table. Tool listings do not repeat this overview; unavailable upstreams
+produce brief stderr warnings. Piped tools are untruncated, headerless TSV (`name`,
+`description`); piped status/probe records contain `upstream`, `state`, `tool count`,
+and `public error message`. Tool pagination hints go to stderr when piped. JSON
+stays complete, including service metadata for status. HTTP startup/state messages
+are human-readable on terminal stderr; redirected HTTP and stdio state changes
+remain JSON lines.
 
 ```sh
 bun run gw auth login notion --config packages/gateway/examples/multi.json
 bun run gw probe --config packages/gateway/examples/multi.json --json
+gw tools list notion --json
 ```
 
 Login remains explicit and interactive. Serving loads saved upstream credentials
 and refreshes noninteractively. Missing grants yield `needs-auth`; other upstreams
 remain usable. Logout removes local upstream credentials, not the provider grant.
 
-`config check`, `probe`, and `status` accept `--json` for one result, including
+`config check`, `probe`, `status`, and `tools list` accept `--json` for one result, including
 operational failures. Argument errors go to stderr. Exit codes are 0 for success,
 1 for operational failure, 2 for invalid arguments, 130 for SIGINT, and 143 for
 SIGTERM after cleanup. `probe` fails when enabled upstreams cannot connect;
-`status` succeeds when status is retrieved, even if upstreams are degraded.
+`status` and `tools list` succeed on retrieval, even if upstreams are degraded;
+consult the returned server statuses for availability.
 `gw help <command...>` and `<command> --help` show focused help without side effects.
 
 ## Migrating from gateway-managed installation

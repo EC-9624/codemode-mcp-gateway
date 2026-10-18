@@ -7,8 +7,9 @@ export {
   type ConfigurationInput,
 } from "./config.ts";
 export { Gateway, type GatewayOptions, type ServerStatus } from "./gateway.ts";
-export { serve } from "./server.ts";
-export { GatewayHttpServer, type HttpOptions, type HttpListenResult } from "./http.ts";
+export { type ToolList } from "./tool-list.ts";
+export { serve } from "./stdio/serve.ts";
+export { GatewayHttpServer, type HttpOptions, type HttpListenResult } from "./http/server.ts";
 export { login, logout, type LoginOptions } from "./auth/login.ts";
 export {
   type CredentialOptions,

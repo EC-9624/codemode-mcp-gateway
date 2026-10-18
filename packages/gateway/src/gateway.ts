@@ -9,14 +9,15 @@ import {
 import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
 import { type Configuration } from "./config.ts";
-import { Upstream, type ConnectionSnapshot, type ServerStatus } from "./upstream.ts";
+import { Upstream, type ConnectionSnapshot, type ServerStatus } from "./upstream/upstream.ts";
 import { executionInstructions } from "./instructions.ts";
 import { OutputFiles } from "./output.ts";
 import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/credentials.ts";
 import { discoveryBindings, toolDefinitions } from "./catalog.ts";
+import { type ToolList } from "./tool-list.ts";
 
-export { type ServerStatus } from "./upstream.ts";
+export { type ServerStatus } from "./upstream/upstream.ts";
 
 export type GatewayOptions = CredentialOptions & {
   signal?: AbortSignal;
@@ -91,6 +92,24 @@ export class Gateway implements AsyncDisposable {
 
   status(): ServerStatus[] {
     return this.upstreams.map((upstream) => upstream.status());
+  }
+
+  /** Read current metadata without connecting, refreshing discovery, or executing tools. */
+  listTools(): ToolList {
+    const tools: ToolList["tools"] = [];
+    for (const upstream of this.upstreams) {
+      const connection = upstream.snapshot();
+      if (connection === undefined) continue;
+
+      for (const [name, definition] of toolDefinitions(connection.catalog))
+        tools.push({
+          server: upstream.name,
+          name: `${upstream.name}.${name}`,
+          description: definition.description,
+        });
+    }
+
+    return { tools, servers: this.status() };
   }
 
   /** All MCP instances share connections and execution admission. */

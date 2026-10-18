@@ -7,16 +7,16 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const token = "synthetic-setup-persistent-token-0123456789";
 
-test("default setup creates only a private configuration and explains explicit HTTP preparation and stdio", async () => {
+test("default setup creates only a private configuration with a focused HTTP preparation next step", async () => {
   await using files = await fixture();
 
   const result = await files.run(["setup"]);
 
   expect(result.code).toBe(0);
   expect(result.stderr).toBe("");
-  expect(result.stdout).toContain("gw setup --transport http, then gw serve");
-  expect(result.stdout).toContain("gw serve --transport stdio");
-  expect(result.stdout).toContain("Stdio needs no gateway HTTP token");
+  expect(result.stdout).toContain("Next: gw setup --transport http --config");
+  expect(result.stdout).toContain("gw config check --config");
+  expect(result.stdout).not.toContain("gw serve --transport stdio");
   expect(result.stdout).not.toContain("Client endpoint:");
   expect(await Bun.file(files.config).json()).toEqual({ mcp: { servers: {} } });
   expect((await lstat(files.config)).mode & 0o777).toBe(0o600);
@@ -37,6 +37,8 @@ test("stdio setup ignores invalid HTTP settings without reading or replacing the
   expect(result.code).toBe(0);
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain("invalid-file-token");
+  expect(result.stdout).toContain("Client command: gw serve --transport stdio --config");
+  expect(result.stdout).not.toContain("gw setup --transport http");
   expect(result.stdout).not.toContain("invalid-environment-token");
   expect(await Bun.file(files.token).text()).toBe("invalid-file-token\n");
   expect((await lstat(files.token)).ino).toBe(original.ino);

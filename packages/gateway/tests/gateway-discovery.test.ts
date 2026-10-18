@@ -11,6 +11,42 @@ const localCommand = [
 ];
 
 describe("gateway discovery and partial availability", () => {
+  test("lists only current upstream metadata and availability without making upstream requests", async () => {
+    await using upstream = await oauthFixture();
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: {
+          servers: {
+            notes: {
+              type: "remote",
+              url: upstream.url,
+              headers: { Authorization: "Bearer access-0" },
+            },
+            paused: { type: "local", command: ["unused"], disabled: true },
+            broken: { type: "local", command: ["nonexistent-tools-upstream"] },
+          },
+        },
+      }),
+      ".",
+    );
+
+    await gateway.start();
+    const requests = upstream.requests.length;
+
+    const listing = gateway.listTools();
+
+    expect(listing.tools).toEqual([
+      { server: "notes", name: "notes.add", description: "Add two numbers" },
+    ]);
+    expect(listing.servers).toMatchObject([
+      { name: "notes", state: "connected", toolCount: 1 },
+      { name: "paused", state: "disabled", toolCount: 0 },
+      { name: "broken", state: "failed", toolCount: 0 },
+    ]);
+    expect(upstream.requests).toHaveLength(requests);
+  });
+
   test("the description matches server-filtered discovery capabilities", async () => {
     await using gateway = new Gateway(
       Configuration.parse({ mcp: { servers: { math: { type: "local", command: localCommand } } } }),

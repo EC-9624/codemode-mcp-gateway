@@ -4,10 +4,10 @@ import {
   type McpServer,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { type Gateway } from "./gateway.ts";
-import { httpCredential } from "./http-token.ts";
-import { type HttpStatus } from "./status.ts";
-import { reportServerError } from "./diagnostics.ts";
+import { type Gateway } from "../gateway.ts";
+import { httpCredential } from "./token.ts";
+import { type HttpStatus } from "./protocol.ts";
+import { reportServerError } from "../diagnostics.ts";
 
 const optionsSchema = z.strictObject({
   port: z.number().int().min(0).max(65535),
@@ -168,6 +168,9 @@ export class GatewayHttpServer implements AsyncDisposable {
         upstreams: this.gateway.status(),
       } satisfies HttpStatus);
     }
+
+    if (url.pathname === "/tools" && request.method === "GET")
+      return Response.json(this.gateway.listTools());
 
     if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });
 

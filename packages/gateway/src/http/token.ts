@@ -4,7 +4,7 @@ import { link, lstat, mkdir, open, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { GatewayError } from "./errors.ts";
+import { GatewayError } from "../errors.ts";
 
 export const httpCredential = z
   .string()

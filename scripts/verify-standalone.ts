@@ -137,6 +137,18 @@ const diagnostics = (async () => {
 
 await bounded(ready.promise, "Standalone gateway did not connect its upstream.");
 equal((await run(["status", "--json"])).code, 0);
+const toolList = await run(["tools", "list", "math", "--json"]);
+equal(toolList.code, 0);
+equal(toolList.stderr, "");
+
+const listed = z
+  .object({ ok: z.literal(true), tools: z.array(z.object({ name: z.string() })) })
+  .parse(JSON.parse(toolList.stdout));
+
+deepEqual(
+  listed.tools.map((tool) => tool.name),
+  ["math.add", "math.wait"],
+);
 
 const agent = new Client({ name: "standalone-http-probe", version: "1" });
 cleanup.defer(() => agent.close());

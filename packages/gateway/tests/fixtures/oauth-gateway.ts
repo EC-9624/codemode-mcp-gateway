@@ -1,4 +1,4 @@
-import { main } from "../../src/main.ts";
+import { main } from "../../src/cli/main.ts";
 import { Credentials, type CredentialStore } from "codemode-mcp-gateway";
 import { rename } from "node:fs/promises";
 

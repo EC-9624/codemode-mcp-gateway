@@ -1,12 +1,12 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { readConfiguration } from "./config.ts";
-import { GatewayError } from "./errors.ts";
-import { prepareHttpToken } from "./http-token.ts";
+import { readConfiguration } from "../config.ts";
+import { GatewayError } from "../errors.ts";
+import { prepareHttpToken } from "../http/token.ts";
 
 /** Prepare only gateway-owned files. Upstream definitions, clients, and supervision stay user-managed. */
-export async function setup(path: string, transport: "stdio" | "http"): Promise<void> {
-  // Only explicit HTTP setup reads or provisions the gateway credential. Stdio ignores it.
+export async function setup(path: string, transport?: "stdio" | "http"): Promise<void> {
+  // Only explicit HTTP setup reads or provisions the gateway credential.
   const token = transport === "http" ? await prepareHttpToken() : undefined;
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -55,6 +55,7 @@ export async function setup(path: string, transport: "stdio" | "http"): Promise<
     );
   }
 
+  const configFlag = `--config '${path.replace(/'/gu, "'\\''")}'`;
   try {
     const config = await readConfiguration(path);
     console.log(
@@ -66,27 +67,27 @@ export async function setup(path: string, transport: "stdio" | "http"): Promise<
     if (!(cause instanceof GatewayError)) throw cause;
 
     console.log(
-      "Configuration is not ready. Add your upstream MCP servers, then run gw config check.",
+      `Configuration is not ready. Add upstreams, then run:\n  gw config check ${configFlag}`,
     );
+  }
+
+  console.log("No clients or services changed. No process was started.");
+  if (transport === undefined) {
+    console.log(`Next: gw setup --transport http ${configFlag}`);
+    console.log("For client-owned stdio instead, see gw setup --help.");
+
+    return;
   }
 
   if (transport === "http") {
     console.log(
-      "Configure MCP clients yourself with Authorization: Bearer <token>. Run gw token show to reveal the effective token explicitly.",
+      "Client header: Authorization: Bearer <token>. Use gw token show privately to obtain it.",
     );
-    console.log("Run gw serve to start the foreground HTTP gateway.");
+    console.log(`When configuration is ready: gw serve ${configFlag}`);
   } else {
-    console.log("For HTTP, run gw setup --transport http, then gw serve.");
-    console.log(
-      "For stdio, configure your MCP client to launch gw serve --transport stdio. Stdio needs no gateway HTTP token.",
-    );
+    console.log(`Client command: gw serve --transport stdio ${configFlag}`);
+    console.log("Stdio needs no gateway HTTP token.");
   }
 
-  console.log(
-    "Run gw auth login <server> for an OAuth upstream before connecting your MCP client.",
-  );
-  console.log("For a nondefault configuration, pass the same --config path to each command.");
-  console.log(
-    "No clients, upstream credentials, or OS services were configured. No process was started.",
-  );
+  console.log(`For OAuth upstreams: gw auth login <server> ${configFlag}`);
 }

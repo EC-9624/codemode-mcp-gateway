@@ -1,12 +1,12 @@
 import { type ToolCatalog } from "@codemode-mcp-gateway/codemode";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { type ServerConfiguration } from "./config.ts";
+import { type ServerConfiguration } from "../config.ts";
 import { connectUpstream, UpstreamError, type ConnectionAuth } from "./connection.ts";
-import { GatewayError } from "./errors.ts";
-import { AuthorizationError } from "./auth/result.ts";
-import { credentialVersion, oauthConnection, type CredentialOptions } from "./auth/credentials.ts";
-import { fileCredentialStore } from "./auth/file-store.ts";
+import { GatewayError } from "../errors.ts";
+import { AuthorizationError } from "../auth/result.ts";
+import { credentialVersion, oauthConnection, type CredentialOptions } from "../auth/credentials.ts";
+import { fileCredentialStore } from "../auth/file-store.ts";
 
 const statusBase = { name: z.string(), updatedAt: z.string() };
 const publicFailure = z.object({ kind: z.string(), message: z.string() });

@@ -7,12 +7,12 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ToolCatalog, ToolResult, type ToolDefinition } from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
-import { resolveHeaders, type ServerConfiguration } from "./config.ts";
-import { type CredentialStore, type OAuthConnection } from "./auth/credentials.ts";
-import { OAuthSession } from "./auth/session.ts";
-import { AuthorizationError } from "./auth/result.ts";
-import { GatewayError } from "./errors.ts";
-import { toolDefinitions } from "./catalog.ts";
+import { resolveHeaders, type ServerConfiguration } from "../config.ts";
+import { type CredentialStore, type OAuthConnection } from "../auth/credentials.ts";
+import { OAuthSession } from "../auth/session.ts";
+import { AuthorizationError } from "../auth/result.ts";
+import { GatewayError } from "../errors.ts";
+import { toolDefinitions } from "../catalog.ts";
 
 export class UpstreamError extends GatewayError {
   constructor(

@@ -156,6 +156,41 @@ and [local OAuth limitations](packages/gateway/README.md#local-oauth).
 
 ### Discover, inspect, call
 
+List the running HTTP gateway's upstream tools from your terminal:
+
+```sh
+gw status                        # Gateway process, sessions, and upstream health
+gw tools list                    # First 50 tools across upstreams
+gw tools list notion             # First 50 tools from one upstream
+gw tools list --offset 50        # Next page across upstreams
+gw tools list notion --offset 50 # Next page from one upstream
+gw tools list notion --all       # Explicitly print every tool for this upstream
+gw tools list --all              # Every tool across all upstreams
+gw tools list notion --json      # Complete metadata, unpaginated and untruncated
+```
+
+Terminal tables fit the available width and show short descriptions. Selecting an
+upstream shows its original tool names; cross-upstream listings use qualified names.
+Piped tool output is headerless TSV (`name`, `description`), always qualified and
+untruncated, with pagination hints and unavailable-upstream warnings on stderr.
+For example, `gw tools list --all | cut -f1` prints every available qualified name.
+`--offset` works with or without a server and cannot be combined with `--all`;
+JSON stays complete and cannot be combined with either text-listing option.
+
+This reads the current catalog without opening fresh upstream connections or
+calling tools. Failed, connecting, and disabled upstreams are reported on stderr;
+successful retrieval exits 0 even when upstreams are unavailable. `--config`/`-c`
+selects the gateway port; no running HTTP gateway means an error, not a fresh probe.
+After updating an older running gateway, restart it to enable tool listing.
+
+Help groups getting-started, inspection, and authentication commands; focused help
+shows relevant flags and examples. `status` owns the health overview, while `probe`
+labels its results as a fresh connectivity check. Their piped output is headerless
+TSV (`upstream`, `state`, `tool count`, `public error message`). Interactive HTTP
+serving uses readable startup/state messages on stderr; redirected HTTP and stdio
+state changes remain JSON lines. Slow probes and browser authorization show terminal-only progress;
+JSON and MCP stdout remain free of presentation messages.
+
 Submit async function bodies to `execute`; top-level `await` and `return` work:
 
 ```js

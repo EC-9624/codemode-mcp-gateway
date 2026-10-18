@@ -6,9 +6,25 @@ import { fileURLToPath } from "node:url";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { responseText } from "./support/output.ts";
+import { oauthFixture } from "./support/oauth.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const token = "synthetic-persistent-http-token-0123456789";
+
+test("interactive HTTP serving reports readable startup and upstream events only on stderr", async () => {
+  await using files = await fixture();
+  const app = await start(files, {}, "notes: disabled", true);
+
+  await app.stop();
+  const logs = await app.logs;
+
+  expect(logs).toContain(`Gateway listening at ${files.origin}/mcp`);
+  expect(logs).toContain("Press Ctrl-C to stop.");
+  expect(logs).toContain("notes: disabled");
+  expect(logs).not.toContain('"event":"listening"');
+  expect(logs).not.toContain(token);
+  expect(await new Response(app.child.stdout).text()).toBe("");
+});
 
 test("HTTP serving logs protocol failures without exposing upstream response data", async () => {
   await using files = await fixture();
@@ -279,11 +295,14 @@ test("foreground HTTP serving survives stdin EOF and status reads its actual ups
   await app.stop();
 });
 
-test("status reports a mismatched persistent token without displaying it", async () => {
+test.each([
+  { name: "status", args: ["status"] },
+  { name: "tools list", args: ["tools", "list"] },
+])("$name reports a mismatched persistent token without displaying it", async ({ args }) => {
   await using files = await fixture();
   const app = await start(files);
 
-  const status = files.spawn(["status", "--config", files.config, "--json"], {
+  const status = files.spawn([...args, "--config", files.config, "--json"], {
     GW_HTTP_TOKEN: "synthetic-wrong-http-token-9876543210",
   });
 
@@ -294,36 +313,42 @@ test("status reports a mismatched persistent token without displaying it", async
     ok: false,
     error: {
       message:
-        "The local gateway rejected GW_HTTP_TOKEN. Use the same token as the running gateway.",
+        "The local gateway rejected the gateway credential. Use the same token as the running gateway.",
     },
   });
   await app.stop();
 });
 
-test("status rejects a locally configured server absent from the running service", async () => {
-  await using files = await fixture();
-  const app = await start(files);
-  const diagnostic = join(files.directory, "status.json");
-  await Bun.write(
-    diagnostic,
-    JSON.stringify({
-      service: { port: files.port },
-      mcp: { servers: { absent: { type: "local", command: ["unused"], disabled: true } } },
-    }),
-  );
+test.each([
+  { name: "status", args: ["status"] },
+  { name: "tools list", args: ["tools", "list"] },
+])(
+  "$name rejects a locally configured server absent from the running service",
+  async ({ args }) => {
+    await using files = await fixture();
+    const app = await start(files);
+    const diagnostic = join(files.directory, "status.json");
+    await Bun.write(
+      diagnostic,
+      JSON.stringify({
+        service: { port: files.port },
+        mcp: { servers: { absent: { type: "local", command: ["unused"], disabled: true } } },
+      }),
+    );
 
-  const status = files.spawn(["status", "absent", "--config", diagnostic, "--json"]);
-  const output = new Response(status.stdout).json();
-  const diagnostics = new Response(status.stderr).text();
+    const status = files.spawn([...args, "absent", "--config", diagnostic, "--json"]);
+    const output = new Response(status.stdout).json();
+    const diagnostics = new Response(status.stderr).text();
 
-  expect(await status.exited).toBe(1);
-  expect(await output).toEqual({
-    ok: false,
-    error: { message: 'Unknown server "absent" in the running gateway.' },
-  });
-  expect(await diagnostics).toBe("");
-  await app.stop();
-});
+    expect(await status.exited).toBe(1);
+    expect(await output).toEqual({
+      ok: false,
+      error: { message: 'Unknown server "absent" in the running gateway.' },
+    });
+    expect(await diagnostics).toBe("");
+    await app.stop();
+  },
+);
 
 test("status selects a running server even when absent from local configuration", async () => {
   await using files = await fixture();
@@ -351,7 +376,10 @@ test("status selects a running server even when absent from local configuration"
   await app.stop();
 });
 
-test("status never forwards the persistent token to a redirected endpoint", async () => {
+test.each([
+  { name: "status", args: ["status"] },
+  { name: "tools list", args: ["tools", "list"] },
+])("$name never forwards the persistent token to a redirected endpoint", async ({ args }) => {
   await using files = await fixture();
   const requests: Request[] = [];
 
@@ -375,7 +403,7 @@ test("status never forwards the persistent token to a redirected endpoint", asyn
   });
 
   cleanup.defer(() => listener.stop(true));
-  const status = files.spawn(["status", "--config", files.config, "--json"]);
+  const status = files.spawn([...args, "--config", files.config, "--json"]);
   const output = new Response(status.stdout).text();
 
   expect(await status.exited).toBe(1);
@@ -385,9 +413,31 @@ test("status never forwards the persistent token to a redirected endpoint", asyn
 });
 
 test.each([
-  { name: "malformed JSON", body: "private-upstream-response" },
-  { name: "an invalid status shape", body: '{"private":"upstream-response"}' },
-])("status rejects $name without displaying response data", async ({ body }) => {
+  {
+    name: "malformed status JSON",
+    args: ["status"],
+    label: "status",
+    body: "private-upstream-response",
+  },
+  {
+    name: "an invalid status shape",
+    args: ["status"],
+    label: "status",
+    body: '{"private":"upstream-response"}',
+  },
+  {
+    name: "malformed tools JSON",
+    args: ["tools", "list"],
+    label: "tool list",
+    body: "private-upstream-response",
+  },
+  {
+    name: "an invalid tools shape",
+    args: ["tools", "list"],
+    label: "tool list",
+    body: '{"private":"upstream-response"}',
+  },
+])("rejects $name without displaying response data", async ({ args, label, body }) => {
   await using files = await fixture();
 
   const listener = Bun.serve({
@@ -398,14 +448,161 @@ test.each([
 
   await using cleanup = new AsyncDisposableStack();
   cleanup.defer(() => listener.stop(true));
-  const status = files.spawn(["status", "--config", files.config, "--json"]);
+  const status = files.spawn([...args, "--config", files.config, "--json"]);
   const output = new Response(status.stdout).json();
 
   expect(await status.exited).toBe(1);
   expect(await output).toEqual({
     ok: false,
-    error: { message: "The service port did not return a valid gateway status." },
+    error: { message: `The service port did not return a valid gateway ${label}.` },
   });
+});
+
+test("tools list selects the running catalog rather than local upstream definitions without probing", async () => {
+  await using upstream = await oauthFixture();
+  await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: {
+        servers: {
+          notes: {
+            type: "remote",
+            url: upstream.url,
+            headers: { Authorization: "Bearer access-0" },
+          },
+          "notes-backup": { type: "local", command: ["unused"], disabled: true },
+        },
+      },
+    }),
+  );
+  const app = await start(files, {}, '"state":"connected"');
+  const diagnostic = join(files.directory, "tools.json");
+  await Bun.write(
+    diagnostic,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: {
+        servers: { mustNotStart: { type: "local", command: ["nonexistent-tools-upstream"] } },
+      },
+    }),
+  );
+  const requests = upstream.requests.length;
+
+  const child = files.spawn(["tools", "list", "notes", "--config", diagnostic, "--json"]);
+  const output = new Response(child.stdout).json();
+  const diagnostics = new Response(child.stderr).text();
+
+  expect(await child.exited).toBe(0);
+  expect(await output).toMatchObject({
+    ok: true,
+    tools: [{ server: "notes", name: "notes.add", description: "Add two numbers" }],
+    servers: [{ name: "notes", state: "connected", toolCount: 1 }],
+  });
+  expect(await diagnostics).toBe("");
+  expect(upstream.requests).toHaveLength(requests);
+  expect((await files.status()).sessions).toBe(0);
+  await app.stop();
+});
+
+test("piped tools list contains only tool records and puts unavailable-upstream warnings on stderr", async () => {
+  await using upstream = await oauthFixture();
+  await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: {
+        servers: {
+          notes: {
+            type: "remote",
+            url: upstream.url,
+            headers: { Authorization: "Bearer access-0" },
+          },
+          paused: { type: "local", command: ["unused"], disabled: true },
+        },
+      },
+    }),
+  );
+  const app = await start(files, {}, '"state":"connected"');
+
+  const child = files.spawn(["tools", "list", "-c", files.config]);
+  const output = new Response(child.stdout).text();
+  const diagnostics = new Response(child.stderr).text();
+
+  expect(await child.exited).toBe(0);
+  expect(await output).toBe("notes.add\tAdd two numbers\n");
+  expect(await diagnostics).toContain(
+    "Unavailable upstreams: paused (disabled). Run gw status for details.",
+  );
+  await app.stop();
+});
+
+test("tools list reports a failed upstream explicitly instead of treating it as an empty catalog", async () => {
+  await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: { servers: { missing: { type: "local", command: ["nonexistent-tools-upstream"] } } },
+    }),
+  );
+  const app = await start(files, {}, '"state":"failed"');
+
+  const child = files.spawn(["tools", "list", "missing", "-c", files.config, "--json"]);
+  const output = new Response(child.stdout).json();
+
+  expect(await child.exited).toBe(0);
+  expect(await output).toMatchObject({
+    ok: true,
+    tools: [],
+    servers: [{ name: "missing", state: "failed", toolCount: 0, error: { kind: "connect" } }],
+  });
+  await app.stop();
+});
+
+test("tools list explains that an older running gateway must be restarted", async () => {
+  await using files = await fixture();
+
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: files.port,
+    fetch: () => new Response("Not found", { status: 404 }),
+  });
+
+  await using cleanup = new AsyncDisposableStack();
+  cleanup.defer(() => listener.stop(true));
+
+  const child = files.spawn(["tools", "list", "--config", files.config, "--json"]);
+  const output = new Response(child.stdout).json();
+
+  expect(await child.exited).toBe(1);
+  expect(await output).toEqual({
+    ok: false,
+    error: {
+      message:
+        "The service port returned HTTP 404 for tool listing. Restart an older gateway with an updated gw executable.",
+    },
+  });
+});
+
+test("tools list fails with guidance when no HTTP gateway is running instead of probing upstreams", async () => {
+  await using files = await fixture();
+
+  const child = files.spawn(["tools", "list", "-c", files.config, "--json"]);
+  const output = new Response(child.stdout).json();
+  const diagnostics = new Response(child.stderr).text();
+
+  expect(await child.exited).toBe(1);
+  expect(await output).toEqual({
+    ok: false,
+    error: {
+      message:
+        "The local gateway tool list is unavailable. Verify its configured port and that gw serve --transport http is running; redirects are not followed.",
+    },
+  });
+  expect(await diagnostics).toBe("");
 });
 
 async function fixture() {
@@ -442,27 +639,35 @@ async function fixture() {
       return z
         .object({
           service: z.object({ pid: z.number(), instanceId: z.uuid() }).passthrough(),
+          sessions: z.number(),
         })
         .passthrough()
         .parse(await response.json());
     },
-    spawn(args: string[], environment: NodeJS.ProcessEnv = {}) {
-      const child = Bun.spawn([process.execPath, "--conditions=development", cli, ...args], {
-        env: {
-          ...process.env,
-          HOME: directory,
-          CODEX_HOME: join(directory, ".codex"),
-          CLAUDE_CONFIG_DIR: join(directory, ".claude"),
-          XDG_CONFIG_HOME: join(directory, ".config"),
-          XDG_STATE_HOME: directory,
-          GW_HTTP_TOKEN: token,
-          PATH: "",
-          ...environment,
+    spawn(args: string[], environment: NodeJS.ProcessEnv = {}, terminal = false) {
+      const executable = terminal
+        ? [fileURLToPath(new URL("./fixtures/cli-terminal.ts", import.meta.url)), "80"]
+        : [cli];
+
+      const child = Bun.spawn(
+        [process.execPath, "--conditions=development", ...executable, ...args],
+        {
+          env: {
+            ...process.env,
+            HOME: directory,
+            CODEX_HOME: join(directory, ".codex"),
+            CLAUDE_CONFIG_DIR: join(directory, ".claude"),
+            XDG_CONFIG_HOME: join(directory, ".config"),
+            XDG_STATE_HOME: directory,
+            GW_HTTP_TOKEN: token,
+            PATH: "",
+            ...environment,
+          },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
         },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      );
 
       children.add(child);
 
@@ -489,8 +694,9 @@ async function start(
   files: Awaited<ReturnType<typeof fixture>>,
   environment: NodeJS.ProcessEnv = {},
   marker = '"event":"listening"',
+  terminal = false,
 ) {
-  const child = files.spawn(["serve", "--config", files.config], environment);
+  const child = files.spawn(["serve", "--config", files.config], environment, terminal);
 
   const ready = Promise.withResolvers<void>();
 

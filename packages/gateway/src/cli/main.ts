@@ -1,22 +1,25 @@
 import { dirname } from "node:path";
 import { z } from "zod";
-import { serve } from "./server.ts";
-import { login, logout } from "./auth/login.ts";
-import { type CredentialOptions } from "./auth/credentials.ts";
-import { AuthorizationError } from "./auth/result.ts";
-import { GatewayError } from "./errors.ts";
+import { serve } from "../stdio/serve.ts";
+import { login, logout } from "../auth/login.ts";
+import { type CredentialOptions } from "../auth/credentials.ts";
+import { AuthorizationError } from "../auth/result.ts";
+import { GatewayError } from "../errors.ts";
 import {
   configurationPath,
   configuredServer,
   readConfiguration,
   type Configuration,
-} from "./config.ts";
-import { Gateway, type ServerStatus } from "./gateway.ts";
-import { serveHttp } from "./daemon.ts";
-import { httpToken } from "./http-token.ts";
-import { httpStatus } from "./status.ts";
+} from "../config.ts";
+import { Gateway, type ServerStatus } from "../gateway.ts";
+import { serveHttp } from "../http/serve.ts";
+import { httpToken } from "../http/token.ts";
+import { httpStatus, httpTools } from "../http/client.ts";
+import { formatStatus } from "./status.ts";
+import { formatToolList } from "./tool-list.ts";
 import { setup } from "./setup.ts";
 import { commandHelp, parseCommand } from "./command.ts";
+import { outputMode, withProgress, wrapText } from "./presentation.ts";
 
 // Standalone builds embed this value; ordinary package/source runs read their manifest.
 declare const GW_BUILD_VERSION: string;
@@ -36,7 +39,7 @@ export async function main(
 
   const command = parsed.command;
   if (command.kind === "help") {
-    console.log(commandHelp(command.topic));
+    console.log(commandHelp(command.topic, process.stdout.columns ?? 80));
 
     return 0;
   }
@@ -46,7 +49,7 @@ export async function main(
       typeof GW_BUILD_VERSION === "undefined"
         ? z
             .object({ version: z.string() })
-            .parse(await Bun.file(new URL("../package.json", import.meta.url)).json()).version
+            .parse(await Bun.file(new URL("../../package.json", import.meta.url)).json()).version
         : GW_BUILD_VERSION;
 
     console.log(`gw ${version}`);
@@ -88,7 +91,9 @@ export async function main(
 
       const result =
         command.kind === "login"
-          ? await login(path, { ...selected, signal: shutdown.signal })
+          ? await withProgress("Waiting for upstream authorization…", true, () =>
+              login(path, { ...selected, signal: shutdown.signal }),
+            )
           : await logout(path, selected);
 
       if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
@@ -119,6 +124,42 @@ export async function main(
       return 0;
     }
 
+    if (command.kind === "tools") {
+      const config = await readConfiguration(path);
+      const listing = await httpTools(config.service.port, await httpToken(), shutdown.signal);
+      if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
+
+      const selected = command.output.server;
+
+      const servers = listing.servers.filter(
+        (server) => selected === undefined || server.name === selected,
+      );
+
+      if (selected !== undefined && servers.length === 0)
+        throw new GatewayError(
+          `Unknown server ${JSON.stringify(selected)} in the running gateway.`,
+        );
+
+      const tools = listing.tools.filter(
+        (tool) => selected === undefined || tool.server === selected,
+      );
+
+      if (command.output.kind === "json") console.log(JSON.stringify({ ok: true, tools, servers }));
+      else {
+        const rendered = formatToolList(
+          { tools, servers },
+          command.output,
+          outputMode(process.stdout),
+        );
+
+        if (rendered.stdout !== "") console.log(rendered.stdout);
+
+        if (rendered.stderr !== "") console.error(rendered.stderr);
+      }
+
+      return 0;
+    }
+
     if (command.kind === "probe" || command.kind === "status") {
       const config = await readConfiguration(path);
 
@@ -129,13 +170,16 @@ export async function main(
 
       let statuses: ServerStatus[];
       if (remote === undefined) {
-        await using gateway = new Gateway(selectServer(config, command.server), dirname(path), {
-          ...options,
-          signal: shutdown.signal,
-        });
+        statuses = await withProgress("Checking upstream connections…", !command.json, async () => {
+          await using gateway = new Gateway(selectServer(config, command.server), dirname(path), {
+            ...options,
+            signal: shutdown.signal,
+          });
 
-        await gateway.start();
-        statuses = gateway.status();
+          await gateway.start();
+
+          return gateway.status();
+        });
       } else {
         statuses = remote.upstreams.filter(
           (status) => command.server === undefined || status.name === command.server,
@@ -160,11 +204,17 @@ export async function main(
             ...(remote === undefined ? {} : { service: remote.service, sessions: remote.sessions }),
           }),
         );
-      else
-        for (const status of statuses)
-          console.log(
-            `${status.name}: ${status.state} (${status.toolCount} tools)${"error" in status ? " — " + status.error.message : ""}`,
-          );
+      else {
+        const rendered = formatStatus(
+          statuses,
+          outputMode(process.stdout),
+          remote === undefined
+            ? { kind: "probe" }
+            : { kind: "http", port: config.service.port, status: remote },
+        );
+
+        if (rendered !== "") console.log(rendered);
+      }
 
       return command.kind === "status" || healthy ? 0 : 1;
     }
@@ -182,11 +232,15 @@ export async function main(
         : "Gateway command failed. Private diagnostics were not displayed.";
 
     if (
-      (command.kind === "check" || command.kind === "probe" || command.kind === "status") &&
-      command.json
+      ((command.kind === "check" || command.kind === "probe" || command.kind === "status") &&
+        command.json) ||
+      (command.kind === "tools" && command.output.kind === "json")
     )
       console.log(JSON.stringify({ ok: false, error: { message } }));
-    else console.error(message);
+    else {
+      const mode = outputMode(process.stderr);
+      console.error(mode.kind === "terminal" ? wrapText(message, mode.width) : message);
+    }
 
     return 1;
   }

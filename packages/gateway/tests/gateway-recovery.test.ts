@@ -296,7 +296,11 @@ describe("gateway connection and authorization recovery", () => {
     expect(gateway.status()).toMatchObject([
       { state: "failed", error: { kind: "credentials-changed" } },
     ]);
+    expect(gateway.listTools().tools).toEqual([]);
     await within(ready.promise);
+    expect(gateway.listTools().tools).toEqual([
+      { server: "notes", name: "notes.add", description: "Add two numbers" },
+    ]);
     await using agent = await connect(gateway.createServer());
 
     const result = await agent.client.callTool({

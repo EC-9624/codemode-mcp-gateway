@@ -1,11 +1,12 @@
 import { dirname } from "node:path";
-import { readConfiguration } from "./config.ts";
-import { Gateway } from "./gateway.ts";
-import { GatewayHttpServer } from "./http.ts";
-import { httpToken } from "./http-token.ts";
-import { GatewayError } from "./errors.ts";
-import { type CredentialOptions } from "./auth/credentials.ts";
-import { reportToolException } from "./diagnostics.ts";
+import { readConfiguration } from "../config.ts";
+import { Gateway } from "../gateway.ts";
+import { GatewayHttpServer } from "./server.ts";
+import { httpToken } from "./token.ts";
+import { GatewayError } from "../errors.ts";
+import { type CredentialOptions } from "../auth/credentials.ts";
+import { reportToolException } from "../diagnostics.ts";
+import { formatServerEvent, outputMode, wrapText } from "../cli/presentation.ts";
 
 /** Foreground HTTP process; deployment and client configuration belong to the caller. */
 export async function serveHttp(
@@ -39,11 +40,18 @@ export async function serveHttp(
 
   if (shutdown.signal.aborted) return;
 
+  const mode = outputMode(process.stderr);
+
   const gateway = cleanup.use(
     new Gateway(config, dirname(path), {
       ...options,
       signal: shutdown.signal,
-      onStatus: (status) => console.error(JSON.stringify(status)),
+      onStatus: (status) =>
+        console.error(
+          mode.kind === "terminal"
+            ? wrapText(formatServerEvent(status), mode.width)
+            : JSON.stringify(status),
+        ),
       onToolException: reportToolException,
     }),
   );
@@ -62,7 +70,12 @@ export async function serveHttp(
   // gateway's connections. Upstreams may remain needs-auth without blocking MCP.
   const starting = gateway.start();
   console.error(
-    JSON.stringify({ event: "listening", pid: process.pid, url: opened.server.url.href }),
+    mode.kind === "terminal"
+      ? wrapText(
+          `Gateway listening at ${opened.server.url.href}\nPID ${process.pid} · Press Ctrl-C to stop.`,
+          mode.width,
+        )
+      : JSON.stringify({ event: "listening", pid: process.pid, url: opened.server.url.href }),
   );
   try {
     await Promise.race([

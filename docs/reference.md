@@ -859,7 +859,9 @@ Read the lifecycle explanations beside the implementation:
 - [Engine](../packages/codemode/src/runtime/engine.ts): VM ownership, job pumping, completion, guest deadline.
 - [Guest bridge](../packages/codemode/src/runtime/guest-bridge.ts): admission, settlement, wakeups, private failures.
 - [MCP server](../packages/mcp/src/server.ts): borrowed executor, response projection, active request cleanup.
-- [Gateway](../packages/gateway/src/server.ts): upstream setup, process signals, stdio/HTTP shutdown.
+- [Stdio serving](../packages/gateway/src/stdio/serve.ts): client-owned process signals, EOF, and shutdown.
+- [HTTP serving](../packages/gateway/src/http/serve.ts): foreground HTTP process lifetime and shutdown.
+- [HTTP server](../packages/gateway/src/http/server.ts): authenticated routes and MCP session ownership.
 
 Package responsibilities and composition are covered in the [package guides](../README.md#packages).
 
