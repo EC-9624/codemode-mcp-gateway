@@ -86,11 +86,12 @@ describe("gateway output", () => {
     app.server.server.onerror = (error) => diagnostics.push(error);
 
     const response = await app.client.callTool({ name: "execute", arguments: { code } });
+    const text = responseText(response);
 
     expect(response.isError).toBe(isError);
-    expect(responseText(response)).toContain("… output truncated …");
-    expect(responseText(response)).toContain("[Full output could not be saved.]");
-    expect(responseText(response)).not.toContain("Private storage details");
+    expect(text).toContain("… output truncated …");
+    expect(text).toContain("[Full output could not be saved.]");
+    expect(text).not.toContain("Private storage details");
     expect(diagnostics[0]?.cause).toBe(cause);
     expect(write).toHaveBeenCalledTimes(1);
   });

@@ -346,13 +346,8 @@ export class GatewayHttpServer implements AsyncDisposable {
     await this.listener.stop(true);
     await stopping;
 
-    const errors = results
-      .filter((result) => result.status === "rejected")
-      .map((result) => {
-        const cause: unknown = result.reason;
-
-        return cause;
-      });
+    const errors: unknown[] = [];
+    for (const result of results) if (result.status === "rejected") errors.push(result.reason);
 
     if (errors.length > 0) throw new AggregateError(errors, "HTTP session cleanup failed.");
   }

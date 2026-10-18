@@ -1,6 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   type McpServer,
   WebStandardStreamableHTTPServerTransport,
@@ -10,6 +9,7 @@ import { Configuration, Gateway, type ConfigurationInput } from "codemode-mcp-ga
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { rejectionOf } from "./support/rejection.ts";
 import { responseText, responseValue } from "./support/output.ts";
+import { connect } from "./support/gateway.ts";
 
 describe("gateway execution", () => {
   test("the advertised discovery example runs and exact discovered names remain callable", async () => {
@@ -72,7 +72,7 @@ describe("gateway execution", () => {
       return { content: [], structuredContent: { value: 42 } };
     });
     await using app = await connectGateway(upstream, { maxConcurrentExecutions: 1 });
-    await using second = await connectMcp(app.gateway.createServer());
+    await using second = await connect(app.gateway.createServer());
     using gates = new DisposableStack();
     gates.defer(() => release.resolve());
 
@@ -104,7 +104,7 @@ describe("gateway execution", () => {
 
   test("closing one MCP instance leaves the gateway's upstream usable by another", async () => {
     await using app = await connectGateway(createMcpServer());
-    await using other = await connectMcp(app.gateway.createServer());
+    await using other = await connect(app.gateway.createServer());
     await app.server.close();
 
     const response = await other.client.callTool({
@@ -306,7 +306,7 @@ async function connectGateway(upstream: McpServer, sandbox: ConfigurationInput["
 
   await gateway.start();
   const server = gateway.createServer();
-  const agent = setup.use(await connectMcp(server));
+  const agent = setup.use(await connect(server));
   const cleanup = setup.move();
 
   return {
@@ -315,17 +315,4 @@ async function connectGateway(upstream: McpServer, sandbox: ConfigurationInput["
     client: agent.client,
     [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
   };
-}
-
-async function connectMcp(server: McpServer) {
-  await using setup = new AsyncDisposableStack();
-  setup.defer(() => server.close());
-  const client = new Client({ name: "gateway-test", version: "0" });
-  setup.defer(() => client.close());
-  const [local, remote] = InMemoryTransport.createLinkedPair();
-  await server.connect(remote);
-  await client.connect(local);
-  const cleanup = setup.move();
-
-  return { client, [Symbol.asyncDispose]: () => cleanup.disposeAsync() };
 }

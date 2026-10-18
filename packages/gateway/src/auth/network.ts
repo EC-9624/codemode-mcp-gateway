@@ -53,7 +53,8 @@ export async function oauthEndpoint(
 ) {
   const url = URL.parse(String(input));
   const configured = new URL(upstream);
-  const development = local(host(configured));
+  const configuredHost = host(configured);
+  const development = local(configuredHost);
   if (
     url === null ||
     url.username !== "" ||
@@ -70,8 +71,8 @@ export async function oauthEndpoint(
   const family = isIP(hostname);
 
   const privateOrigin =
-    isIP(host(configured)) !== 0 &&
-    !publicAddress(host(configured)) &&
+    isIP(configuredHost) !== 0 &&
+    !publicAddress(configuredHost) &&
     url.origin === configured.origin;
 
   let addresses;

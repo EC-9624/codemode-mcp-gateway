@@ -58,8 +58,7 @@ The working directory is not searched implicitly.
 The repository's `docs/local-installation.md` expands installation and native client
 configuration. This README keeps the runtime and credential contracts self-contained
 for installed readers; `dist/index.d.ts` contains supported public API signatures.
-There is no client provisioning or OS service-management command. OAuth identity
-and lock storage are unchanged.
+There is no client provisioning or OS service-management command.
 
 ```sh
 gw setup                   # Prepare only gateway files; no connections or process startup
@@ -520,8 +519,9 @@ before token exchange.
 The attempt retains its PKCE verifier and shares one code exchange across completion
 calls. Rejected client registrations are removed only if the stored snapshot still
 matches the attempt, so another login can register again without deleting a newer grant.
-`session.ts` owns noninteractive refresh coordination, and `credentials.ts`
-owns token normalization and OS-backed persistence. All are internal modules.
+`session.ts` owns noninteractive refresh coordination, `credentials.ts` owns snapshot
+validation and token normalization, and `file-store.ts` implements private file-backed
+persistence. These module paths are internal.
 
 ## Programmatic API
 
@@ -567,7 +567,7 @@ values for expected authorization/storage failures. Configuration, infrastructur
 and cleanup failures may reject, including `AuthorizationError` when releasing a
 credential lock fails. `serve(path, options?)` accepts the same
 host-owned scoped credential-store factory and lock-directory override; the CLI
-uses the OS store. A custom store must preserve credential bindings and durable,
+uses private credential files. A custom store must preserve credential bindings and durable,
 atomic snapshot replacement, including for readers outside the lock. The exported
 `Credentials` schema validates stored snapshots; custom stores must also validate
 the connection binding. All processes

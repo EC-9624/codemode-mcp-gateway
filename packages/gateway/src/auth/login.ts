@@ -126,13 +126,12 @@ export async function logout(
   const connection = oauthConnection(target.name, target.config);
   if (!connection.ok) return connection;
 
-  const lease = await acquireLease(connection.value, options.lockDirectory);
-  if (!lease.ok) return lease;
+  const acquired = await acquireLease(connection.value, options.lockDirectory);
+  if (!acquired.ok) return acquired;
 
-  await using cleanup = new AsyncDisposableStack();
+  await using lease = acquired.value;
 
-  cleanup.use(lease.value);
-  const store = lease.value.guard((options.store ?? fileCredentialStore)(connection.value));
+  const store = lease.guard((options.store ?? fileCredentialStore)(connection.value));
 
   return await store.clear();
 }

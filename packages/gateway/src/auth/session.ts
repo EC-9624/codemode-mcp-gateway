@@ -149,20 +149,22 @@ export class OAuthSession implements AsyncDisposable {
     if (this.terminal !== undefined) return this.terminal;
 
     const authorization = checked.value.authorization;
-    const expires = authorization.tokens.expires_in;
+    const tokens = authorization.tokens;
+    const expiresIn = tokens.expires_in;
     // A delayed 401 for an older token must not rotate the current grant again.
     // Refresh expiring tokens early to leave headroom for the outbound request.
     if (
-      (!force || (rejected !== undefined && rejected !== authorization.tokens.access_token)) &&
-      (expires === undefined || Date.now() + 30_000 < authorization.receivedAt + expires * 1_000)
+      (!force || (rejected !== undefined && rejected !== tokens.access_token)) &&
+      (expiresIn === undefined ||
+        Date.now() + 30_000 < authorization.receivedAt + expiresIn * 1_000)
     ) {
-      return AuthResult.success(authorization.tokens.access_token);
+      return AuthResult.success(tokens.access_token);
     }
 
     if (this.signal.aborted)
       return AuthResult.failure("cancelled", "OAuth operation was cancelled.");
 
-    this.pending = this.refresh(authorization.tokens.access_token);
+    this.pending = this.refresh(tokens.access_token);
     try {
       return await this.pending;
     } finally {

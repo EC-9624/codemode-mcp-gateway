@@ -197,9 +197,10 @@ async function exchangeCallback(
     );
   }
 
+  const issuer = parameters.get("iss");
   try {
     validateAuthorizationResponseIssuer({
-      iss: parameters.get("iss") ?? undefined,
+      iss: issuer ?? undefined,
       expectedIssuer: discovery.issuer,
       issParameterSupported:
         discovery.metadata.authorization_response_iss_parameter_supported === true,
@@ -231,7 +232,7 @@ async function exchangeCallback(
       metadata: discovery.metadata,
       clientInformation: record.client,
       authorizationCode: code,
-      ...(parameters.has("iss") ? { iss: parameters.get("iss") ?? "" } : {}),
+      ...(issuer === null ? {} : { iss: issuer }),
       codeVerifier: verifier,
       redirectUri: record.redirectUri,
       ...(discovery.resource === null ? {} : { resource: discovery.resource }),

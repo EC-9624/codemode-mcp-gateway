@@ -47,26 +47,17 @@ describe("gateway discovery and partial availability", () => {
           if (request.method !== "POST") return;
 
           const body: unknown = await request.clone().json();
-          if (
-            typeof body === "object" &&
-            body !== null &&
-            "method" in body &&
-            body.method === "tools/list" &&
-            "id" in body
-          )
+          if (typeof body !== "object" || body === null || !("method" in body) || !("id" in body))
+            return;
+
+          if (body.method === "tools/list")
             return Response.json({
               jsonrpc: "2.0",
               id: body.id,
               result: { tools: [{ name, inputSchema: { type: "object" } }] },
             });
 
-          if (
-            typeof body === "object" &&
-            body !== null &&
-            "method" in body &&
-            body.method === "tools/call" &&
-            "id" in body
-          )
+          if (body.method === "tools/call")
             return Response.json({
               jsonrpc: "2.0",
               id: body.id,

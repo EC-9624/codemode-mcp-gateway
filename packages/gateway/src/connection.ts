@@ -5,7 +5,7 @@ import {
   InsufficientScopeError,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { ToolCatalog, ToolResult } from "@codemode-mcp-gateway/codemode";
+import { ToolCatalog, ToolResult, type ToolDefinition } from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { resolveHeaders, type ServerConfiguration } from "./config.ts";
 import { oauthConnection } from "./auth/credentials.ts";
@@ -270,7 +270,7 @@ function publicAuthFailures(
               throw cause;
             }
           },
-        } satisfies Parameters<typeof ToolCatalog.create>[0][string],
+        } satisfies ToolDefinition,
       ]),
     ),
   );
