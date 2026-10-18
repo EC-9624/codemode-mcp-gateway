@@ -2,12 +2,11 @@ import { type ToolCatalog } from "@codemode-mcp-gateway/codemode";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { type ServerConfiguration } from "./config.ts";
-import { connectUpstream, UpstreamError } from "./connection.ts";
+import { connectUpstream, UpstreamError, type ConnectionAuth } from "./connection.ts";
 import { GatewayError } from "./errors.ts";
 import { AuthorizationError } from "./auth/result.ts";
-import { credentialVersion, oauthConnection, type CredentialStore } from "./auth/credentials.ts";
+import { credentialVersion, oauthConnection, type CredentialOptions } from "./auth/credentials.ts";
 import { fileCredentialStore } from "./auth/file-store.ts";
-import { type CredentialOptions } from "./auth/login.ts";
 
 const statusBase = { name: z.string(), updatedAt: z.string() };
 const publicFailure = z.object({ kind: z.string(), message: z.string() });
@@ -49,7 +48,7 @@ export type ConnectionSnapshot = {
 export class Upstream {
   private state: State;
   private updatedAt = new Date().toISOString();
-  private readonly store: CredentialStore | undefined;
+  private readonly auth: ConnectionAuth;
   private version = credentialVersion(undefined);
   private readonly blocked = new Map<string, AuthorizationError>();
   private attempt = 0;
@@ -61,7 +60,7 @@ export class Upstream {
     private readonly config: ServerConfiguration,
     private readonly directory: string,
     private readonly signal: AbortSignal,
-    private readonly options: CredentialOptions,
+    options: CredentialOptions,
     private readonly events: {
       changed: () => void;
       status: (status: ServerStatus) => void;
@@ -70,7 +69,14 @@ export class Upstream {
   ) {
     this.state = { kind: config.disabled ? "disabled" : "connecting" };
     const oauth = oauthConnection(name, config);
-    this.store = oauth.ok ? (options.store ?? fileCredentialStore)(oauth.value) : undefined;
+    this.auth = oauth.ok
+      ? {
+          kind: "oauth",
+          connection: oauth.value,
+          store: (options.store ?? fileCredentialStore)(oauth.value),
+          lockDirectory: options.lockDirectory,
+        }
+      : { kind: "none" };
   }
 
   start(): Promise<void> {
@@ -118,8 +124,8 @@ export class Upstream {
   async recover(): Promise<void> {
     if (this.signal.aborted) return;
 
-    if (this.state.kind === "needs-auth" && this.store !== undefined) {
-      const loaded = await this.store.load();
+    if (this.state.kind === "needs-auth" && this.auth.kind === "oauth") {
+      const loaded = await this.auth.store.load();
       if (!loaded.ok || loaded.value?.authorization.status !== "authorized") return;
 
       if (credentialVersion(loaded.value) === this.version) return;
@@ -149,8 +155,9 @@ export class Upstream {
     this.update({ kind: "connecting" });
     let connection: Connection;
     try {
-      if (this.store !== undefined) {
-        const loaded = await this.store.load();
+      const auth = this.auth;
+      if (auth.kind === "oauth") {
+        const loaded = await auth.store.load();
         if (!loaded.ok) throw AuthorizationError.beforeExchange(loaded.error);
 
         this.version = credentialVersion(loaded.value);
@@ -159,59 +166,51 @@ export class Upstream {
       }
 
       this.signal.throwIfAborted();
-      const store = this.store;
       const blocked = this.blocked;
 
       // Old leased connections may invalidate a grant while its replacement is opening.
-      const guarded =
-        store === undefined
-          ? undefined
-          : ({
-              async load() {
-                const loaded = await store.load();
-                if (loaded.ok) {
-                  const failure = blocked.get(credentialVersion(loaded.value));
-                  if (failure !== undefined) throw failure;
-                }
+      const guarded: ConnectionAuth =
+        auth.kind === "none"
+          ? auth
+          : {
+              ...auth,
+              store: {
+                async load() {
+                  const loaded = await auth.store.load();
+                  if (loaded.ok) {
+                    const failure = blocked.get(credentialVersion(loaded.value));
+                    if (failure !== undefined) throw failure;
+                  }
 
-                return loaded;
+                  return loaded;
+                },
+                save: (value) => auth.store.save(value),
+                clear: () => auth.store.clear(),
               },
-              save: (value) => store.save(value),
-              clear: () => store.clear(),
-            } satisfies CredentialStore);
+            };
 
-      connection = await connectUpstream(
-        this.name,
-        this.config,
-        this.directory,
-        this.signal,
-        {
-          ...this.options,
-          ...(guarded === undefined ? {} : { store: () => guarded }),
+      connection = await connectUpstream(this.config, this.directory, this.signal, guarded, {
+        closed: () => {
+          if (this.signal.aborted || this.attempt !== attempt || this.state.kind !== "connected")
+            return;
+
+          this.unavailable({
+            kind: "connection",
+            message:
+              "Upstream connection closed or session expired; reconnection will be attempted automatically.",
+          });
         },
-        {
-          closed: () => {
-            if (this.signal.aborted || this.attempt !== attempt || this.state.kind !== "connected")
-              return;
+        authorization: {
+          failed: (error) => {
+            // A pre-exchange failure leaves this session and its refresh latch usable.
+            if (error.recovery === "retry") return;
 
-            this.unavailable({
-              kind: "connection",
-              message:
-                "Upstream connection closed or session expired; reconnection will be attempted automatically.",
-            });
+            if (!this.signal.aborted) this.authorizationFailed(error, attempt);
           },
-          authorization: {
-            failed: (error) => {
-              // A pre-exchange failure leaves this session and its refresh latch usable.
-              if (error.recovery === "retry") return;
-
-              if (!this.signal.aborted) this.authorizationFailed(error, attempt);
-            },
-            message: (error) =>
-              error.recovery === "retry" ? error.message : this.authMessage(error),
-          },
+          message: (error) =>
+            error.recovery === "retry" ? error.message : this.authMessage(error),
         },
-      );
+      });
     } catch (cause) {
       if (isCancellation(cause, this.signal)) return;
 

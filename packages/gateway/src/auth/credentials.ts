@@ -75,6 +75,12 @@ export type CredentialStore = {
   clear(): Promise<AuthResult<void>>;
 };
 
+/** Hosts may inject a scoped store; CLI commands use private file-backed credentials. */
+export type CredentialOptions = {
+  store?: (connection: OAuthConnection) => CredentialStore;
+  lockDirectory?: string;
+};
+
 export function oauthConnection(
   name: string,
   upstream: ServerConfiguration,

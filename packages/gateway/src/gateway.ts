@@ -1,8 +1,6 @@
 import {
   CodeExecutor,
   ToolCatalog,
-  ToolResult,
-  createDiscoveryTools,
   type ExecuteOptions,
   type SandboxTool,
   type ToolDefinition,
@@ -15,8 +13,8 @@ import { Upstream, type ConnectionSnapshot, type ServerStatus } from "./upstream
 import { executionInstructions } from "./instructions.ts";
 import { OutputFiles } from "./output.ts";
 import { GatewayError } from "./errors.ts";
-import { type CredentialOptions } from "./auth/login.ts";
-import { toolDefinitions } from "./catalog.ts";
+import { type CredentialOptions } from "./auth/credentials.ts";
+import { discoveryBindings, toolDefinitions } from "./catalog.ts";
 
 export { type ServerStatus } from "./upstream.ts";
 
@@ -177,42 +175,7 @@ export class Gateway implements AsyncDisposable {
     }
 
     const catalog = ToolCatalog.create(Object.fromEntries(definitions));
-    const discovery = createDiscoveryTools(catalog);
-    const statuses = this.status();
-
-    const tools: Readonly<Record<string, SandboxTool>> = {
-      ...catalog.tools,
-      ...discovery,
-      searchTools: (args) => {
-        let selected = discovery;
-        let servers = statuses;
-        if (
-          typeof args === "object" &&
-          args !== null &&
-          "server" in args &&
-          args.server !== undefined
-        ) {
-          if (typeof args.server !== "string")
-            return ToolResult.failure("searchTools server must be a server name string.");
-
-          const name = args.server;
-          servers = statuses.filter((status) => status.name === name);
-          if (servers.length === 0) return ToolResult.failure("Unknown server in this gateway.");
-
-          // Filtering ranked matches before pagination preserves server-local offsets.
-          selected = createDiscoveryTools({
-            ...catalog,
-            search: (query) =>
-              catalog.search(query).filter((tool) => tool.name.startsWith(`${name}.`)),
-          });
-        }
-
-        const result = selected.searchTools(args);
-        if (!result.ok) return result;
-
-        return ToolResult.success({ ...result.value, servers });
-      },
-    };
+    const tools = discoveryBindings(catalog, this.status());
 
     this.cached = { tools, connections };
 

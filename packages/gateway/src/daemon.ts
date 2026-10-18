@@ -4,7 +4,7 @@ import { Gateway } from "./gateway.ts";
 import { GatewayHttpServer } from "./http.ts";
 import { httpToken } from "./http-token.ts";
 import { GatewayError } from "./errors.ts";
-import { type CredentialOptions } from "./auth/login.ts";
+import { type CredentialOptions } from "./auth/credentials.ts";
 import { reportToolException } from "./diagnostics.ts";
 
 /** Foreground HTTP process; deployment and client configuration belong to the caller. */

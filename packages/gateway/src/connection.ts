@@ -8,12 +8,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ToolCatalog, ToolResult, type ToolDefinition } from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { resolveHeaders, type ServerConfiguration } from "./config.ts";
-import { oauthConnection } from "./auth/credentials.ts";
-import { fileCredentialStore } from "./auth/file-store.ts";
+import { type CredentialStore, type OAuthConnection } from "./auth/credentials.ts";
 import { OAuthSession } from "./auth/session.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import { GatewayError } from "./errors.ts";
-import { type CredentialOptions } from "./auth/login.ts";
 import { toolDefinitions } from "./catalog.ts";
 
 export class UpstreamError extends GatewayError {
@@ -34,13 +32,22 @@ type ConnectionEvents = {
   };
 };
 
+/** Resolved by the upstream owner; connection setup does not select or construct stores. */
+export type ConnectionAuth =
+  | { kind: "none" }
+  | {
+      kind: "oauth";
+      connection: OAuthConnection;
+      store: CredentialStore;
+      lockDirectory: string | undefined;
+    };
+
 /** Opens one connection; the returned disposable owns its catalog, transport, and OAuth session. */
 export async function connectUpstream(
-  name: string,
   upstream: ServerConfiguration,
   directory: string,
   signal: AbortSignal,
-  options: CredentialOptions,
+  auth: ConnectionAuth,
   events: ConnectionEvents,
 ) {
   // Partial setup failures await registered cleanup in reverse order before rejecting.
@@ -57,15 +64,12 @@ export async function connectUpstream(
     recovery.failed(error);
   };
 
-  if (upstream.type === "remote" && upstream.oauth) {
-    const connection = oauthConnection(name, upstream);
-    if (!connection.ok) throw new AuthorizationError(connection.error);
-
+  if (auth.kind === "oauth") {
     const opened = await OAuthSession.open(
-      connection.value,
-      (options.store ?? fileCredentialStore)(connection.value),
+      auth.connection,
+      auth.store,
       handshake,
-      options.lockDirectory,
+      auth.lockDirectory,
       authorizationFailed,
     );
 

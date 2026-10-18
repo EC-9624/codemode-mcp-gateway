@@ -1,7 +1,8 @@
 import { dirname } from "node:path";
 import { z } from "zod";
 import { serve } from "./server.ts";
-import { login, logout, type CredentialOptions } from "./auth/login.ts";
+import { login, logout } from "./auth/login.ts";
+import { type CredentialOptions } from "./auth/credentials.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import { GatewayError } from "./errors.ts";
 import {

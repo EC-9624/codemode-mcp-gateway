@@ -1,16 +1,15 @@
 import { authenticationTarget, readConfiguration } from "../config.ts";
-import { oauthConnection, type CredentialStore, type OAuthConnection } from "./credentials.ts";
+import {
+  oauthConnection,
+  type CredentialOptions,
+  type CredentialStore,
+  type OAuthConnection,
+} from "./credentials.ts";
 import { fileCredentialStore } from "./file-store.ts";
 import { acquireLease } from "./lease.ts";
 import { authorize, isInvalidClient, oauthFailure } from "./oauth.ts";
 import { AuthResult } from "./result.ts";
 import { isDeepStrictEqual } from "node:util";
-
-/** Hosts may inject a scoped store; CLI commands use private file-backed credentials. */
-export type CredentialOptions = {
-  store?: (connection: OAuthConnection) => CredentialStore;
-  lockDirectory?: string;
-};
 
 export type LoginOptions = CredentialOptions & {
   server?: string;

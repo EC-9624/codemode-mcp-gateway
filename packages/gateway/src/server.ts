@@ -12,7 +12,7 @@
 import { dirname } from "node:path";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { readConfiguration } from "./config.ts";
-import { type CredentialOptions } from "./auth/login.ts";
+import { type CredentialOptions } from "./auth/credentials.ts";
 import { Gateway } from "./gateway.ts";
 import { reportServerError, reportToolException } from "./diagnostics.ts";
 

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { Configuration, Gateway } from "codemode-mcp-gateway";
+import { Configuration, Gateway, type CredentialOptions } from "codemode-mcp-gateway";
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
 import { connect } from "./support/gateway.ts";
-import { responseValue } from "./support/output.ts";
+import { responseText, responseValue } from "./support/output.ts";
 
 const localCommand = [
   process.execPath,
@@ -144,6 +144,42 @@ describe("gateway discovery and partial availability", () => {
     });
   });
 
+  test.each([
+    {
+      name: "a non-string",
+      server: 42,
+      message: "searchTools server must be a server name string.",
+    },
+    {
+      name: "an unknown",
+      server: "absent",
+      message: "Unknown server in this gateway.",
+    },
+  ])(
+    "rejects $name server filter rather than searching all servers",
+    async ({ server, message }) => {
+      await using gateway = new Gateway(
+        Configuration.parse({
+          mcp: { servers: { notes: { type: "local", command: ["unused"], disabled: true } } },
+        }),
+        ".",
+      );
+
+      await gateway.start();
+      await using agent = await connect(gateway.createServer());
+
+      const response = await agent.client.callTool({
+        name: "execute",
+        arguments: {
+          code: `return await tools.searchTools({ query: "add", server: ${JSON.stringify(server)} });`,
+        },
+      });
+
+      expect(response.isError).toBe(true);
+      expect(responseText(response)).toBe(message);
+    },
+  );
+
   test("namespaces duplicate tool names across stdio and HTTP without changing their schemas", async () => {
     const received: unknown[] = [];
 
@@ -165,6 +201,11 @@ describe("gateway discovery and partial availability", () => {
 
     const credentials = memoryCredentials(upstream.credentials());
 
+    const options = {
+      store: () => credentials.store,
+      lockDirectory: upstream.lockDirectory,
+    } satisfies CredentialOptions;
+
     await using gateway = new Gateway(
       Configuration.parse({
         mcp: {
@@ -175,7 +216,7 @@ describe("gateway discovery and partial availability", () => {
         },
       }),
       ".",
-      { store: () => credentials.store, lockDirectory: upstream.lockDirectory },
+      options,
     );
 
     await gateway.start();

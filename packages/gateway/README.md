@@ -600,8 +600,10 @@ can also cancel a stalled handshake or discovery.
 
 In repository source, `src/cli.ts` is the executable entry; `src/main.ts` handles
 arguments and exit status. `src/gateway.ts` composes catalog snapshots and the executor;
-`src/upstream.ts` owns each server's recovery state and retained connections,
-while `src/connection.ts` opens and cleans up one transport/OAuth session.
+`src/catalog.ts` binds discovery to each fixed catalog/status revision.
+`src/upstream.ts` selects credential stores and owns each server's recovery state and
+retained connections, while `src/connection.ts` opens and cleans up one transport/OAuth
+session using resolved authentication inputs.
 Gateway startup and recovery passes are serialized, so no separate connection-attempt registry is needed.
 `src/server.ts` explains stdio startup and cleanup ordering beside the code.
 `src/daemon.ts` owns the foreground HTTP process; it does not supervise
