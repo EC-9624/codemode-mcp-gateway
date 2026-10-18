@@ -158,7 +158,7 @@ describe("fileCredentialStore", () => {
       ok: false,
       error: {
         kind: "invalid",
-        message: "Stored OAuth credentials are invalid. Run gw logout, then gw login.",
+        message: "Stored OAuth credentials are invalid. Run gw auth logout, then gw auth login.",
       },
     });
     expect(await store.clear()).toMatchObject({ ok: true });

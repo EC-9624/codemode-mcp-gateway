@@ -36,12 +36,14 @@ equal(prepared.code, 0);
 equal(prepared.stderr, "");
 ok(prepared.stdout.includes("Configuration is not ready"));
 const tokenFile = join(environment.XDG_STATE_HOME, "codemode-mcp-gateway/token");
+equal(await Bun.file(tokenFile).exists(), false);
+equal((await run(["setup", "--transport", "http"])).code, 0);
 const token = (await Bun.file(tokenFile).text()).trim();
 ok(/^[a-f0-9]{64}$/.test(token));
 equal((await stat(tokenFile)).mode & 0o777, 0o600);
 ok(!prepared.stdout.includes(token));
-deepEqual(await run(["token"]), { code: 0, stdout: token + "\n", stderr: "" });
-equal((await run(["setup"])).code, 0);
+deepEqual(await run(["token", "show"]), { code: 0, stdout: token + "\n", stderr: "" });
+equal((await run(["setup", "--transport", "http"])).code, 0);
 equal((await Bun.file(tokenFile).text()).trim(), token);
 
 const started = Promise.withResolvers<void>();
@@ -134,7 +136,7 @@ const diagnostics = (async () => {
 })();
 
 await bounded(ready.promise, "Standalone gateway did not connect its upstream.");
-equal((await run(["doctor", "--json"])).code, 0);
+equal((await run(["status", "--json"])).code, 0);
 
 const agent = new Client({ name: "standalone-http-probe", version: "1" });
 cleanup.defer(() => agent.close());
@@ -173,7 +175,7 @@ deepEqual(await agent.callTool({ name: "execute", arguments: { code: "return 43;
 });
 await agent.close();
 child.kill("SIGTERM");
-equal(await bounded(child.exited, "Standalone HTTP process did not shut down."), 0);
+equal(await bounded(child.exited, "Standalone HTTP process did not shut down."), 143);
 ok(!(await diagnostics).includes(token));
 equal(await new Response(child.stdout).text(), "");
 
@@ -188,7 +190,7 @@ const stdio = new Client({ name: "standalone-stdio-probe", version: "1" });
 
 const transport = new StdioClientTransport({
   command: binary,
-  args: ["serve", "--stdio", "--config", stdioConfig],
+  args: ["serve", "--transport", "stdio", "--config", stdioConfig],
   cwd: directory,
   env: { ...environment, GW_HTTP_TOKEN: "invalid-but-unused-in-stdio" },
   stderr: "pipe",

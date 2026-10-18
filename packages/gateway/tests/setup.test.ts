@@ -7,14 +7,49 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const token = "synthetic-setup-persistent-token-0123456789";
 
-test("explicit setup creates private gateway files without configuring MCP clients or claiming readiness", async () => {
+test("default setup creates only a private configuration and explains explicit HTTP preparation and stdio", async () => {
+  await using files = await fixture();
+
+  const result = await files.run(["setup"]);
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toContain("gw setup --transport http, then gw serve");
+  expect(result.stdout).toContain("gw serve --transport stdio");
+  expect(result.stdout).toContain("Stdio needs no gateway HTTP token");
+  expect(result.stdout).not.toContain("Client endpoint:");
+  expect(await Bun.file(files.config).json()).toEqual({ mcp: { servers: {} } });
+  expect((await lstat(files.config)).mode & 0o777).toBe(0o600);
+  expect(await Bun.file(files.token).exists()).toBe(false);
+  expect(await readdir(files.directory)).not.toContain("state");
+});
+
+test("stdio setup ignores invalid HTTP settings without reading or replacing the saved token", async () => {
+  await using files = await fixture();
+  await files.saveToken("invalid-file-token");
+  const original = await lstat(files.token);
+
+  const result = await files.run(["setup", "--transport", "stdio"], {
+    GW_HTTP_TOKEN: "invalid-environment-token",
+    XDG_STATE_HOME: "relative-state",
+  });
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).not.toContain("invalid-file-token");
+  expect(result.stdout).not.toContain("invalid-environment-token");
+  expect(await Bun.file(files.token).text()).toBe("invalid-file-token\n");
+  expect((await lstat(files.token)).ino).toBe(original.ino);
+});
+
+test("explicit HTTP setup creates private gateway files without configuring MCP clients or claiming readiness", async () => {
   await using files = await fixture();
   const codex = join(files.directory, ".codex/config.toml");
   const claude = join(files.directory, ".claude.json");
   await Bun.write(codex, "user-owned TOML\n");
   await Bun.write(claude, "user-owned JSON\n");
 
-  const result = await files.run(["setup"]);
+  const result = await files.run(["setup", "--transport", "http"]);
   const saved = (await Bun.file(files.token).text()).trim();
 
   expect(result.code).toBe(0);
@@ -38,7 +73,7 @@ test("explicit setup creates private gateway files without configuring MCP clien
   ).toBe(false);
 });
 
-test("repeated setup preserves the existing configuration and token without connecting upstreams", async () => {
+test("repeated HTTP setup preserves the existing configuration and token without connecting upstreams", async () => {
   await using files = await fixture();
 
   const config =
@@ -48,7 +83,7 @@ test("repeated setup preserves the existing configuration and token without conn
   await files.saveToken(token);
   const original = await lstat(files.token);
 
-  const result = await files.run(["setup"]);
+  const result = await files.run(["setup", "--transport", "http"]);
 
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("Kept existing configuration");
@@ -87,11 +122,15 @@ test("setup preserves an existing symlinked user configuration", async () => {
   expect(await Bun.file(target).text()).toBe("user-owned config\n");
 });
 
-test("concurrent setup keeps one complete persistent token", async () => {
+test("concurrent HTTP setup keeps one complete persistent token", async () => {
   await using files = await fixture();
 
-  const results = await Promise.all([files.run(["setup"]), files.run(["setup"])]);
-  const shown = await files.run(["token"]);
+  const results = await Promise.all([
+    files.run(["setup", "--transport", "http"]),
+    files.run(["setup", "--transport", "http"]),
+  ]);
+
+  const shown = await files.run(["token", "show"]);
 
   expect(results.map((result) => result.code)).toEqual([0, 0]);
   expect(shown.code).toBe(0);
@@ -100,11 +139,11 @@ test("concurrent setup keeps one complete persistent token", async () => {
   expect(await readdir(files.state)).toEqual(["token"]);
 });
 
-test("token explicitly reveals a stored credential without needing configuration", async () => {
+test("token show explicitly reveals a stored credential without needing configuration", async () => {
   await using files = await fixture();
   await files.saveToken(token);
 
-  const result = await files.run(["token"]);
+  const result = await files.run(["token", "show"]);
 
   expect(result).toEqual({ code: 0, stdout: token + "\n", stderr: "" });
   expect(await Bun.file(files.config).exists()).toBe(false);
@@ -113,8 +152,8 @@ test("token explicitly reveals a stored credential without needing configuration
 test("environment-managed setup does not create a second credential", async () => {
   await using files = await fixture();
 
-  const result = await files.run(["setup"], { GW_HTTP_TOKEN: token });
-  const shown = await files.run(["token"], { GW_HTTP_TOKEN: token });
+  const result = await files.run(["setup", "--transport", "http"], { GW_HTTP_TOKEN: token });
+  const shown = await files.run(["token", "show"], { GW_HTTP_TOKEN: token });
 
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("using GW_HTTP_TOKEN (not saved)");
@@ -127,7 +166,7 @@ test("a valid environment override ignores an unusable stored token", async () =
   await using files = await fixture();
   await files.saveToken("invalid-file-token");
 
-  const result = await files.run(["token"], { GW_HTTP_TOKEN: token });
+  const result = await files.run(["token", "show"], { GW_HTTP_TOKEN: token });
 
   expect(result).toEqual({ code: 0, stdout: token + "\n", stderr: "" });
   expect(await Bun.file(files.token).text()).toBe("invalid-file-token\n");
@@ -144,7 +183,7 @@ test.each([
     await using files = await fixture();
     await files.saveToken(token);
 
-    const result = await files.run(["setup"], { GW_HTTP_TOKEN: value });
+    const result = await files.run(["setup", "--transport", "http"], { GW_HTTP_TOKEN: value });
 
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
@@ -159,11 +198,11 @@ test.each([
 test.each([
   { name: "invalid", contents: "private-invalid-token" },
   { name: "oversized", contents: "x".repeat(259) },
-])("setup refuses an $name saved credential without replacing it", async ({ contents }) => {
+])("HTTP setup refuses an $name saved credential without replacing it", async ({ contents }) => {
   await using files = await fixture();
   await files.saveToken(contents);
 
-  const result = await files.run(["setup"]);
+  const result = await files.run(["setup", "--transport", "http"]);
 
   expect(result.code).toBe(1);
   expect(result.stdout).toBe("");
@@ -174,14 +213,14 @@ test.each([
   expect(await Bun.file(files.config).exists()).toBe(false);
 });
 
-test("setup refuses a symlinked token file without touching its target", async () => {
+test("HTTP setup refuses a symlinked token file without touching its target", async () => {
   await using files = await fixture();
   const target = join(files.directory, "private-token");
   await Bun.write(target, token + "\n");
   await mkdir(files.state, { recursive: true, mode: 0o700 });
   await symlink(target, files.token);
 
-  const result = await files.run(["setup"]);
+  const result = await files.run(["setup", "--transport", "http"]);
 
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("non-symlinked private file");
@@ -194,13 +233,13 @@ test.each([
   { name: "directory", suffix: "", mode: 0o755, message: "mode 0700" },
   { name: "file", suffix: "/token", mode: 0o644, message: "mode 0600" },
 ])(
-  "setup refuses a nonprivate token $name without fixing permissions silently",
+  "HTTP setup refuses a nonprivate token $name without fixing permissions silently",
   async ({ suffix, mode, message }) => {
     await using files = await fixture();
     await files.saveToken(token);
     await chmod(files.state + suffix, mode);
 
-    const result = await files.run(["setup"]);
+    const result = await files.run(["setup", "--transport", "http"]);
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(message);
@@ -210,14 +249,14 @@ test.each([
   },
 );
 
-test("setup refuses a symlinked token directory without writing into it", async () => {
+test("HTTP setup refuses a symlinked token directory without writing into it", async () => {
   await using files = await fixture();
   const target = join(files.directory, "private-state");
   await mkdir(target, { mode: 0o700 });
   await mkdir(join(files.directory, "state"));
   await symlink(target, files.state);
 
-  const result = await files.run(["setup"]);
+  const result = await files.run(["setup", "--transport", "http"]);
 
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("not symlinked");
@@ -262,10 +301,12 @@ test("setup reports an obstructed configuration directory without claiming succe
   expect(await Bun.file(parent).text()).toBe("user-owned file\n");
 });
 
-test("setup rejects a relative state home without creating files", async () => {
+test("HTTP setup rejects a relative state home without creating files", async () => {
   await using files = await fixture();
 
-  const result = await files.run(["setup"], { XDG_STATE_HOME: "relative-state" });
+  const result = await files.run(["setup", "--transport", "http"], {
+    XDG_STATE_HOME: "relative-state",
+  });
 
   expect(result).toEqual({
     code: 1,
@@ -279,12 +320,12 @@ test("setup rejects a relative state home without creating files", async () => {
 test("reading a missing token explains setup without creating any state", async () => {
   await using files = await fixture();
 
-  const result = await files.run(["token"]);
+  const result = await files.run(["token", "show"]);
 
   expect(result).toEqual({
     code: 1,
     stdout: "",
-    stderr: "No HTTP token is configured. Run gw setup or set GW_HTTP_TOKEN.\n",
+    stderr: "No HTTP token is configured. Run gw setup --transport http or set GW_HTTP_TOKEN.\n",
   });
   expect(await Bun.file(files.token).exists()).toBe(false);
 });

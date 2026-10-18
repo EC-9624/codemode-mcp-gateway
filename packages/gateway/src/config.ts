@@ -125,7 +125,9 @@ export function authenticationTarget(
   );
 
   if (candidates.length !== 1 || candidates[0] === undefined) {
-    throw new GatewayError("Select an OAuth server with --server <name>.");
+    throw new GatewayError(
+      "Select an OAuth server with gw auth login <server> or gw auth logout <server>.",
+    );
   }
 
   return { name: candidates[0][0], config: candidates[0][1] };

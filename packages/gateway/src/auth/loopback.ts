@@ -13,7 +13,7 @@ export async function listenForCallback(state: string, signal: AbortSignal, port
       AuthResult.failure(
         "cancelled",
         signal.reason instanceof DOMException && signal.reason.name === "TimeoutError"
-          ? "OAuth login timed out. Run gw login again."
+          ? "OAuth login timed out. Run gw auth login again."
           : "OAuth login was cancelled.",
       ),
     );

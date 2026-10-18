@@ -48,7 +48,7 @@ export function fileCredentialStore(
       } catch (cause) {
         return AuthResult.failure(
           "invalid",
-          "Stored OAuth credentials are invalid. Run gw logout, then gw login.",
+          "Stored OAuth credentials are invalid. Run gw auth logout, then gw auth login.",
           cause,
         );
       }
@@ -57,7 +57,7 @@ export function fileCredentialStore(
       if (!parsed.success || parsed.data.upstreamUrl !== location.value.url)
         return AuthResult.failure(
           "invalid",
-          "Stored OAuth credentials do not match this connection. Run gw logout, then gw login.",
+          "Stored OAuth credentials do not match this connection. Run gw auth logout, then gw auth login.",
         );
 
       return AuthResult.success(parsed.data);

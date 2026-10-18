@@ -267,7 +267,7 @@ function publicAuthFailures(
 
               if (cause instanceof InsufficientScopeError) {
                 return ToolResult.failure(
-                  "The upstream denied this operation's scope. Use an account with permission and explicitly run gw login if additional consent is required.",
+                  "The upstream denied this operation's scope. Use an account with permission and explicitly run gw auth login if additional consent is required.",
                 );
               }
 

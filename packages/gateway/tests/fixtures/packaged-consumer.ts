@@ -69,7 +69,13 @@ if (binary === undefined || config === undefined)
   throw new Error("Expected packaged CLI and configuration paths.");
 
 const cli = new Client({ name: "packed-cli", version: "1" });
-const transport = new StdioClientTransport({ command: binary, args: [config], stderr: "pipe" });
+
+const transport = new StdioClientTransport({
+  command: binary,
+  args: ["serve", "--transport", "stdio", "--config", config],
+  stderr: "pipe",
+});
+
 const closed = Promise.withResolvers<void>();
 transport.onclose = () => closed.resolve();
 const connecting = cli.connect(transport, { timeout: 5_000 });

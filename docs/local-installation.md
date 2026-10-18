@@ -47,14 +47,39 @@ login; serving reads and refreshes saved grants without Keychain prompts.
 ## Prepare gateway files explicitly
 
 ```sh
-gw setup
+gw setup --transport http
 # Edit the displayed configuration to add your upstream MCP servers.
-gw check
-gw login --server notion  # Only if you configured an OAuth server named notion.
-gw serve
+gw config check
+gw auth login notion  # Only if you configured an OAuth server named notion.
+gw probe              # Optional fresh connectivity check; closes its connections.
+gw serve              # Default HTTP service; keep this terminal running.
 ```
 
-`setup` creates only missing gateway files:
+Default `setup` prepares only a mode-0600 starter configuration at
+`~/.config/codemode-mcp-gateway/config.json`. Its empty `mcp.servers` object deliberately
+does not validate as runnable until you add upstream definitions. It does not read
+or create HTTP credentials, even if HTTP environment settings or saved tokens are invalid.
+
+HTTP clients connect to `http://127.0.0.1:4791/mcp` with the saved gateway token.
+See [Configure clients yourself](#configure-clients-yourself) below for Codex and
+Claude Code configuration. `gw serve` defaults to HTTP and must remain running.
+
+For optional client-owned stdio instead, configure your client to launch:
+
+```json
+{
+  "command": "/absolute/path/to/gw",
+  "args": ["serve", "--transport", "stdio"]
+}
+```
+
+`gw serve --transport stdio` gives each client launch an independent gateway,
+executor budget, and upstream connections. It requires no gateway bearer token or
+listening port. Stdout is exclusively MCP; diagnostics go to stderr. Closing stdin
+requests cleanup, as do SIGINT/SIGTERM. Saved upstream OAuth credentials are still
+required and can be shared by independent gateway processes.
+
+For explicit HTTP use, `gw setup --transport http` creates only missing gateway files:
 
 - `~/.config/codemode-mcp-gateway/config.json`: a mode-0600 starter with an empty
   `mcp.servers` object. Add upstream definitions yourself; this starter deliberately
@@ -71,15 +96,18 @@ Preparation is not a transaction across the two files: if a later step fails,
 rerun setup to reuse already-created files safely. Concurrent setups publish one
 complete token without replacing each other's credentials.
 
-Configuration resolves from `--config` or a positional path, then
+Configuration resolves from `--config <path>` / `-c`, then
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise
 `~/.config/codemode-mcp-gateway/config.json`. Local `cwd` defaults to the configuration
 directory; relative `cwd` resolves from there, and command arguments pass through
 unchanged. Token storage honors `XDG_STATE_HOME`, otherwise
 `~/.local/state`; it is independent of the config path. Empty XDG variables use
 the home fallback; relative paths are rejected. `service.port` defaults to 4791.
-Use the same `--config` path for setup/check/login/serve when choosing a nondefault
-configuration. `gw token` needs no configuration.
+Use the same `--config` path for setup, config check, auth login, and serve when choosing a nondefault
+configuration. `gw token show` needs no configuration and accepts no `--config`.
+Legacy positional paths and command aliases are not supported. Server selection
+is positional: `gw probe notion`, `gw auth login notion`, or `gw status notion`.
+Put options first and use `-- <server>` for leading-hyphen server names.
 
 To update, stop the gateway, replace the executable, and start it again. The files
 above and upstream credential files are separate from the binary and remain intact.
@@ -104,15 +132,20 @@ build/dependency tree before running the installed executable.
 
 ## HTTP authentication
 
-`gw serve` and live `gw doctor` use an explicitly supplied `GW_HTTP_TOKEN` first,
+HTTP is the default and loopback-only; remote network hosting is not implemented.
+Run `gw setup --transport http`, configure your upstreams, and start
+`gw serve --transport http`. `gw status [server]` reads only that running process;
+it never opens upstream connections or inspects a stdio process.
+
+`gw serve --transport http` and `gw status` use an explicitly supplied `GW_HTTP_TOKEN` first,
 otherwise the private setup-created token. An empty or invalid environment override
 is an error, not a request to fall back. Overrides must contain 32–256 letters,
 digits, underscores, or hyphens. Generate a high-entropy value if managing one
 yourself and supply it unchanged after restarts. Environment-managed setup validates
 the supplied value but does not persist it or create a competing credential.
 
-Serving and diagnostics never provision credentials or display them. `gw setup`
-reports only the token-file path. **`gw token` explicitly prints the effective
+Serving and diagnostics never provision credentials or display them. `gw setup --transport http`
+reports only the token-file path. **`gw token show` explicitly prints the effective
 secret to stdout** for manual client registration; do not send its output to logs
 or commit it. The token is never accepted as a CLI argument or gateway JSON setting.
 Keep token files, client headers, and process environments private and outside Git.
@@ -139,7 +172,7 @@ by Host and Origin validation. `GET /health` returns unauthenticated liveness on
 instance ID, uptime, session count, and observed upstream states—not credentials,
 installation details, or client-registration outcomes.
 
-Live doctor checks send the bearer token to the configured loopback port, reject
+Live status requests send the bearer token to the configured loopback port, reject
 redirects, and validate response JSON. They do not use signed status proofs or
 authenticate the server's identity. **A different local process owning that port
 can capture the persistent token and impersonate MCP/status responses.** Host/Origin
@@ -154,7 +187,7 @@ The following values are placeholders, not usable credentials.
 
 ### Codex
 
-In a private Codex `config.toml`:
+In private `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`), merge this entry:
 
 ```toml
 [mcp_servers.codemode-mcp-gateway]
@@ -164,7 +197,8 @@ http_headers = { Authorization = "Bearer <your-private-token>" }
 
 ### Claude Code
 
-In your private user MCP configuration:
+In private `~/.claude.json`, merge this into the existing user-level `mcpServers`
+object without replacing unrelated entries:
 
 ```json
 {
@@ -185,7 +219,7 @@ wrapper or bridge. Already-running clients may need to reload configuration.
 
 ## Lifetime and upstream authorization
 
-`gw serve` stays in the foreground until SIGINT/SIGTERM or an infrastructure failure;
+`gw serve --transport http` stays in the foreground until SIGINT/SIGTERM or an infrastructure failure;
 stdin EOF and closing an MCP client do not stop it. An occupied port fails without
 probing, replacing, or adopting the owner, and before upstream connections start.
 Choose an external supervisor if you need login startup or crash recovery.
@@ -195,24 +229,31 @@ removes its output without affecting other clients. Open requests/event streams
 retain sessions; disconnected sessions receive a 60-second retirement grace.
 Crashes can leave output behind. Scripts are never automatically replayed.
 
-`gw serve --stdio` retains direct client-owned stdio and requires no gateway HTTP
-token. `gw doctor --stdio` explicitly probes fresh upstream connections; ordinary
-`gw doctor` reads the running HTTP gateway rather than starting another set.
+`gw probe [server]` explicitly opens and closes fresh upstream connections and
+needs no gateway HTTP token. `gw status [server]` reads the running HTTP gateway
+rather than starting another set. Neither command changes saved configuration.
 
 ```sh
-bun run gw login --config packages/gateway/examples/multi.json --server notion
-bun run gw doctor --stdio --config packages/gateway/examples/multi.json --json
+bun run gw auth login notion --config packages/gateway/examples/multi.json
+bun run gw probe --config packages/gateway/examples/multi.json --json
 ```
 
 Login remains explicit and interactive. Serving loads saved upstream credentials
 and refreshes noninteractively. Missing grants yield `needs-auth`; other upstreams
 remain usable. Logout removes local upstream credentials, not the provider grant.
 
+`config check`, `probe`, and `status` accept `--json` for one result, including
+operational failures. Argument errors go to stderr. Exit codes are 0 for success,
+1 for operational failure, 2 for invalid arguments, 130 for SIGINT, and 143 for
+SIGTERM after cleanup. `probe` fails when enabled upstreams cannot connect;
+`status` succeeds when status is retrieved, even if upstreams are degraded.
+`gw help <command...>` and `<command> --help` show focused help without side effects.
+
 ## Migrating from gateway-managed installation
 
 - Stop and unregister any previously installed launchd job using your OS tools
   before starting this build. The retired `gw service` commands are unavailable.
-- Choose your executable path and run `gw setup`, or keep using an explicit
+- Choose your executable path and run `gw setup --transport http`, or keep using an explicit
   persistent `GW_HTTP_TOKEN` override.
 - Replace the old instance-derived bearer header in your clients with that token.
   Old service `auth.json` keys and native headers are not imported or migrated.
@@ -222,7 +263,7 @@ remain usable. Logout removes local upstream credentials, not the provider grant
   stores grants under `codemode-mcp-gateway/credentials` and locks under
   `codemode-mcp-gateway/locks`, both below the XDG state root. Old `cmg/locks` files
   are not reused. Stop old processes before switching builds.
-- Run `gw login --server <name>` again for existing OAuth servers after switching
+- Run `gw auth login <server>` again for existing OAuth servers after switching
   from Keychain/libsecret storage. Old OS credentials are not imported, read, or deleted.
 
 Historical validation of the retired installer, automatic registration, and OS

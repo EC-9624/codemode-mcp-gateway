@@ -70,7 +70,7 @@ test("the supplied HTTP token remains usable across process restarts", async () 
   expect(await second.logs).not.toContain(token);
 });
 
-test("HTTP serving and live doctor use the private token file without an environment variable", async () => {
+test("HTTP serving and status use the private token file without an environment variable", async () => {
   await using files = await fixture();
   const directory = join(files.directory, "codemode-mcp-gateway");
   await mkdir(directory, { mode: 0o700 });
@@ -87,15 +87,40 @@ test("HTTP serving and live doctor use the private token file without an environ
     (await agent.client.callTool({ name: "execute", arguments: { code: "return 42;" } })).content,
   ).toEqual([{ type: "text", text: "42" }]);
 
-  const doctor = files.spawn(["doctor", "--config", files.config, "--json"], {
+  const status = files.spawn(["status", "--config", files.config, "--json"], {
     GW_HTTP_TOKEN: undefined,
   });
 
-  const output = new Response(doctor.stdout).json();
-  expect(await doctor.exited).toBe(0);
+  const output = new Response(status.stdout).json();
+  expect(await status.exited).toBe(0);
   expect(await output).toMatchObject({ ok: true, service: { pid: second.child.pid } });
   expect(await Bun.file(path).text()).toBe(token + "\n");
   await second.stop();
+});
+
+test("status succeeds when it reads a failed upstream without probing another connection", async () => {
+  await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: { servers: { missing: { type: "local", command: ["must-not-exist"] } } },
+    }),
+  );
+  const app = await start(files, {}, '"state":"failed"');
+
+  const status = files.spawn(["status", "--config", files.config, "--json"]);
+  const output = new Response(status.stdout).json();
+  const diagnostics = new Response(status.stderr).text();
+
+  expect(await status.exited).toBe(0);
+  expect(await output).toMatchObject({
+    ok: true,
+    servers: [{ name: "missing", state: "failed" }],
+    service: { pid: app.child.pid },
+  });
+  expect(await diagnostics).toBe("");
+  await app.stop();
 });
 
 test("explicit token rotation rejects the previous token after restart", async () => {
@@ -154,7 +179,7 @@ test.each([
   {
     name: "missing",
     value: undefined,
-    message: "No HTTP token is configured. Run gw setup or set GW_HTTP_TOKEN.\n",
+    message: "No HTTP token is configured. Run gw setup --transport http or set GW_HTTP_TOKEN.\n",
   },
   { name: "empty", value: "" },
   { name: "short", value: "synthetic-secret-too-short" },
@@ -162,7 +187,11 @@ test.each([
   { name: "invalid characters", value: "synthetic-private-token-with-a space" },
 ])("HTTP serving refuses a $name token without creating state", async ({ value, message }) => {
   await using files = await fixture();
-  const child = files.spawn(["serve", "--config", files.config], { GW_HTTP_TOKEN: value });
+
+  const child = files.spawn(["serve", "--transport", "http", "--config", files.config], {
+    GW_HTTP_TOKEN: value,
+  });
+
   const logs = new Response(child.stderr).text();
   const output = new Response(child.stdout).text();
 
@@ -198,7 +227,7 @@ test("an occupied port fails without probing its owner or starting upstream conn
       mcp: { servers: { mustNotStart: { type: "local", command: ["nonexistent-upstream"] } } },
     }),
   );
-  const child = files.spawn(["serve", "--config", files.config]);
+  const child = files.spawn(["serve", "--transport", "http", "--config", files.config]);
   const logs = new Response(child.stderr).text();
 
   expect(await child.exited).toBe(1);
@@ -212,7 +241,7 @@ test("a second serve fails instead of adopting the running gateway", async () =>
   await using files = await fixture();
   const app = await start(files);
 
-  const child = files.spawn(["serve", "--config", files.config]);
+  const child = files.spawn(["serve", "--transport", "http", "--config", files.config]);
   const logs = new Response(child.stderr).text();
 
   expect(await child.exited).toBe(1);
@@ -221,26 +250,26 @@ test("a second serve fails instead of adopting the running gateway", async () =>
   await app.stop();
 });
 
-test("foreground HTTP serving survives stdin EOF and doctor reads its actual upstream status", async () => {
+test("foreground HTTP serving survives stdin EOF and status reads its actual upstream state", async () => {
   await using files = await fixture();
   const app = await start(files);
   await app.child.stdin.end();
-  const diagnostic = join(files.directory, "doctor.json");
+  const diagnostic = join(files.directory, "status.json");
   await Bun.write(
     diagnostic,
     JSON.stringify({
       service: { port: files.port },
       mcp: {
-        servers: { mustNotStart: { type: "local", command: ["nonexistent-doctor-upstream"] } },
+        servers: { mustNotStart: { type: "local", command: ["nonexistent-status-upstream"] } },
       },
     }),
   );
 
-  const doctor = files.spawn(["doctor", "--config", diagnostic, "--json"]);
-  const output = new Response(doctor.stdout).json();
-  const diagnostics = new Response(doctor.stderr).text();
+  const status = files.spawn(["status", "--config", diagnostic, "--json"]);
+  const output = new Response(status.stdout).json();
+  const diagnostics = new Response(status.stderr).text();
 
-  expect(await doctor.exited).toBe(0);
+  expect(await status.exited).toBe(0);
   expect(await output).toMatchObject({
     ok: true,
     service: { ready: true, pid: app.child.pid },
@@ -250,17 +279,17 @@ test("foreground HTTP serving survives stdin EOF and doctor reads its actual ups
   await app.stop();
 });
 
-test("doctor reports a mismatched persistent token without displaying it", async () => {
+test("status reports a mismatched persistent token without displaying it", async () => {
   await using files = await fixture();
   const app = await start(files);
 
-  const doctor = files.spawn(["doctor", "--config", files.config, "--json"], {
+  const status = files.spawn(["status", "--config", files.config, "--json"], {
     GW_HTTP_TOKEN: "synthetic-wrong-http-token-9876543210",
   });
 
-  const output = new Response(doctor.stdout).json();
+  const output = new Response(status.stdout).json();
 
-  expect(await doctor.exited).toBe(1);
+  expect(await status.exited).toBe(1);
   expect(await output).toEqual({
     ok: false,
     error: {
@@ -271,10 +300,10 @@ test("doctor reports a mismatched persistent token without displaying it", async
   await app.stop();
 });
 
-test("doctor rejects a locally configured server absent from the running service", async () => {
+test("status rejects a locally configured server absent from the running service", async () => {
   await using files = await fixture();
   const app = await start(files);
-  const diagnostic = join(files.directory, "doctor.json");
+  const diagnostic = join(files.directory, "status.json");
   await Bun.write(
     diagnostic,
     JSON.stringify({
@@ -283,11 +312,11 @@ test("doctor rejects a locally configured server absent from the running service
     }),
   );
 
-  const doctor = files.spawn(["doctor", "--config", diagnostic, "--server", "absent", "--json"]);
-  const output = new Response(doctor.stdout).json();
-  const diagnostics = new Response(doctor.stderr).text();
+  const status = files.spawn(["status", "absent", "--config", diagnostic, "--json"]);
+  const output = new Response(status.stdout).json();
+  const diagnostics = new Response(status.stderr).text();
 
-  expect(await doctor.exited).toBe(1);
+  expect(await status.exited).toBe(1);
   expect(await output).toEqual({
     ok: false,
     error: { message: 'Unknown server "absent" in the running gateway.' },
@@ -296,10 +325,10 @@ test("doctor rejects a locally configured server absent from the running service
   await app.stop();
 });
 
-test("doctor selects a running server even when absent from local configuration", async () => {
+test("status selects a running server even when absent from local configuration", async () => {
   await using files = await fixture();
   const app = await start(files);
-  const diagnostic = join(files.directory, "doctor.json");
+  const diagnostic = join(files.directory, "status.json");
   await Bun.write(
     diagnostic,
     JSON.stringify({
@@ -308,11 +337,11 @@ test("doctor selects a running server even when absent from local configuration"
     }),
   );
 
-  const doctor = files.spawn(["doctor", "--config", diagnostic, "--server", "notes", "--json"]);
-  const output = new Response(doctor.stdout).json();
-  const diagnostics = new Response(doctor.stderr).text();
+  const status = files.spawn(["status", "notes", "--config", diagnostic, "--json"]);
+  const output = new Response(status.stdout).json();
+  const diagnostics = new Response(status.stderr).text();
 
-  expect(await doctor.exited).toBe(0);
+  expect(await status.exited).toBe(0);
   expect(await output).toMatchObject({
     ok: true,
     servers: [{ name: "notes", state: "disabled" }],
@@ -322,7 +351,7 @@ test("doctor selects a running server even when absent from local configuration"
   await app.stop();
 });
 
-test("doctor never forwards the persistent token to a redirected endpoint", async () => {
+test("status never forwards the persistent token to a redirected endpoint", async () => {
   await using files = await fixture();
   const requests: Request[] = [];
 
@@ -346,10 +375,10 @@ test("doctor never forwards the persistent token to a redirected endpoint", asyn
   });
 
   cleanup.defer(() => listener.stop(true));
-  const doctor = files.spawn(["doctor", "--config", files.config, "--json"]);
-  const output = new Response(doctor.stdout).text();
+  const status = files.spawn(["status", "--config", files.config, "--json"]);
+  const output = new Response(status.stdout).text();
 
-  expect(await doctor.exited).toBe(1);
+  expect(await status.exited).toBe(1);
   expect(await output).toContain("redirects are not followed");
   expect(await output).not.toContain(token);
   expect(requests).toHaveLength(0);
@@ -358,7 +387,7 @@ test("doctor never forwards the persistent token to a redirected endpoint", asyn
 test.each([
   { name: "malformed JSON", body: "private-upstream-response" },
   { name: "an invalid status shape", body: '{"private":"upstream-response"}' },
-])("doctor rejects $name without displaying response data", async ({ body }) => {
+])("status rejects $name without displaying response data", async ({ body }) => {
   await using files = await fixture();
 
   const listener = Bun.serve({
@@ -369,10 +398,10 @@ test.each([
 
   await using cleanup = new AsyncDisposableStack();
   cleanup.defer(() => listener.stop(true));
-  const doctor = files.spawn(["doctor", "--config", files.config, "--json"]);
-  const output = new Response(doctor.stdout).json();
+  const status = files.spawn(["status", "--config", files.config, "--json"]);
+  const output = new Response(status.stdout).json();
 
-  expect(await doctor.exited).toBe(1);
+  expect(await status.exited).toBe(1);
   expect(await output).toEqual({
     ok: false,
     error: { message: "The service port did not return a valid gateway status." },
@@ -462,6 +491,7 @@ async function start(
   marker = '"event":"listening"',
 ) {
   const child = files.spawn(["serve", "--config", files.config], environment);
+
   const ready = Promise.withResolvers<void>();
 
   const timeout = setTimeout(
@@ -494,7 +524,7 @@ async function start(
     status: await files.status(environment.GW_HTTP_TOKEN ?? token),
     async stop() {
       child.kill("SIGTERM");
-      expect(await child.exited).toBe(0);
+      expect(await child.exited).toBe(143);
       await logs;
     },
   };

@@ -8,9 +8,15 @@ import { type CredentialOptions } from "./auth/credentials.ts";
 import { reportToolException } from "./diagnostics.ts";
 
 /** Foreground HTTP process; deployment and client configuration belong to the caller. */
-export async function serveHttp(path: string, options: CredentialOptions = {}) {
+export async function serveHttp(
+  path: string,
+  options: CredentialOptions & { signal?: AbortSignal } = {},
+) {
+  options.signal?.throwIfAborted();
   const config = await readConfiguration(path);
+  options.signal?.throwIfAborted();
   const bearerToken = await httpToken();
+  options.signal?.throwIfAborted();
   await using cleanup = new AsyncDisposableStack();
   const shutdown = new AbortController();
   const stopped = Promise.withResolvers<void>();
@@ -20,12 +26,18 @@ export async function serveHttp(path: string, options: CredentialOptions = {}) {
     stopped.resolve();
   };
 
+  cleanup.defer(() => options.signal?.removeEventListener("abort", stop));
+  options.signal?.addEventListener("abort", stop, { once: true });
+  if (options.signal?.aborted) stop();
+
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, stop);
     cleanup.defer(() => {
       process.off(signal, stop);
     });
   }
+
+  if (shutdown.signal.aborted) return;
 
   const gateway = cleanup.use(
     new Gateway(config, dirname(path), {

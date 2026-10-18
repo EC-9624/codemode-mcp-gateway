@@ -33,7 +33,7 @@ export async function httpStatus(
     });
   } catch (cause) {
     throw new GatewayError(
-      "The local gateway status is unavailable. Verify its configured port and that gw serve is running; redirects are not followed.",
+      "The local gateway status is unavailable. Verify its configured port and that gw serve --transport http is running; redirects are not followed.",
       { cause },
     );
   }

@@ -53,7 +53,7 @@ export async function gatewayProcess(
     [
       "--conditions=development",
       options.entry ?? fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
-      ...(options.args ?? [config]),
+      ...(options.args ?? ["serve", "--transport", "stdio", "--config", config]),
     ],
     {
       stdio: ["pipe", "pipe", "pipe"],

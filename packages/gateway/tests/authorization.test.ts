@@ -194,7 +194,15 @@ describe("OAuth-backed stdio gateway", () => {
     await refreshing.promise;
 
     const removing = Bun.spawn(
-      [process.execPath, "--conditions=development", entry, "logout", app.config],
+      [
+        process.execPath,
+        "--conditions=development",
+        entry,
+        "auth",
+        "logout",
+        "--config",
+        app.config,
+      ],
       {
         env: { ...process.env, ...files.environment },
         stdout: "pipe",
@@ -219,10 +227,10 @@ describe("OAuth-backed stdio gateway", () => {
     }
 
     expect(await removing.exited).toBe(0);
-    expect(await new Response(removing.stdout).text()).toBe("");
-    expect(await new Response(removing.stderr).text()).toContain(
+    expect(await new Response(removing.stdout).text()).toContain(
       "does not revoke the upstream grant",
     );
+    expect(await new Response(removing.stderr).text()).toBe("");
     expect(await Bun.file(files.path).exists()).toBe(false);
 
     const response = await app.client.callTool({
@@ -231,7 +239,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(responseText(response)).toContain("gw login");
+    expect(responseText(response)).toContain("gw auth login");
     expect(upstream.refreshes).toBe(1);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -360,7 +368,7 @@ describe("OAuth-backed stdio gateway", () => {
       app.child.kill("SIGTERM");
       await request;
 
-      expect(await app.closed).toEqual({ code: 0, signal: null });
+      expect(await app.closed).toEqual({ code: 143, signal: null });
       expect(await Bun.file(files.path).json()).toEqual(credentials);
       expect(upstream.refreshes).toBe(1);
       expect(upstream.requests.some((request) => request.method === "DELETE")).toBe(false);
@@ -396,7 +404,7 @@ describe("OAuth-backed stdio gateway", () => {
       tools: [],
       servers: [{ name: "test", state: "needs-auth" }],
     });
-    expect(app.stderr).toContain("gw login");
+    expect(app.stderr).toContain("gw auth login");
     expect(upstream.requests).toEqual([]);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -429,7 +437,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(responseText(result)).toContain("gw login");
+    expect(responseText(result)).toContain("gw auth login");
     expect(JSON.stringify(result)).not.toContain("private revoke detail");
     expect(app.stderr).not.toContain("private revoke detail");
     expect(upstream.refreshes).toBe(1);

@@ -37,12 +37,12 @@ describe("gateway connection and authorization recovery", () => {
     if (status === undefined || !("error" in status))
       throw new Error("Expected authorization guidance.");
 
-    const argument = status.error.message.match(/Run gw login (\S+) with/)?.[1];
+    const argument = status.error.message.match(/Run gw auth login -- (\S+) with/)?.[1];
     if (argument === undefined) throw new Error("Missing login server argument.");
 
-    expect(
-      parseArgs({ args: [argument], options: { server: { type: "string" } } }).values.server,
-    ).toBe("-notes");
+    expect(parseArgs({ args: ["--", argument], allowPositionals: true }).positionals).toEqual([
+      "-notes",
+    ]);
   });
 
   test("expired HTTP sessions reconnect without replaying the failed call", async () => {
@@ -414,7 +414,7 @@ describe("gateway connection and authorization recovery", () => {
     });
 
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("gw login --server=notes");
+    expect(JSON.stringify(denied)).toContain("gw auth login -- notes");
     expect(JSON.stringify(denied)).not.toContain("private revoked grant");
     expect(gateway.status()).toMatchObject([{ state: "needs-auth" }, { state: "connected" }]);
     expect(responseValue(healthy)).toBe(3);

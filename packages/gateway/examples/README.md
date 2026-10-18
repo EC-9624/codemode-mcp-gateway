@@ -23,16 +23,16 @@ Closing the client requests EOF shutdown. No setup, token, login, or model is ne
 In terminal 1:
 
 ```sh
-bun run gw setup
-bun run gw check --config packages/gateway/examples/local.json
-bun run gw serve --config packages/gateway/examples/local.json
+bun run gw setup --transport http
+bun run gw config check --config packages/gateway/examples/local.json
+bun run gw serve --transport http --config packages/gateway/examples/local.json
 ```
 
 In terminal 2:
 
 ```sh
-bun run gw doctor --config packages/gateway/examples/local.json
-GW_HTTP_TOKEN="$(bun run gw token)" bun run example:http
+bun run gw status --config packages/gateway/examples/local.json
+GW_HTTP_TOKEN="$(bun run gw token show)" bun run example:http
 ```
 
 [http-client.ts](http-client.ts) connects to the already-running gateway, performs
@@ -53,8 +53,8 @@ This accesses your real Notion account and requires consent. It is not part of
 the local demo or routine verification.
 
 ```sh
-bun run gw check --config packages/gateway/examples/notion.json
-bun run gw login --config packages/gateway/examples/notion.json --server notion
+bun run gw config check --config packages/gateway/examples/notion.json
+bun run gw auth login notion --config packages/gateway/examples/notion.json
 bun run example:notion packages/gateway/examples/notion.json "specific search phrase" \
   --page "<page-url-or-id>" --expect "<known text>" --runs 3
 ```

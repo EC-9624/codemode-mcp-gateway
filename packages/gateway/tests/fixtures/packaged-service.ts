@@ -104,7 +104,7 @@ const result = await client.callTool({ name: "execute", arguments: { code: "retu
 deepEqual(result.content, [{ type: "text", text: "42" }]);
 await client.close();
 child.kill("SIGTERM");
-equal(await child.exited, 0);
+equal(await child.exited, 143);
 ok(!(await logs).includes(token));
 console.log(
   "Installed serve executed over authenticated HTTP without changing client configuration.",

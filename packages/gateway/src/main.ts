@@ -16,40 +16,10 @@ import { serveHttp } from "./daemon.ts";
 import { httpToken } from "./http-token.ts";
 import { httpStatus } from "./status.ts";
 import { setup } from "./setup.ts";
-import { parseCommand } from "./command.ts";
+import { commandHelp, parseCommand } from "./command.ts";
 
 // Standalone builds embed this value; ordinary package/source runs read their manifest.
 declare const GW_BUILD_VERSION: string;
-
-const help = `Usage: gw [setup|token|serve|check|doctor|login|logout] [configuration.json] [options]
-
-  gw                         Show this help
-  gw setup                   Prepare gateway configuration and a private HTTP token
-  gw token                   Print the effective HTTP token (sensitive; explicit use only)
-  gw serve                   Run foreground HTTP MCP using saved setup or GW_HTTP_TOKEN
-  gw serve --stdio           Run an explicit direct stdio gateway
-  gw <configuration.json>    Legacy explicit-path stdio mode
-  gw check                   Validate configuration without connecting
-  gw doctor                  Read the running service's upstream status
-  gw login --server <name>   Authorize a named upstream
-  gw logout --server <name>  Remove its local credentials
-
-Options:
-  -c, --config <path>  Override configuration for any command
-      --server <name>  Select an upstream for doctor, login, or logout
-      --json           Machine-readable check/doctor output
-      --stdio          Explicit direct stdio serving or fresh doctor probe
-  -h, --help           Show this help
-  -v, --version        Show the installed version
-
-Default: $XDG_CONFIG_HOME/codemode-mcp-gateway/config.json, or ~/.config/codemode-mcp-gateway/config.json.
-Run gw setup once, configure your upstreams and clients, then gw serve.
-HTTP serve/doctor use GW_HTTP_TOKEN when set, otherwise the private setup-created token.
-Tokens contain 32–256 letters, digits, underscores, or hyphens.
-Supply the same persistent token in your MCP clients; rotate it explicitly when needed.
-Client configuration, installation, and process supervision are user-managed.
-Stdio serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
-running multi-upstream gateways recover automatically after credentials change.`;
 
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
@@ -58,14 +28,15 @@ export async function main(
 ): Promise<number> {
   const parsed = parseCommand(args);
   if (!parsed.ok) {
-    console.error("Invalid arguments. Run gw --help for usage.");
+    const topic = parsed.topic === "root" ? "" : " " + parsed.topic;
+    console.error(`${parsed.message}\nRun gw help${topic} for usage.`);
 
     return 2;
   }
 
   const command = parsed.command;
   if (command.kind === "help") {
-    console.log(help);
+    console.log(commandHelp(command.topic));
 
     return 0;
   }
@@ -85,18 +56,17 @@ export async function main(
 
   using listeners = new DisposableStack();
   const shutdown = new AbortController();
-  if (command.kind !== "serve") {
-    for (const event of ["SIGINT", "SIGTERM"] as const) {
-      const stop = () => shutdown.abort();
-      process.on(event, stop);
-      listeners.defer(() => process.off(event, stop));
-    }
+  // Preserve signal identity for exit codes; serving owns cleanup and observes this signal too.
+  for (const event of ["SIGINT", "SIGTERM"] as const) {
+    const stop = () => shutdown.abort(event);
+    process.on(event, stop);
+    listeners.defer(() => process.off(event, stop));
   }
 
   try {
     if (command.kind === "token") {
       const token = await httpToken();
-      if (shutdown.signal.aborted) return 130;
+      if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
       console.log(token);
 
@@ -105,9 +75,9 @@ export async function main(
 
     const path = configurationPath(command.path);
     if (command.kind === "setup") {
-      await setup(path);
+      await setup(path, command.transport);
 
-      return shutdown.signal.aborted ? 130 : 0;
+      return shutdown.signal.aborted ? interruptionCode(shutdown.signal) : 0;
     }
 
     if (command.kind === "login" || command.kind === "logout") {
@@ -121,21 +91,22 @@ export async function main(
           ? await login(path, { ...selected, signal: shutdown.signal })
           : await logout(path, selected);
 
-      if (shutdown.signal.aborted) return 130;
+      if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
       const success =
         command.kind === "login"
           ? "Upstream authorization saved."
           : "Local upstream credentials removed. This does not revoke the upstream grant.";
 
-      console.error(result.ok ? success : result.error.message);
+      if (result.ok) console.log(success);
+      else console.error(result.error.message);
 
       return result.ok ? 0 : 1;
     }
 
     if (command.kind === "check") {
       const config = await readConfiguration(path);
-      if (shutdown.signal.aborted) return 130;
+      if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
       const names = Object.keys(config.mcp.servers);
       if (command.json)
@@ -148,13 +119,13 @@ export async function main(
       return 0;
     }
 
-    if (command.kind === "doctor") {
+    if (command.kind === "probe" || command.kind === "status") {
       const config = await readConfiguration(path);
 
       const remote =
-        command.transport === "stdio"
-          ? undefined
-          : await httpStatus(config.service.port, await httpToken(), shutdown.signal);
+        command.kind === "status"
+          ? await httpStatus(config.service.port, await httpToken(), shutdown.signal)
+          : undefined;
 
       let statuses: ServerStatus[];
       if (remote === undefined) {
@@ -175,7 +146,7 @@ export async function main(
           );
       }
 
-      if (shutdown.signal.aborted) return 130;
+      if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
       const healthy = statuses.every(
         (status) => status.state === "connected" || status.state === "disabled",
@@ -184,7 +155,7 @@ export async function main(
       if (command.json)
         console.log(
           JSON.stringify({
-            ok: healthy,
+            ok: command.kind === "status" || healthy,
             servers: statuses,
             ...(remote === undefined ? {} : { service: remote.service, sessions: remote.sessions }),
           }),
@@ -195,27 +166,34 @@ export async function main(
             `${status.name}: ${status.state} (${status.toolCount} tools)${"error" in status ? " — " + status.error.message : ""}`,
           );
 
-      return healthy ? 0 : 1;
+      return command.kind === "status" || healthy ? 0 : 1;
     }
 
-    if (command.transport === "stdio") await serve(path, options);
-    else await serveHttp(path, options);
+    if (command.transport === "stdio") await serve(path, { ...options, signal: shutdown.signal });
+    else await serveHttp(path, { ...options, signal: shutdown.signal });
 
-    return 0;
+    return shutdown.signal.aborted ? interruptionCode(shutdown.signal) : 0;
   } catch (error) {
-    if (shutdown.signal.aborted) return 130;
+    if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
     const message =
       error instanceof GatewayError || error instanceof AuthorizationError
         ? error.message
-        : "CMG server failed. Private diagnostics were not displayed.";
+        : "Gateway command failed. Private diagnostics were not displayed.";
 
-    if ((command.kind === "check" || command.kind === "doctor") && command.json)
+    if (
+      (command.kind === "check" || command.kind === "probe" || command.kind === "status") &&
+      command.json
+    )
       console.log(JSON.stringify({ ok: false, error: { message } }));
     else console.error(message);
 
     return 1;
   }
+}
+
+function interruptionCode(signal: AbortSignal): number {
+  return signal.reason === "SIGTERM" ? 143 : 130;
 }
 
 function selectServer(config: Configuration, name: string | undefined): Configuration {

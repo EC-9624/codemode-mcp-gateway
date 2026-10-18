@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { responseText, responseValue } from "./support/output.ts";
 
 describe("CMG stdio application", () => {
-  test("serves a named upstream from XDG configuration in explicit stdio mode", async () => {
+  test("serves explicit stdio from XDG configuration without gateway HTTP authentication", async () => {
     await using file = await configurationDocument({});
     const directory = dirname(file.path);
     await Bun.write(
@@ -28,8 +28,8 @@ describe("CMG stdio application", () => {
     );
 
     await using app = await gatewayProcess({
-      args: ["serve", "--stdio"],
-      environment: { XDG_CONFIG_HOME: directory },
+      args: ["serve", "--transport", "stdio"],
+      environment: { XDG_CONFIG_HOME: directory, GW_HTTP_TOKEN: "invalid-but-unused" },
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
@@ -120,9 +120,12 @@ describe("CMG stdio application", () => {
     10_000,
   );
 
-  test.each(["SIGINT", "SIGTERM"] as const)(
-    "cancels an active upstream call and awaits child exit after %s",
-    async (signal) => {
+  test.each([
+    { signal: "SIGINT", code: 130 },
+    { signal: "SIGTERM", code: 143 },
+  ] as const)(
+    "cancels an active upstream call and exits $code after $signal",
+    async ({ signal, code }) => {
       await using app = await gatewayProcess();
       await app.client.connect(app.transport, { timeout: 4_000 });
       await app.waitForConnections(1);
@@ -140,7 +143,7 @@ describe("CMG stdio application", () => {
       app.child.kill(signal);
       await request;
 
-      expect(await app.closed).toEqual({ code: 0, signal: null });
+      expect(await app.closed).toEqual({ code, signal: null });
       expect(() => process.kill(upstream, 0)).toThrow();
       expect(app.stderr).toContain("upstream-exit");
     },

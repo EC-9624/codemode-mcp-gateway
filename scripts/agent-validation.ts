@@ -61,6 +61,10 @@ async function validate() {
     [
       "--conditions=development",
       fileURLToPath(new URL("../packages/gateway/src/cli.ts", import.meta.url)),
+      "serve",
+      "--transport",
+      "stdio",
+      "--config",
       configuration,
     ],
     { stdio: ["pipe", "pipe", "pipe"] },

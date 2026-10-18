@@ -40,40 +40,85 @@ standalone checks currently establish macOS arm64, not a cross-platform release.
 No downloadable release binaries or registry packages are published yet.
 
 ```sh
-gw setup
+gw setup --transport http
 # Edit ~/.config/codemode-mcp-gateway/config.json to define your upstreams.
-gw check
-gw login --server notion  # Only for a configured OAuth upstream named notion.
-gw serve
+gw config check
+gw auth login notion  # Only for a configured OAuth upstream named notion.
+gw probe              # Optional: test fresh upstream connections, then close them.
+gw serve              # Foreground HTTP gateway; keep this terminal running.
 ```
 
-`setup` creates only missing configuration and a private persistent HTTP token;
-it never configures clients, authorizes upstreams, or starts a process. Its starter
+Without `--transport http`, `setup` creates only missing configuration; HTTP token preparation is explicit.
+It never configures clients, authorizes upstreams, or starts a process. Its starter
 has no upstreams and is not runnable until edited. For example, a Notion-only
 configuration is `{ "mcp": { "servers": { "notion": { "type": "remote",
 "url": "https://mcp.notion.com/mcp", "oauth": {} } } } }`.
 
-Keep `gw serve` running in its terminal. In another terminal, `gw doctor` reports
-the running gateway's upstream status, and `gw token` explicitly prints the secret
-for manual client registration. Connect clients to `http://127.0.0.1:4791/mcp`
-with `Authorization: Bearer <your-private-token>`. Never log or commit that token.
-See [local deployment](docs/local-installation.md) for full Codex/Claude Code
-configuration examples, nondefault paths, updates, and token rotation.
+### Connect Codex and Claude Code over HTTP
 
-`gw serve` runs the foreground loopback HTTP MCP service. It reads the setup-created
-token or an explicit `GW_HTTP_TOKEN` override (32–256 letters, digits, underscores,
-or hyphens); configure clients
-to send the same token as `Authorization: Bearer <token>` to `/mcp`.
-The token survives restarts when supplied unchanged. Rotate it explicitly by
-changing it, restarting the gateway, and updating clients; a leaked token remains
-valid until rotation. Only `gw setup` may create a token; serving never provisions
-or rotates it. The gateway never edits client configs, installs itself, or manages
-an OS service. An occupied port is an error,
-not a request to adopt or restart its owner. No per-client gateway or bridge is needed.
-`gw` alone shows help.
-Explicit `gw serve --stdio` and legacy positional-config invocations retain direct
-stdio for development and examples. Both transports expose `execute({ code })`.
-Diagnostics use stderr.
+Both clients connect to the same running gateway at `http://127.0.0.1:4791/mcp`.
+In a separate terminal, check it with `gw status --json`. Obtain its token with
+`gw token show` privately, then replace `<your-private-token>` below. These are
+placeholders: never commit real tokens or copy them into logs.
+
+**Codex:** merge this entry into your private `~/.codex/config.toml` (or
+`$CODEX_HOME/config.toml`):
+
+```toml
+[mcp_servers.codemode-mcp-gateway]
+url = "http://127.0.0.1:4791/mcp"
+http_headers = { Authorization = "Bearer <your-private-token>" }
+startup_timeout_sec = 60
+tool_timeout_sec = 60
+```
+
+**Claude Code:** merge this entry into the user-level `mcpServers` object in
+`~/.claude.json`, preserving any other servers and settings:
+
+```json
+{
+  "mcpServers": {
+    "codemode-mcp-gateway": {
+      "type": "http",
+      "url": "http://127.0.0.1:4791/mcp",
+      "headers": { "Authorization": "Bearer <your-private-token>" }
+    }
+  }
+}
+```
+
+Restart/reconnect the clients after editing their configuration. They do not launch
+`gw`; keep the HTTP process running yourself. Closing either client does not stop
+the gateway or the other client's session. Existing HTTP registrations and saved
+upstream OAuth credentials need no change when updating the executable.
+
+`gw serve` defaults to authenticated loopback HTTP; `--transport http` is equivalent.
+It reads the private token or `GW_HTTP_TOKEN`, never provisions or rotates it.
+Upstream OAuth remains separate and explicit. Remote network hosting is not
+implemented. See [local deployment](docs/local-installation.md) for nondefault
+paths, updates, token rotation, and the local-port trust limitation.
+
+### Optional client-owned stdio
+
+For a client that should launch its own gateway instead of using shared HTTP,
+configure a stdio command rather than a URL/header entry:
+
+```json
+{
+  "command": "/absolute/path/to/gw",
+  "args": ["serve", "--transport", "stdio"]
+}
+```
+
+Each launch owns separate upstream connections and an executor budget. No gateway
+HTTP token or listening port is needed. Closing stdin requests cleanup; stdout
+is exclusively MCP, and diagnostics use stderr. For a nondefault configuration,
+append `"--config", "/absolute/path/to/config.json"` to the args.
+
+`gw` alone and command groups show help; use `gw help auth login` for focused help.
+Commands are explicit: legacy aliases, positional configuration paths, `--stdio`,
+and `--server` are not supported. The gateway never edits client configs or manages
+an OS service. Both transports expose `execute({ code })`.
 Configure named upstreams under `mcp.servers`; this example assumes you supply a
 local `mcp-server.ts` beside your configuration:
 
@@ -92,9 +137,9 @@ Local paths resolve from the configuration directory. The included
 [`packages/gateway/examples/multi.json`](packages/gateway/examples/multi.json) references the shared math fixture and longer
 Notion deadlines. Serving and management commands use
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
-or a positional path overrides it. `check` validates without connecting; `doctor`
-queries the actual running service using the same saved token or override (`doctor --stdio` explicitly
-probes fresh connections and needs no gateway HTTP token).
+overrides it. `config check` validates without connecting; `probe [server]` opens
+and closes fresh connections without a gateway HTTP token. `status [server]`
+queries only the running HTTP gateway, not client-owned stdio processes.
 Login is explicit and interactive; serving
 uses private file-backed credentials and noninteractive refresh. OAuth snapshots
 live under `$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
@@ -214,7 +259,7 @@ console.log(report.result); // { ok: true, value: 42 }
   latency caps; host work and cleanup can delay completion.
 - Cancellation is cooperative for host callbacks and cannot roll back upstream
   side effects. No remote agent hosting, model loop, or team credential management
-  is implemented. The agent-facing CLI defaults to loopback HTTP; explicit stdio remains available.
+  is implemented. The agent-facing CLI defaults to loopback HTTP; client-owned stdio is explicit.
 
 ## Testing and distribution
 

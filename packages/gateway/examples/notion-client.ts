@@ -129,11 +129,12 @@ const child = spawn(
         "--conditions=development",
         fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
         "serve",
-        "--stdio",
+        "--transport",
+        "stdio",
         "--config",
         resolve(configuration),
       ]
-    : ["serve", "--stdio", "--config", resolve(configuration)],
+    : ["serve", "--transport", "stdio", "--config", resolve(configuration)],
   { stdio: ["pipe", "pipe", "inherit"] },
 );
 
@@ -176,7 +177,7 @@ try {
       status: "failed",
       kind: "transport",
       message:
-        "Gateway initialization failed. See gateway diagnostics; if authorization is missing or rejected, run gw login with this configuration.",
+        "Gateway initialization failed. See gateway diagnostics; if authorization is missing or rejected, run gw auth login with this configuration.",
     }),
   );
   process.exitCode = 1;

@@ -783,16 +783,19 @@ requests session deletion when a session ID exists, then closes the transport.
 The DELETE request is bounded at 5 seconds, and an upstream that declines session
 termination with HTTP 405 is handled by the SDK.
 
-`gw serve` also hosts authenticated loopback Streamable HTTP MCP. One daemon owns
+`gw setup` prepares configuration only. `gw serve` defaults to authenticated loopback
+Streamable HTTP MCP; `--transport http` selects it explicitly. `--transport stdio`
+instead creates a client-owned gateway with independent connections and no HTTP token.
+For HTTP, one daemon owns
 the gateway; its independent MCP sessions share that gateway's executor and upstreams.
 Native Codex/Claude clients use the `/mcp` URL directly, without a bridge. A client
 DELETE retires only its own session; open HTTP requests/event streams retain the
 session, and disconnected sessions receive a 60-second grace. Closing clients does
 not stop the HTTP process. Installation, process supervision, and client configuration
 are user-managed; there is no custom installer or `gw service` command. HTTP serving
-and live `doctor` checks read the private setup-created token, overridden by an
+and live `status` requests read the private setup-created token, overridden by an
 explicit `GW_HTTP_TOKEN`. Invalid overrides fail rather than falling back. Only
-explicit `gw setup` creates a token; `gw token` explicitly reveals it. Neither
+explicit `gw setup --transport http` creates a token; `gw token show` explicitly reveals it. Neither
 command configures clients or upstream authorization. Restarting does not revoke
 an unchanged token. `bun run build:standalone` creates a self-contained `dist/gw`
 with its Bun runtime, worker entry, version metadata, and QuickJS WASM embedded.
@@ -810,9 +813,10 @@ Separate gateways/processes remain independent.
 
 The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`,
 otherwise `~/.config/codemode-mcp-gateway/config.json`) and never implicitly loads cwd configuration.
-`check` validates offline, `doctor` reads the actual daemon (`doctor --stdio` explicitly
-opens fresh diagnostic connections), and named
-`login`/`logout` manage private plaintext OAuth snapshots under
+`config check` validates offline, `status [server]` reads the actual HTTP daemon,
+and `probe [server]` opens/closes fresh diagnostic connections. Server selection is
+positional; config paths use only `--config`/`-c`. There are no legacy aliases.
+Named `auth login`/`auth logout` manage private plaintext OAuth snapshots under
 `$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
 `~/.local/state/codemode-mcp-gateway/credentials`), with locks in the sibling `locks`
 directory. The public `fileCredentialStore(connection, { directory? })` implements
@@ -826,8 +830,12 @@ Pre-exchange setup failures retry with backoff; transient credential-read failur
 on active sessions leave those sessions usable by subsequent executions. Failed
 token exchanges or persistence after rotation are not retried with unchanged grants.
 An established HTTP session returning 404 is retired and reinitialized for later
-executions without replaying the failed call. An explicit fresh doctor probe emits its final report only
+executions without replaying the failed call. A fresh `probe` emits its final report only
 after connection cleanup succeeds; cleanup errors produce a single failure result.
+`status` succeeds on retrieval even if an upstream is degraded; `probe` exits 1
+when an enabled upstream cannot connect. `--json` is supported by `config check`,
+`probe`, and `status`; argument errors use stderr and exit 2. SIGINT/SIGTERM exit
+130/143 after cleanup; EOF-driven stdio shutdown exits 0.
 See the [gateway guide](../packages/gateway/README.md#named-upstreams-and-hot-recovery)
 for recovery timing and status.
 

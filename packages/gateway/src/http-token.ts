@@ -19,7 +19,9 @@ export async function httpToken(): Promise<string> {
   const saved = await readToken(tokenPath());
   if (saved !== undefined) return saved;
 
-  throw new GatewayError("No HTTP token is configured. Run gw setup or set GW_HTTP_TOKEN.");
+  throw new GatewayError(
+    "No HTTP token is configured. Run gw setup --transport http or set GW_HTTP_TOKEN.",
+  );
 }
 
 /** Only explicit setup may create a credential. Existing tokens are validated, never replaced. */
@@ -74,7 +76,9 @@ export async function prepareHttpToken(): Promise<
   }
 
   if ((await readToken(path)) === undefined)
-    throw new GatewayError("The HTTP token disappeared during setup. Run gw setup again.");
+    throw new GatewayError(
+      "The HTTP token disappeared during setup. Run gw setup --transport http again.",
+    );
 
   return { source: "file", path, created };
 }

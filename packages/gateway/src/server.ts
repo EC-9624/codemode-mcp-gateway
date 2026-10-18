@@ -19,10 +19,16 @@ import { reportServerError, reportToolException } from "./diagnostics.ts";
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
  * Installs SIGINT/SIGTERM listeners for this call and removes them during cleanup.
+ * An optional host signal also cancels startup and serving; its reason stays private.
  * Resolves after shutdown cleanup; uncancelled startup and cleanup failures reject.
  */
-export async function serve(path: string, options: CredentialOptions = {}): Promise<void> {
+export async function serve(
+  path: string,
+  options: CredentialOptions & { signal?: AbortSignal } = {},
+): Promise<void> {
+  options.signal?.throwIfAborted();
   const config = await readConfiguration(path);
+  options.signal?.throwIfAborted();
   await using cleanup = new AsyncDisposableStack();
   const shutdown = new AbortController();
   const stopped = Promise.withResolvers<void>();
@@ -32,12 +38,18 @@ export async function serve(path: string, options: CredentialOptions = {}): Prom
     stopped.resolve();
   };
 
+  cleanup.defer(() => options.signal?.removeEventListener("abort", stop));
+  options.signal?.addEventListener("abort", stop, { once: true });
+  if (options.signal?.aborted) stop();
+
   for (const event of ["SIGINT", "SIGTERM"] as const) {
     process.on(event, stop);
     cleanup.defer(() => {
       process.off(event, stop);
     });
   }
+
+  if (shutdown.signal.aborted) return;
 
   const gateway = cleanup.use(
     new Gateway(config, dirname(path), {

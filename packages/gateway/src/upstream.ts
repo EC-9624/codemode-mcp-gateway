@@ -325,7 +325,7 @@ export class Upstream {
     if (cause.recovery === "retry")
       return `Server ${JSON.stringify(this.name)} authorization ${cause.failure.kind}; reconnection will be attempted automatically.`;
 
-    return `Server ${JSON.stringify(this.name)} authorization ${cause.failure.kind}. Run gw login --server=${this.name} with the same configuration; recovery is automatic after credentials change.`;
+    return `Server ${JSON.stringify(this.name)} authorization ${cause.failure.kind}. Run gw auth login -- ${this.name} with the same configuration; recovery is automatic after credentials change.`;
   }
 
   private release(lease: Lease) {

@@ -60,7 +60,7 @@ export class OAuthSession implements AsyncDisposable {
     if (record === undefined || record.authorization.status === "required") {
       return AuthResult.failure(
         "required",
-        "No upstream authorization is available. Run gw login <configuration.json>.",
+        "No upstream authorization is available. Run gw auth login with the same --config path.",
       );
     }
 
@@ -77,7 +77,7 @@ export class OAuthSession implements AsyncDisposable {
     ) {
       return AuthResult.failure(
         "required",
-        "The upstream OAuth issuer or resource changed. Run gw login <configuration.json>.",
+        "The upstream OAuth issuer or resource changed. Run gw auth login with the same --config path.",
       );
     }
 
@@ -187,7 +187,7 @@ export class OAuthSession implements AsyncDisposable {
     if (record === undefined || record.authorization.status === "required") {
       return AuthResult.failure(
         "required",
-        "Upstream authorization is required. Run gw login <configuration.json>.",
+        "Upstream authorization is required. Run gw auth login with the same --config path.",
       );
     }
 
@@ -235,7 +235,7 @@ export class OAuthSession implements AsyncDisposable {
     if (authorization.tokens.refresh_token === undefined) {
       return AuthResult.failure(
         "required",
-        "The upstream did not provide a usable refresh token. Run gw login <configuration.json>.",
+        "The upstream did not provide a usable refresh token. Run gw auth login with the same --config path.",
       );
     }
 
@@ -243,7 +243,7 @@ export class OAuthSession implements AsyncDisposable {
     // post-exchange failures must not leave this snapshot eligible for another refresh.
     this.terminal = AuthResult.failure(
       "unavailable",
-      "The OAuth refresh outcome is uncertain. Run gw login with the same configuration.",
+      "The OAuth refresh outcome is uncertain. Run gw auth login with the same --config path.",
     );
 
     let tokens: OAuthTokens;
@@ -305,7 +305,7 @@ export class OAuthSession implements AsyncDisposable {
     const failure = {
       kind: "storage",
       message:
-        "OAuth credentials could not be persisted. Run gw login with the same configuration.",
+        "OAuth credentials could not be persisted. Run gw auth login with the same --config path.",
     } satisfies AuthFailure;
 
     this.terminal = { ok: false, error: failure };

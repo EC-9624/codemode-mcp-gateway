@@ -19,12 +19,14 @@ a separate Bun installation. No release binaries are published yet.
 From the workspace root, `bun run install:gw` combines the build and installation
 to `~/.local/bin/gw`; `--force` is required to replace an existing file or symlink.
 It does not install dependencies, change PATH, prepare credentials, or start a process.
-`gw setup` explicitly prepares a starter configuration and private persistent HTTP
-token without overwriting existing files. The starter needs user-supplied upstreams
-before it can run. `gw serve` reads the saved token or `GW_HTTP_TOKEN` override.
+`gw setup` explicitly prepares a starter configuration without overwriting existing
+files. The starter needs user-supplied upstreams before it can run. `gw serve` uses
+authenticated loopback HTTP by default; `--transport stdio` selects client-owned stdio.
+Only `gw setup --transport http` prepares a private persistent HTTP token;
+`gw serve --transport http` reads that token or the `GW_HTTP_TOKEN` override.
 Client configuration, installation, and process supervision remain user-managed.
 The gateway never edits client configs. Existing upstream definitions and explicit OAuth login remain.
-`gw serve --stdio` explicitly selects direct stdio. The package's `example` (root
+The package's `example` (root
 shortcut `example:server`) starts a client and the gateway,
 discovers the synthetic upstream's tools, and executes a call end to end.
 In stdio mode stdout is exclusively MCP traffic; diagnostics use stderr.
@@ -33,24 +35,27 @@ Examples live in `packages/gateway/examples/` in the checkout, not tarballs. The
 include a local stdio demo, authenticated HTTP client, and optional real-account
 Notion workflow. The default demo prints `5` and needs no setup, credentials, or model.
 
-For standalone use after building/installing, run `gw setup`, add your upstreams
-to its displayed configuration, validate with `gw check`, explicitly authorize
-OAuth upstreams with `gw login --server <name>`, then leave `gw serve` running.
-In another terminal, `gw doctor` queries that process and `gw token` explicitly
-reveals the private token for manual client registration. No configuration changes
-are watched; restart after editing upstream definitions.
+For standalone HTTP use after building/installing, run `gw setup --transport http`, add your upstreams
+to its displayed configuration, validate with `gw config check`, explicitly authorize
+OAuth upstreams with `gw auth login <server>`, then keep `gw serve` running and
+register its HTTP URL and bearer header in your clients. For client-owned stdio,
+use `args: ["serve", "--transport", "stdio"]` (and `--config <path>` if needed).
+Each stdio launch owns its gateway, executor budget, and upstream connections;
+closing stdin requests cleanup. `gw probe` opens separate diagnostic connections.
+No configuration changes are watched; restart after editing upstream definitions.
 
-Clients use `http://127.0.0.1:4791/mcp` (or your configured port) with
-`Authorization: Bearer <your-private-token>`. Local upstreams can still require
+HTTP clients use `http://127.0.0.1:4791/mcp` (or your configured port) with
+`Authorization: Bearer <your-private-token>`. `gw status` queries only a running
+HTTP process; `gw token show` explicitly reveals its token. Local upstreams can still require
 their own runtimes even when the gateway binary itself needs none. Stop the gateway,
 replace the binary, and restart for updates; gateway files and OAuth credentials
 remain separate from the executable.
 
 ## CLI and default configuration
 
-`gw` without arguments shows help. Native clients connect directly to the running
-service's `/mcp` URL; configuration resolves
-from `--config <path>` (or a positional path), then
+`gw` without arguments and command groups show help. `gw help auth login` and
+`gw auth login --help` show focused help. Configuration resolves
+from `--config <path>` (or `-c`), then
 `$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json`, otherwise `~/.config/codemode-mcp-gateway/config.json`.
 An empty XDG variable uses the home fallback; a relative XDG path is rejected.
 The working directory is not searched implicitly.
@@ -61,27 +66,33 @@ for installed readers; `dist/index.d.ts` contains supported public API signature
 There is no client provisioning or OS service-management command.
 
 ```sh
-gw setup                   # Prepare only gateway files; no connections or process startup
-gw token                   # Explicitly print the effective token; treat output as a secret
-gw serve                   # Foreground HTTP service; saved token or GW_HTTP_TOKEN
-gw serve --stdio --config ./config.json
-gw check --json
-gw doctor --server notion --json
-gw login --server notion
-gw logout --server notion
+gw setup                   # Prepare configuration only; no HTTP token or process startup
+gw serve                   # Foreground loopback HTTP service (default)
+gw serve --config ./config.json
+gw config check --json
+gw probe notion --json     # Open/close fresh upstream connections
+gw auth login notion
+gw auth logout notion
+gw setup --transport http  # Explicitly prepare an HTTP token as well
+gw serve --transport stdio # Client-owned stdio; stdout is exclusively MCP
+gw status notion --json    # Read only the running HTTP gateway
+gw token show              # Explicitly reveal the HTTP token; output is a secret
 gw --help
 gw --version
 ```
 
-Configuration-based commands accept `--config` or an optional positional path;
-`token` needs no configuration and accepts neither.
-`check` validates without connecting. `doctor` reads authenticated status from the
-actual HTTP process using the same token; `doctor --stdio` explicitly
-opens/closes fresh diagnostic connections without requiring that token.
-HTTP `doctor --server` selects from the running service, not the local upstream
-definitions, and fails if that server is absent. Fresh stdio probes select from
-the local configuration.
-`setup` creates `~/.local/state/codemode-mcp-gateway/token` (or under `XDG_STATE_HOME`),
+Configuration-based commands accept only `--config`/`-c`; `token show` accepts neither.
+Unknown commands, extra positionals, repeated options, and command-incompatible flags
+are errors. There are no legacy command aliases, positional configuration paths,
+`--stdio`, or `--server` flags. `serve` and `setup` accept `--transport stdio|http`.
+`serve` defaults to HTTP; `setup` defaults to configuration-only preparation and
+creates a token only with `--transport http`. `config check` validates without connecting.
+`probe [server]` opens/closes fresh diagnostic connections from local configuration
+without requiring a gateway HTTP token. `status [server]` reads authenticated
+status from the actual HTTP process and never probes upstreams. It selects from
+the running service, not local upstream definitions, and fails if that server is
+absent. It cannot inspect an existing stdio process.
+Only `setup --transport http` creates `~/.local/state/codemode-mcp-gateway/token` (or under `XDG_STATE_HOME`),
 with mode 0600 inside an owned, non-symlinked 0700 directory. Symlinked, nonprivate,
 or invalid token files are refused, never fixed or replaced silently. Concurrent
 setup publishes one complete token without clobbering another setup's value.
@@ -93,23 +104,28 @@ not a command argument or tracked configuration. The standalone executable does
 not auto-load cwd `.env` or `bunfig.toml`; inject environment settings explicitly.
 Clients send the same token in their bearer header. Restarting with the same token
 does not revoke it. Rotation requires a changed token, gateway restart, and client
-updates; leaked tokens remain usable until rotation. Only explicit `setup` creates
-credentials and only explicit `token` prints one; normal serving, setup output,
-and diagnostics never print it. An occupied port always fails without probing
+updates; leaked tokens remain usable until rotation. Only explicit `setup --transport http` creates
+gateway credentials and only explicit `token show` prints one; normal serving, setup output,
+and diagnostics never print it. Stdio setup/serving ignore gateway HTTP credentials.
+An occupied HTTP port always fails without probing
 or adopting the owning process, and no additional upstreams are started.
 HTTP status contains process/session/upstream information, not client registration
 or installation state. CLI status requests reject redirects and validate the response;
 they do not cryptographically authenticate the server. A process occupying the port
 can capture the persistent token and impersonate an MCP/status server. Host/Origin
 checks do not prevent this; trust the local port owner or use direct stdio.
-Login/logout select a named server; the name
+Auth login/logout select a positional server name; the name
 can be omitted when exactly one OAuth connection is configured. Logout removes
-local credentials, not the upstream grant.
+local credentials, not the upstream grant. Put options before `-- <server>` for
+leading-hyphen names, for example `gw auth login --config ./config.json -- -notes`.
 
 Exit codes: 0 for success, 1 for configuration/connection/authentication or runtime
-failure, 2 for invalid arguments, and 130 for interrupted non-serving commands.
-The gateway remains running with failed upstreams; a failed doctor check
-returns 1. `--json` is accepted by check/doctor, never stdio serving. Setup exit 0
+failure, 2 for invalid arguments, 130 for SIGINT, and 143 for SIGTERM after cleanup.
+The gateway remains running with failed upstreams. `probe` returns 1 when an enabled
+upstream cannot connect; `status` returns 0 when status was retrieved, even for
+degraded upstreams. `--json` is accepted by `config check`, `probe`, and `status`,
+never serving. These commands emit one JSON result for success or operational
+failure; argument errors use stderr and exit 2. Setup exit 0
 means files were prepared, not that upstream definitions, authorization, or clients
 are ready; it reports configuration that still needs editing.
 
@@ -162,7 +178,7 @@ silently aliased across upstreams; even an upstream tool named `searchTools` is
 qualified and cannot overwrite the local helper.
 
 Access-token refresh remains automatic. A missing/revoked grant or uncertain refresh
-failure moves the affected server to `needs-auth`. Run `gw login --server notion`
+failure moves the affected server to `needs-auth`. Run `gw auth login notion`
 using the same configuration; the gateway checks waiting credential records on a
 one-second maintenance cadence and reconnects after an authorized snapshot changes.
 Unchanged failed grants are not refreshed repeatedly, including after session expiry
@@ -204,9 +220,9 @@ transport has already closed or authorization is known unusable; local cleanup
 still completes. Unexpected infrastructure/cleanup failures remain host failures.
 
 The repository's `packages/gateway/examples/multi.json` combines the shared synthetic
-math server and Notion. Probe it with `bun run gw doctor --stdio --config
+math server and Notion. Probe it with `bun run gw probe --config
 packages/gateway/examples/multi.json`, or configure a client to spawn
-`gw serve --stdio --config <absolute-config-path>`. Upstream definitions use
+`gw serve --transport stdio --config <absolute-config-path>`. Upstream definitions use
 `mcp.servers`; optional top-level `sandbox` and `service` settings control policy/listening.
 
 ### Verified interoperability
@@ -374,10 +390,10 @@ OAuth is opt-in for an explicitly named HTTP connection:
 From the repository root:
 
 ```sh
-bun run gw login --config packages/gateway/examples/notion.json --server notion
+bun run gw auth login notion --config packages/gateway/examples/notion.json
 bun run example:notion packages/gateway/examples/notion.json "your test page" \
   --page "<page-url-or-id>" --expect "<known text>" --runs 3
-bun run gw logout --config packages/gateway/examples/notion.json --server notion
+bun run gw auth logout notion --config packages/gateway/examples/notion.json
 ```
 
 `login` displays an authorization URL and attempts to open the browser. One
@@ -393,7 +409,7 @@ challenge's scopes, falling back to the protected resource's advertised
 scopes, not every scope supported by the authorization server. `offline_access` is
 added when either advertises it. Registration and browser consent request the same
 scopes. To replace an existing incorrectly scoped registration, run
-`gw logout --server <name>`, then `gw login --server <name>`; login alone reuses registration.
+`gw auth logout <server>`, then `gw auth login <server>`; login alone reuses registration.
 
 Serving is noninteractive: it loads the current user's saved credential files and
 refreshes them without prompting for browser consent. Missing or revoked authorization
@@ -409,7 +425,7 @@ are rejected. Files are not encrypted by the application: processes running as y
 user can read them. Keep this state outside Git and protect its backups.
 
 There is no Keychain/libsecret backend, automatic migration, or storage fallback.
-After upgrading from OS credential storage, restart the gateway and run `gw login`
+After upgrading from OS credential storage, restart the gateway and run `gw auth login`
 again for each OAuth server. Existing Keychain entries and the old `cmg/locks`
 directory are not read or deleted.
 
@@ -566,7 +582,8 @@ HTTP host leaves its borrowed gateway usable. The retired `serviceKey` and
 values for expected authorization/storage failures. Configuration, infrastructure,
 and cleanup failures may reject, including `AuthorizationError` when releasing a
 credential lock fails. `serve(path, options?)` accepts the same
-host-owned scoped credential-store factory and lock-directory override; the CLI
+host-owned scoped credential-store factory and lock-directory override, plus an
+optional `signal` to cancel startup or serving. Active serving awaits cleanup. The CLI
 uses private credential files. A custom store must preserve credential bindings and durable,
 atomic snapshot replacement, including for readers outside the lock. The exported
 `Credentials` schema validates stored snapshots; custom stores must also validate
@@ -612,7 +629,7 @@ owns explicit first-run preparation; `src/http-token.ts` owns
 private token-file creation and read-only environment/file resolution.
 
 `bun run build` emits `dist/cli.js` with a Bun shebang. After installing a packed
-build, invoke it as `gw serve --stdio --config configuration.json`; dependencies are not bundled.
+build, invoke it as `gw serve --transport stdio --config configuration.json` for stdio; dependencies are not bundled.
 `bun run build:standalone` additionally emits the self-contained application at
 the repository's `dist/gw`; version metadata and the worker entry are embedded.
 The build wraps QuickJS's Emscripten loaders to supply embedded WASM bytes through
@@ -626,8 +643,8 @@ reuse. Examples and source references above are checkout-only, not shipped inter
 ## Current scope
 
 Named upstreams with partial availability and hot credential recovery. Agent-facing
-transports are authenticated loopback Streamable HTTP and explicit direct stdio.
-Users choose how to install and supervise the foreground `gw serve` process and
+transport defaults to authenticated loopback Streamable HTTP, with explicit client-owned stdio.
+Users choose how to install and supervise HTTP processes and
 configure its clients. There is no model loop, remote network hosting, or Node support. Cancellation cannot roll back
 upstream side effects. A Notion validation run and sequential execution baseline
 are recorded; those finite runs do not establish production stability. Aggregate/payload

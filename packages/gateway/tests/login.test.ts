@@ -359,7 +359,7 @@ describe("login", () => {
       await started.promise;
       expect(await pending).toMatchObject({
         ok: false,
-        error: { kind: "cancelled", message: "OAuth login timed out. Run gw login again." },
+        error: { kind: "cancelled", message: "OAuth login timed out. Run gw auth login again." },
       });
       expect(memory.record?.authorization.status).not.toBe("authorized");
       if (callback !== undefined)
