@@ -2,32 +2,41 @@ import { dns } from "bun";
 import { BlockList, isIP } from "node:net";
 import { AuthResult } from "./result.ts";
 
+// OAuth discovery supplies URLs outside our configuration. Reject special-use ranges
+// by default so an upstream cannot send auth requests into local/private services (SSRF).
+// Each tuple is a CIDR network address and prefix length: 10.0.0.0/8 covers all 10.x.x.x.
 const reserved = new BlockList();
 for (const [address, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.0.2.0", 24],
-  ["192.88.99.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["198.51.100.0", 24],
-  ["203.0.113.0", 24],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4],
+  ["0.0.0.0", 8], // "This network" addresses.
+  ["10.0.0.0", 8], // Private network.
+  ["100.64.0.0", 10], // Carrier-grade NAT.
+  ["127.0.0.0", 8], // Loopback.
+  ["169.254.0.0", 16], // Link-local, including some cloud metadata endpoints.
+  ["172.16.0.0", 12], // Private network.
+  ["192.0.0.0", 24], // Special protocol assignments.
+  ["192.0.2.0", 24], // Documentation.
+  ["192.88.99.0", 24], // Deprecated 6to4 relay range.
+  ["192.168.0.0", 16], // Private network.
+  ["198.18.0.0", 15], // Benchmarking.
+  ["198.51.100.0", 24], // Documentation.
+  ["203.0.113.0", 24], // Documentation.
+  ["224.0.0.0", 4], // Multicast.
+  ["240.0.0.0", 4], // Reserved, including limited broadcast.
 ] as const)
   reserved.addSubnet(address, prefix, "ipv4");
 
-reserved.addSubnet("2001::", 23, "ipv6");
-reserved.addSubnet("2001:db8::", 32, "ipv6");
-reserved.addSubnet("2002::", 16, "ipv6");
-reserved.addSubnet("3fff::", 20, "ipv6");
+reserved.addSubnet("2001::", 23, "ipv6"); // Special protocol assignments.
+reserved.addSubnet("2001:db8::", 32, "ipv6"); // Documentation.
+reserved.addSubnet("2002::", 16, "ipv6"); // 6to4 transition addresses.
+reserved.addSubnet("3fff::", 20, "ipv6"); // Documentation.
+
+// Require IPv6 global-unicast space before applying the exclusions above. This also
+// rejects local, multicast, and IPv4-mapped forms rather than checking IPv4 ranges alone.
 const globalIPv6 = new BlockList();
 globalIPv6.addSubnet("2000::", 3, "ipv6");
+
+// Loopback remains blocked by default; oauthEndpoint permits it only when the
+// configured upstream explicitly trusts loopback development endpoints.
 const loopback = new BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
