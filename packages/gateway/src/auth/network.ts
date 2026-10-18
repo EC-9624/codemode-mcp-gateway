@@ -32,8 +32,25 @@ const loopback = new BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
 
+type OAuthDeadline = { signal: AbortSignal; cancellation: AbortSignal };
+
+/** DNS validation and HTTP share one budget without losing the source of cancellation. */
+export function oauthDeadline(signal: AbortSignal, requestSignal?: AbortSignal): OAuthDeadline {
+  const cancellation =
+    requestSignal === undefined ? signal : AbortSignal.any([signal, requestSignal]);
+
+  return {
+    cancellation,
+    signal: AbortSignal.any([cancellation, AbortSignal.timeout(15_000)]),
+  };
+}
+
 /** Validate delegated destinations and pin the approved DNS result for the actual connection. */
-export async function oauthEndpoint(input: string | URL, upstream: string, signal: AbortSignal) {
+export async function oauthEndpoint(
+  input: string | URL,
+  upstream: string,
+  deadline: OAuthDeadline,
+) {
   const url = URL.parse(String(input));
   const configured = new URL(upstream);
   const development = local(host(configured));
@@ -59,11 +76,19 @@ export async function oauthEndpoint(input: string | URL, upstream: string, signa
 
   let addresses;
   try {
-    addresses = family === 0 ? await resolve(hostname, signal) : [{ address: hostname, family }];
+    deadline.signal.throwIfAborted();
+    addresses =
+      family === 0 ? await resolve(hostname, deadline.signal) : [{ address: hostname, family }];
+    deadline.signal.throwIfAborted();
   } catch (cause) {
+    if (deadline.cancellation.aborted)
+      return AuthResult.failure("cancelled", "OAuth operation was cancelled.", cause);
+
     return AuthResult.failure(
-      signal.aborted ? "cancelled" : "unavailable",
-      signal.aborted ? "OAuth operation was cancelled." : "Could not resolve an OAuth endpoint.",
+      "unavailable",
+      deadline.signal.aborted
+        ? "OAuth network operation timed out."
+        : "Could not resolve an OAuth endpoint.",
       cause,
     );
   }

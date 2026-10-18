@@ -19,7 +19,7 @@ import {
 } from "./credentials.ts";
 import { listenForCallback } from "./loopback.ts";
 import { AuthResult, AuthorizationError } from "./result.ts";
-import { oauthEndpoint } from "./network.ts";
+import { oauthDeadline, oauthEndpoint } from "./network.ts";
 
 export type OAuthDiscovery = {
   issuer: string;
@@ -305,7 +305,12 @@ export async function discoverOAuth(
     challengeScope = challenge.scope;
 
     if (resourceMetadataUrl !== undefined) {
-      const permitted = await oauthEndpoint(resourceMetadataUrl, connection.url, signal);
+      const permitted = await oauthEndpoint(
+        resourceMetadataUrl,
+        connection.url,
+        oauthDeadline(signal),
+      );
+
       if (!permitted.ok) return permitted;
     }
 
@@ -336,7 +341,7 @@ export async function discoverOAuth(
   ]) {
     if (endpoint === undefined) continue;
 
-    const permitted = await oauthEndpoint(endpoint, connection.url, signal);
+    const permitted = await oauthEndpoint(endpoint, connection.url, oauthDeadline(signal));
     if (!permitted.ok) return permitted;
   }
 
@@ -372,13 +377,8 @@ export async function discoverOAuth(
 /** OAuth requests have no resource-server headers and cannot redirect credentials. */
 export function authFetch(signal: AbortSignal, upstream: string): FetchLike {
   return async (input, init) => {
-    const combined = AbortSignal.any([
-      signal,
-      AbortSignal.timeout(15_000),
-      ...(init?.signal ? [init.signal] : []),
-    ]);
-
-    const destination = await oauthEndpoint(input, upstream, combined);
+    const deadline = oauthDeadline(signal, init?.signal ?? undefined);
+    const destination = await oauthEndpoint(input, upstream, deadline);
     if (!destination.ok) throw new AuthorizationError(destination.error);
 
     const headers = new Headers(init?.headers);
@@ -389,7 +389,7 @@ export function authFetch(signal: AbortSignal, upstream: string): FetchLike {
     return fetch(destination.value.url, {
       ...init,
       headers,
-      signal: combined,
+      signal: deadline.signal,
       redirect: "error",
       keepalive: false,
       tls: { serverName: destination.value.hostname, rejectUnauthorized: true },

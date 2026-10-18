@@ -49,6 +49,13 @@ export async function connectUpstream(
   const handshake = AbortSignal.any([signal, timeout.signal]);
   let session: OAuthSession | undefined;
   let authorizationUnavailable = false;
+
+  const authorizationFailed = (error: AuthorizationError) => {
+    if (error.recovery !== "retry") authorizationUnavailable = true;
+
+    recovery.failed(error);
+  };
+
   if (upstream.type === "remote" && upstream.oauth) {
     const connection = oauthConnection(name, upstream);
     if (!connection.ok) throw new AuthorizationError(connection.error);
@@ -58,6 +65,7 @@ export async function connectUpstream(
       (options.store ?? credentialStore)(connection.value),
       handshake,
       options.lockDirectory,
+      authorizationFailed,
     );
 
     if (!opened.ok) throw AuthorizationError.beforeExchange(opened.error);
@@ -163,15 +171,7 @@ export async function connectUpstream(
   }
 
   if (session !== undefined)
-    catalog = publicAuthFailures(
-      catalog,
-      (error) => {
-        if (error.recovery !== "retry") authorizationUnavailable = true;
-
-        recovery.failed(error);
-      },
-      recovery.message,
-    );
+    catalog = publicAuthFailures(catalog, authorizationFailed, recovery.message);
 
   // `move()` empties setup and transfers cleanup to the returned connection; otherwise
   // leaving this function would close the resources before the caller could use them.

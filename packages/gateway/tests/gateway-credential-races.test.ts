@@ -1,10 +1,79 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { Configuration, Gateway } from "codemode-mcp-gateway";
+import { Configuration, Gateway, type CredentialStore } from "codemode-mcp-gateway";
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
 import { connect, within } from "./support/gateway.ts";
-import { responseValue } from "./support/output.ts";
+import { responseText, responseValue } from "./support/output.ts";
 
 describe("gateway retired credential races", () => {
+  test("a retired session's rejected save blocks a replacement initializing with the same grant", async () => {
+    await using race = await retiringOAuthSession(() => undefined);
+    const memory = memoryCredentials(race.upstream.credentials());
+    const failure = new Error("Private rotated-token persistence failure");
+
+    const store: CredentialStore = {
+      ...memory.store,
+      async save() {
+        throw failure;
+      },
+    };
+
+    const denied = Promise.withResolvers<void>();
+    const exceptions: unknown[] = [];
+    const now = Date.now();
+    using clock = spyOn(Date, "now").mockReturnValue(now);
+
+    await using gateway = new Gateway(
+      Configuration.parse({
+        mcp: { servers: { notes: { type: "remote", url: race.upstream.url, oauth: {} } } },
+      }),
+      ".",
+      {
+        store: () => store,
+        lockDirectory: race.upstream.lockDirectory,
+        onToolException: (exception) => exceptions.push(exception.cause),
+        onStatus: (status) => {
+          if (status.state === "needs-auth") denied.resolve();
+        },
+      },
+    );
+
+    using gates = new DisposableStack();
+    gates.defer(() => {
+      race.expire.resolve();
+      race.failRefresh.resolve();
+      race.publish.resolve();
+    });
+    await gateway.start();
+    await using agent = await connect(gateway.createServer());
+
+    const expired = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 1, b: 0 });' },
+    });
+
+    await within(race.held.promise);
+
+    const failed = agent.client.callTool({
+      name: "execute",
+      arguments: { code: 'return await tools["notes.add"]({ a: 2, b: 0 });' },
+    });
+
+    await within(race.refreshing.promise);
+    race.expire.resolve();
+    await expired;
+    clock.mockReturnValue(now + 60_000);
+    await within(race.replacing.promise);
+    race.failRefresh.resolve();
+    expect(responseText(await failed)).toContain("Host tool failed.");
+    race.publish.resolve();
+    await within(denied.promise);
+
+    expect(exceptions).toContain(failure);
+    expect(gateway.status()).toMatchObject([{ state: "needs-auth", error: { kind: "storage" } }]);
+    expect(race.handshakes).toBe(2);
+    expect(race.upstream.refreshes).toBe(1);
+  }, 10_000);
+
   test("session expiry cannot erase an uncertain refresh failure for unchanged credentials", async () => {
     await using race = await retiringOAuthSession();
     const memory = memoryCredentials(race.upstream.credentials());
@@ -292,7 +361,10 @@ describe("gateway retired credential races", () => {
 });
 
 /** Gate independent HTTP calls and a replacement handshake; tests own their ordering. */
-async function retiringOAuthSession() {
+async function retiringOAuthSession(
+  refresh: () => Response | undefined = () =>
+    new Response("Private uncertain exchange", { status: 503 }),
+) {
   const held = Promise.withResolvers<void>();
   const expire = Promise.withResolvers<void>();
   const refreshing = Promise.withResolvers<void>();
@@ -335,7 +407,7 @@ async function retiringOAuthSession() {
       refreshing.resolve();
       await failRefresh.promise;
 
-      return new Response("Private uncertain exchange", { status: 503 });
+      return refresh();
     },
   });
 

@@ -41,6 +41,7 @@ export class OAuthSession implements AsyncDisposable {
     private readonly store: CredentialStore,
     signal: AbortSignal,
     private readonly lockDirectory: string | undefined,
+    private readonly failed: ((error: AuthorizationError) => void) | undefined,
   ) {
     this.signal = AbortSignal.any([signal, this.shutdown.signal]);
   }
@@ -50,6 +51,7 @@ export class OAuthSession implements AsyncDisposable {
     store: CredentialStore,
     signal: AbortSignal,
     lockDirectory?: string,
+    failed?: (error: AuthorizationError) => void,
   ): Promise<AuthResult<OAuthSession>> {
     const stored = await store.load();
     if (!stored.ok) return stored;
@@ -80,7 +82,7 @@ export class OAuthSession implements AsyncDisposable {
     }
 
     return AuthResult.success(
-      new OAuthSession(connection, record, discovered.value, store, signal, lockDirectory),
+      new OAuthSession(connection, record, discovered.value, store, signal, lockDirectory, failed),
     );
   }
 
@@ -235,6 +237,13 @@ export class OAuthSession implements AsyncDisposable {
       );
     }
 
+    // From this point, a lost response may have consumed the grant. Unexpected
+    // post-exchange failures must not leave this snapshot eligible for another refresh.
+    this.terminal = AuthResult.failure(
+      "unavailable",
+      "The OAuth refresh outcome is uncertain. Run gw login with the same configuration.",
+    );
+
     let tokens: OAuthTokens;
     try {
       tokens = await refreshAuthorization(this.discovery.authorizationServerUrl, {
@@ -247,13 +256,16 @@ export class OAuthSession implements AsyncDisposable {
     } catch (cause) {
       const held = lease.check();
       const failed = held.ok ? oauthFailure(cause, this.signal) : held;
+      this.terminal = failed;
       if (!failed.ok && failed.error.kind === "required") {
         const invalidated = {
           ...record,
           authorization: { status: "required" },
         } satisfies Credentials;
 
-        const saved = isInvalidClient(cause) ? await store.clear() : await store.save(invalidated);
+        const saved = await this.persist(() =>
+          isInvalidClient(cause) ? store.clear() : store.save(invalidated),
+        );
 
         if (saved.ok) this.record = invalidated;
 
@@ -261,9 +273,6 @@ export class OAuthSession implements AsyncDisposable {
 
         return this.terminal;
       }
-
-      // A lost response may already have rotated the grant; never retry it blindly.
-      this.terminal = failed;
 
       return failed;
     }
@@ -276,7 +285,7 @@ export class OAuthSession implements AsyncDisposable {
     }
 
     // A received rotation must be committed even if the initiating execution was cancelled.
-    const saved = await store.save(updated.value);
+    const saved = await this.persist(() => store.save(updated.value));
     if (!saved.ok) {
       this.terminal = saved;
 
@@ -284,7 +293,28 @@ export class OAuthSession implements AsyncDisposable {
     }
 
     this.record = updated.value;
+    this.terminal = undefined;
 
     return AuthResult.success(updated.value.authorization.tokens.access_token);
+  }
+
+  /** Block the snapshot even when a custom store rejects instead of returning a failure. */
+  private async persist(operation: () => Promise<AuthResult<void>>): Promise<AuthResult<void>> {
+    const failure = {
+      kind: "storage",
+      message:
+        "OAuth credentials could not be persisted. Run gw login with the same configuration.",
+    } satisfies AuthFailure;
+
+    this.terminal = { ok: false, error: failure };
+    try {
+      return await operation();
+    } catch (cause) {
+      // Publish before propagating the original infrastructure exception, so a
+      // replacement connection cannot exchange this same potentially spent grant.
+      this.failed?.(this.authorizationError(failure));
+
+      throw cause;
+    }
   }
 }

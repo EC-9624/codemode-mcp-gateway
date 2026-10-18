@@ -167,8 +167,8 @@ failure moves the affected server to `needs-auth`. Run `gw login --server notion
 using the same configuration; the gateway checks waiting credential records on a
 one-second maintenance cadence and reconnects after an authorized snapshot changes.
 Unchanged failed grants are not refreshed repeatedly, including after session expiry
-or a late failure from a retired connection. Transient OAuth metadata and
-credential-read failures during setup retry with connection backoff. On an already
+or a late failure from a retired connection. Transient OAuth metadata, network timeouts,
+and credential-read failures during setup retry with connection backoff. On an already
 connected session, a pre-exchange credential-read/lock failure fails the current call;
 subsequent executions can use the same session when storage becomes available.
 Uncertain refresh responses and failed persistence after rotation still require
@@ -437,9 +437,15 @@ prevents authenticating the deletion request.
 Refreshes are shared within each process. Rotated tokens are saved before
 being used; a failed refresh or save stops further refresh attempts for that unchanged
 credential snapshot in that process. A newly saved grant permits recovery.
+Post-exchange credential writes that reject instead of returning a failure also block
+that snapshot, including on replacement connections; the original exception stays host-side.
 Remote rotation and local persistence are not transactional: interrupted/lost
 responses can require reauthorization. Auth network requests have a 15-second
-timeout, use HTTPS except for loopback development, and reject HTTP redirects.
+budget covering DNS and HTTP; validation-only endpoint lookups have the same bound.
+These budgets are separate from the five-second MCP handshake and credential-lock waits.
+Network timeouts before an exchange permit retry; caller cancellation remains cancellation,
+and an uncertain exchange is never retried with unchanged credentials.
+Requests use HTTPS except for loopback development and reject HTTP redirects.
 Remote discovery cannot delegate requests to loopback/private/reserved addresses.
 An explicitly configured loopback upstream permits loopback development endpoints;
 an explicitly configured private IP permits endpoints at that same origin. Private
@@ -606,6 +612,8 @@ stdio/HTTP shutdown tests in a flat `tests/` directory, grouped by public subjec
 `gateway-discovery.test.ts`, `gateway-lifecycle.test.ts`, `gateway-recovery.test.ts`,
 and `gateway-credential-races.test.ts` separate discovery/partial availability,
 startup/shutdown, recovery, and retired-credential races without sharing scenario logic.
+`gateway-network.test.ts` covers OAuth network-deadline recovery; `gateway-persistence.test.ts`
+covers rejected credential writes and recovery after a new login.
 `login.test.ts`, `login-callback.test.ts`, `login-network.test.ts`, and `logout.test.ts` specify authorization
 workflows through public login/logout; `credentials.test.ts` specifies the exported schema.
 `authorization.test.ts` exercises running gateways through real SDK clients.
