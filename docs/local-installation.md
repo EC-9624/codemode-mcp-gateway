@@ -245,8 +245,11 @@ produce brief stderr warnings. Piped tools are untruncated, headerless TSV (`nam
 `description`); piped status/probe records contain `upstream`, `state`, `tool count`,
 and `public error message`. Tool pagination hints go to stderr when piped. JSON
 stays complete, including service metadata for status. HTTP startup/state messages
-are human-readable on terminal stderr; redirected HTTP and stdio state changes
-remain JSON lines.
+are human-readable on terminal stderr; redirected HTTP and stdio events use structured
+JSON lines with service/session/execution metadata. `GW_LOG_LEVEL` selects `debug`,
+`info` (default), `warn`, or `error`. Logs do not export to a collector or include code,
+arguments, results, or raw exception messages. See the package's structured logging
+section for the data shape and inherited-upstream-stderr limitation.
 
 ```sh
 bun run gw auth login notion --config packages/gateway/examples/multi.json

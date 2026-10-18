@@ -1,7 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
+import { CodeExecutor, ToolResult, type ToolException } from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor tools", () => {
+  test("per-execution exception observers override the default without mixing concurrent calls", async () => {
+    const defaults: ToolException[] = [];
+    const first: ToolException[] = [];
+    const second: ToolException[] = [];
+
+    const sandbox = new CodeExecutor({
+      tools: {
+        fail: () => {
+          throw new Error("private failure");
+        },
+      },
+      onToolException: (exception) => defaults.push(exception),
+    });
+
+    await Promise.all([
+      sandbox.execute("return await tools.fail();", {
+        onToolException: (exception) => first.push(exception),
+      }),
+      sandbox.execute("return await tools.fail();", {
+        onToolException: (exception) => second.push(exception),
+      }),
+    ]);
+    await sandbox.execute("return await tools.fail();");
+
+    expect(first).toMatchObject([{ callId: 1, name: "fail" }]);
+    expect(second).toMatchObject([{ callId: 1, name: "fail" }]);
+    expect(defaults).toMatchObject([{ callId: 1, name: "fail" }]);
+  });
+
   test("lets the script catch public host errors and continue", async () => {
     const sandbox = new CodeExecutor({
       tools: {

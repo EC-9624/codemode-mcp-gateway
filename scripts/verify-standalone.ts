@@ -127,7 +127,7 @@ const diagnostics = (async () => {
   const decoder = new TextDecoder();
   for await (const chunk of child.stderr) {
     text += decoder.decode(chunk, { stream: true });
-    if (text.includes('"state":"connected"')) ready.resolve();
+    if (text.includes('"gw.upstream.state":"connected"')) ready.resolve();
   }
 
   ready.reject(new Error(`Standalone gateway exited before readiness: ${text}`));
@@ -188,7 +188,35 @@ deepEqual(await agent.callTool({ name: "execute", arguments: { code: "return 43;
 await agent.close();
 child.kill("SIGTERM");
 equal(await bounded(child.exited, "Standalone HTTP process did not shut down."), 143);
-ok(!(await diagnostics).includes(token));
+const logs = await diagnostics;
+ok(!logs.includes(token));
+
+const records = logs
+  .trim()
+  .split("\n")
+  .map((line) => {
+    const value: unknown = JSON.parse(line);
+
+    return z
+      .object({
+        timestamp: z.iso.datetime(),
+        severityNumber: z.number(),
+        eventName: z.string(),
+        resource: z.object({
+          "service.version": z.literal(manifest.version),
+          "service.instance.id": z.uuid(),
+        }),
+        attributes: z.object({ "gw.execution.outcome": z.string().optional() }),
+      })
+      .parse(value);
+  });
+
+ok(records.some((record) => record.eventName === "gw.service.started"));
+ok(records.some((record) => record.attributes["gw.execution.outcome"] === "success"));
+ok(records.some((record) => record.attributes["gw.execution.outcome"] === "timeout"));
+ok(records.some((record) => record.attributes["gw.execution.outcome"] === "cancelled"));
+ok(records.some((record) => record.eventName === "gw.service.stopped"));
+ok(!logs.includes("return 43;"));
 equal(await new Response(child.stdout).text(), "");
 
 const stdioConfig = join(directory, "stdio.json");

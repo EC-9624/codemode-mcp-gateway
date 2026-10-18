@@ -187,8 +187,12 @@ Help groups getting-started, inspection, and authentication commands; focused he
 shows relevant flags and examples. `status` owns the health overview, while `probe`
 labels its results as a fresh connectivity check. Their piped output is headerless
 TSV (`upstream`, `state`, `tool count`, `public error message`). Interactive HTTP
-serving uses readable startup/state messages on stderr; redirected HTTP and stdio
-state changes remain JSON lines. Slow probes and browser authorization show terminal-only progress;
+serving uses readable operational events on terminal stderr; redirected HTTP and stdio
+logs use structured JSON lines. Set `GW_LOG_LEVEL=debug|info|warn|error` (`info` by
+default). Logs correlate sessions/executions without recording code, arguments,
+results, or raw exception messages. There is no telemetry export or new dependency;
+see [structured logging](packages/gateway/README.md#structured-logging).
+Slow probes and browser authorization show terminal-only progress;
 JSON and MCP stdout remain free of presentation messages.
 
 Submit async function bodies to `execute`; top-level `await` and `return` work:

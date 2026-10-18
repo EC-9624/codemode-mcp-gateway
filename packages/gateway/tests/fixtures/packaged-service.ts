@@ -72,7 +72,7 @@ const logs = (async () => {
       if (chunk.done) break;
 
       text += decoder.decode(chunk.value, { stream: true });
-      if (text.includes('"event":"listening"')) ready.resolve();
+      if (text.includes('"eventName":"gw.service.started"')) ready.resolve();
     }
 
     ready.reject(new Error("Installed service exited before readiness"));

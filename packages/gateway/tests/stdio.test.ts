@@ -33,7 +33,7 @@ describe("CMG stdio application", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
 
     const response = await app.client.callTool({
       name: "execute",
@@ -115,6 +115,8 @@ describe("CMG stdio application", () => {
 
       expect(await app.closed).toEqual({ code: 0, signal: null });
       expect(app.stderr).toContain("upstream-exit");
+      expect(app.stderr).toContain('"gw.execution.outcome":"success"');
+      expect(app.stderr).toContain('"gw.shutdown.reason":"eof"');
       expect(() => process.kill(upstream, 0)).toThrow();
     },
     10_000,
@@ -146,6 +148,8 @@ describe("CMG stdio application", () => {
       expect(await app.closed).toEqual({ code, signal: null });
       expect(() => process.kill(upstream, 0)).toThrow();
       expect(app.stderr).toContain("upstream-exit");
+      expect(app.stderr).toContain('"gw.execution.outcome":"cancelled"');
+      expect(app.stderr).toContain('"gw.shutdown.reason":"signal"');
     },
     10_000,
   );
@@ -214,17 +218,17 @@ describe("CMG stdio application", () => {
   test("releases an upstream with an invalid catalog while keeping the gateway available", async () => {
     await using app = await gatewayProcess({ mode: "invalid-schema" });
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"failed"');
+    await app.waitFor('"gw.upstream.state":"failed"');
     const upstream = app.upstreamPid();
 
     expect(() => process.kill(upstream, 0)).toThrow();
-    expect(app.stderr).toContain("Upstream tool discovery failed.");
+    expect(app.stderr).toContain('"error.type":"discovery"');
     expect(await app.client.ping()).toEqual({});
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
   }, 10_000);
 
-  test("logs original protocol errors to stderr while exposing code and message to agents", async () => {
+  test("logs correlated protocol categories without raw messages while preserving agent-facing errors", async () => {
     await using app = await gatewayProcess({ mode: "malformed" });
     await app.client.connect(app.transport, { timeout: 4_000 });
     await app.waitForConnections(1);
@@ -234,7 +238,7 @@ describe("CMG stdio application", () => {
       arguments: { code: 'return await tools["test.malformed"]({});' },
     });
 
-    await app.waitFor('"tool":"test.malformed"');
+    await app.waitFor('"gw.tool.name":"test.malformed"');
     app.child.stdin.end();
 
     expect(response.isError).toBe(true);
@@ -242,14 +246,22 @@ describe("CMG stdio application", () => {
       "MCP tool \"malformed\" failed (code -32602): Structured content does not match the tool's output schema: data must have required property 'sum'",
     );
     expect(JSON.stringify(response)).not.toContain("upstream-private-detail");
-    const line = app.stderr.split("\n").find((entry) => entry.includes('"tool":"test.malformed"'));
+
+    const line = app.stderr
+      .split("\n")
+      .find((entry) => entry.includes('"gw.tool.name":"test.malformed"'));
+
     const logged: unknown = JSON.parse(line ?? "null");
     expect(logged).toMatchObject({
-      tool: "test.malformed",
-      callId: 1,
-      error: { name: "ProtocolError", code: -32602 },
+      eventName: "gw.tool.exception",
+      attributes: {
+        "gw.tool.name": "test.malformed",
+        "gw.tool.call_id": 1,
+        "error.type": "mcp_protocol",
+      },
     });
-    expect(line).toContain("output schema");
+    expect(line).not.toContain("output schema");
+    expect(line).toMatch(/"gw.execution.id":"[a-f0-9-]{36}"/u);
     expect(await app.closed).toEqual({ code: 0, signal: null });
   }, 10_000);
 

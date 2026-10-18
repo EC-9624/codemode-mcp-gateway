@@ -16,6 +16,15 @@ import { GatewayError } from "./errors.ts";
 import { type CredentialOptions } from "./auth/credentials.ts";
 import { discoveryBindings, toolDefinitions } from "./catalog.ts";
 import { type ToolList } from "./tool-list.ts";
+import { type Logger } from "./observability/logger.ts";
+import { ExecutionLog } from "./observability/execution.ts";
+import {
+  type Transport,
+  type SessionContext,
+  type SessionCloseReason,
+  type FailureType,
+} from "./observability/events.ts";
+import { reportServerError } from "./diagnostics.ts";
 
 export { type ServerStatus } from "./upstream/upstream.ts";
 
@@ -25,6 +34,8 @@ export type GatewayOptions = CredentialOptions & {
   onStatus?: (status: ServerStatus) => void;
   /** Receives original tool failure causes for host diagnostics; agents see only public messages. */
   onToolException?: (exception: ToolException) => void;
+  /** Borrowed local logger. Omitted disables structured events; generic protocol diagnostics remain. */
+  logger?: Logger;
 };
 
 /**
@@ -32,6 +43,7 @@ export type GatewayOptions = CredentialOptions & {
  * rather than creating a separate pool for each client.
  */
 export class Gateway implements AsyncDisposable {
+  readonly instanceId: string;
   private readonly shutdown = new AbortController();
   private readonly upstreams: Upstream[];
   private readonly executor: CodeExecutor;
@@ -47,12 +59,14 @@ export class Gateway implements AsyncDisposable {
   private timer: ReturnType<typeof setInterval> | undefined;
   private maintenance: Promise<void> | undefined;
   private readonly abort = () => this.shutdown.abort();
+  private readonly reportedStates = new Map<string, ServerStatus["state"]>();
 
   constructor(
     config: Configuration,
     directory: string,
     private readonly options: GatewayOptions = {},
   ) {
+    this.instanceId = options.logger?.resource["service.instance.id"] ?? crypto.randomUUID();
     const snapshot = structuredClone(config);
     const onToolException = options.onToolException;
     this.executor = new CodeExecutor({
@@ -66,7 +80,23 @@ export class Gateway implements AsyncDisposable {
           changed: () => {
             this.cached = undefined;
           },
-          status: (status) => options.onStatus?.(status),
+          status: (status) => {
+            const previous = this.reportedStates.get(status.name);
+            this.reportedStates.set(status.name, status.state);
+            options.logger?.emit({
+              name: "gw.upstream.state_changed",
+              attributes: {
+                "gw.upstream.name": status.name,
+                "gw.upstream.state": status.state,
+                "gw.upstream.tools": status.toolCount,
+                ...(previous === undefined ? {} : { "gw.upstream.previous_state": previous }),
+                ...("error" in status
+                  ? { "error.type": upstreamErrorType(status.error.kind) }
+                  : {}),
+              },
+            });
+            options.onStatus?.(status);
+          },
           failed: (cause) => this.fail(cause),
         }),
     );
@@ -113,25 +143,62 @@ export class Gateway implements AsyncDisposable {
   }
 
   /** All MCP instances share connections and execution admission. */
-  createServer(): McpServer {
+  createServer(
+    options: { transport?: Transport; closeReason?: () => SessionCloseReason } = {},
+  ): McpServer {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
     const output = new OutputFiles();
+    const started = performance.now();
+
+    const session: SessionContext = {
+      "gw.transport": options.transport ?? "embedded",
+      "gw.session.id": crypto.randomUUID(),
+    };
+
+    const reportProtocolError = () => {
+      if (this.options.logger === undefined) reportServerError();
+      else
+        this.options.logger.emit({
+          name: "gw.protocol.failed",
+          attributes: { ...session, "error.type": "mcp_protocol" },
+        });
+    };
 
     const server = createCodemodeServer({
-      execute: (code, options) => this.execute(code, options),
+      execute: (code, options) => this.execute(code, options, session),
       description: executionInstructions,
-      formatOutput: (text) => output.format(text, (error) => server.server.onerror?.(error)),
+      formatOutput: (text) =>
+        output.format(text, (error) => {
+          this.options.logger?.emit({
+            name: "gw.output.save_failed",
+            attributes: { ...session, "error.type": "output_storage" },
+          });
+          if (this.options.logger === undefined || server.server.onerror !== reportProtocolError)
+            server.server.onerror?.(error);
+        }),
       onClose: async () => {
         try {
           await output.close();
         } finally {
           this.servers.delete(server);
+          this.options.logger?.emit({
+            name: "gw.session.closed",
+            attributes: {
+              ...session,
+              "gw.session.close_reason": this.shutdown.signal.aborted
+                ? "shutdown"
+                : (options.closeReason?.() ?? "client"),
+              "gw.session.duration_ms": performance.now() - started,
+            },
+          });
         }
       },
     });
 
     this.servers.add(server);
+    server.server.onerror = reportProtocolError;
+    this.options.logger?.emit({ name: "gw.session.opened", attributes: session });
 
     return server;
   }
@@ -201,27 +268,58 @@ export class Gateway implements AsyncDisposable {
     return this.cached;
   }
 
-  private async execute(code: string, options?: ExecuteOptions) {
+  private async execute(
+    code: string,
+    options: ExecuteOptions | undefined,
+    session: SessionContext,
+  ) {
     if (this.shutdown.signal.aborted) throw new GatewayError("Gateway is closed.");
 
     const snapshot = this.snapshot();
+
+    const observation =
+      this.options.logger === undefined
+        ? undefined
+        : new ExecutionLog(this.options.logger, session);
+
     // Recovery may replace connections mid-execution. Retain this revision until executor cleanup.
     for (const connection of snapshot.connections) connection.retain();
 
     try {
-      return await this.executor.execute(code, {
+      const report = await this.executor.execute(code, {
         tools: snapshot.tools,
+        ...(observation === undefined
+          ? {}
+          : {
+              onToolException: (exception: ToolException) => {
+                observation.toolException(exception);
+                this.options.onToolException?.(exception);
+              },
+            }),
         signal: AbortSignal.any([
           this.shutdown.signal,
           ...(options?.signal === undefined ? [] : [options.signal]),
         ]),
       });
+
+      observation?.finish(report);
+
+      return report;
+    } catch (cause) {
+      observation?.failed(cause);
+      throw cause;
     } finally {
       for (const connection of snapshot.connections) connection.release();
     }
   }
 
   private fail(cause: unknown) {
+    if (this.fatal === undefined)
+      this.options.logger?.emit({
+        name: "gw.service.failed",
+        attributes: { "gw.component": "gateway", "error.type": "infrastructure" },
+      });
+
     this.fatal ??= { cause };
     this.failed.resolve(cause);
     this.shutdown.abort();
@@ -248,5 +346,17 @@ export class Gateway implements AsyncDisposable {
     if (this.fatal !== undefined) errors.push(this.fatal.cause);
 
     if (errors.length > 0) throw new AggregateError(errors, "Gateway cleanup failed.");
+  }
+}
+
+function upstreamErrorType(kind: string): FailureType {
+  switch (kind) {
+    case "connect":
+    case "discovery":
+    case "connection":
+    case "credentials-changed":
+      return kind;
+    default:
+      return "upstream_authorization";
   }
 }

@@ -60,7 +60,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"needs-auth"');
+    await app.waitFor('"gw.upstream.state":"needs-auth"');
     const pid = app.child.pid;
 
     expect(
@@ -73,7 +73,7 @@ describe("OAuth-backed stdio gateway", () => {
         },
       }),
     ).toEqual({ ok: true, value: undefined });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
 
     const response = await app.client.callTool({
       name: "execute",
@@ -183,7 +183,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     upstream.rejectAccess();
 
     const pending = app.client.callTool({
@@ -276,7 +276,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
 
     const result = await app.client.callTool({
       name: "execute",
@@ -320,7 +320,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     await Bun.write(files.path, JSON.stringify(upstream.credentials(Date.now() - 4_000_000)));
     app.child.stdin.end();
 
@@ -353,7 +353,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     upstream.rejectAccess();
 
     const request = rejectionOf(
@@ -393,7 +393,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"needs-auth"');
+    await app.waitFor('"gw.upstream.state":"needs-auth"');
 
     const status = await app.client.callTool({
       name: "execute",
@@ -404,7 +404,7 @@ describe("OAuth-backed stdio gateway", () => {
       tools: [],
       servers: [{ name: "test", state: "needs-auth" }],
     });
-    expect(app.stderr).toContain("gw auth login");
+    expect(app.stderr).toContain("Upstream unavailable.");
     expect(upstream.requests).toEqual([]);
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
@@ -428,7 +428,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     upstream.rejectAccess();
 
     const result = await app.client.callTool({
@@ -466,7 +466,7 @@ describe("OAuth-backed stdio gateway", () => {
         },
       }),
     ).toMatchObject({ ok: true });
-    await app.waitFor('"state":"needs-auth"');
+    await app.waitFor('"gw.upstream.state":"needs-auth"');
     // A new session adopts the login; wait for its second connection report.
     await app.waitForConnections(2);
     expect(responseValue(await app.client.callTool(input))).toBe(5);
@@ -496,7 +496,7 @@ describe("OAuth-backed stdio gateway", () => {
       });
 
       await app.client.connect(app.transport, { timeout: 4_000 });
-      await app.waitFor('"state":"connected"');
+      await app.waitFor('"gw.upstream.state":"connected"');
       upstream.rejectAccess();
 
       const input = {
@@ -529,8 +529,8 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"needs-auth"');
-    expect(app.stderr).toContain("authorization required");
+    await app.waitFor('"gw.upstream.state":"needs-auth"');
+    expect(app.stderr).toContain('"error.type":"upstream_authorization"');
     expect(upstream.refreshes).toBe(0);
     expect(upstream.requests.every((request) => !request.headers.has("authorization"))).toBe(true);
     app.child.stdin.end();
@@ -561,7 +561,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     connected = true;
     upstream.rejectAccess();
 
@@ -609,7 +609,7 @@ describe("OAuth-backed stdio gateway", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"connected"');
+    await app.waitFor('"gw.upstream.state":"connected"');
     upstream.rejectAccess();
 
     const input = {

@@ -91,12 +91,6 @@ export function formatServers(servers: readonly ServerStatus[], mode: OutputMode
   ].join("\n");
 }
 
-export function formatServerEvent(server: ServerStatus): string {
-  const count = server.state === "connected" ? ` (${server.toolCount} tools)` : "";
-
-  return `${server.name}: ${server.state}${count}${"error" in server ? " — " + server.error.message : ""}`;
-}
-
 /** A delayed, terminal-only hint; cleanup also runs when the operation rejects or is cancelled. */
 export async function withProgress<T>(
   message: string,

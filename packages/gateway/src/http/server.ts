@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type Gateway } from "../gateway.ts";
 import { httpCredential } from "./token.ts";
 import { type HttpStatus } from "./protocol.ts";
-import { reportServerError } from "../diagnostics.ts";
+import { type SessionCloseReason } from "../observability/events.ts";
 
 const optionsSchema = z.strictObject({
   port: z.number().int().min(0).max(65535),
@@ -29,12 +29,13 @@ type Session = {
   requests: number;
   lastActivity: number;
   closing?: Promise<void>;
+  reason: SessionCloseReason;
 };
 
 /** Borrows the gateway; owns only the HTTP listener and its MCP sessions. */
 export class GatewayHttpServer implements AsyncDisposable {
   readonly url: URL;
-  readonly instanceId = crypto.randomUUID();
+  readonly instanceId: string;
   private readonly listener: Bun.Server<undefined>;
   private readonly sessions = new Map<string, Session>();
   private readonly owned = new Set<Session>();
@@ -50,6 +51,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     private readonly gateway: Gateway,
     options: z.output<typeof optionsSchema>,
   ) {
+    this.instanceId = gateway.instanceId;
     this.tokenHash = digest(options.bearerToken);
     this.listener = Bun.serve({
       hostname: "127.0.0.1",
@@ -66,7 +68,7 @@ export class GatewayHttpServer implements AsyncDisposable {
         const now = performance.now();
         for (const session of this.owned) {
           if (session.requests === 0 && now - session.lastActivity >= options.orphanGraceMs) {
-            void this.retire(session).catch((cause: unknown) => {
+            void this.retire(session, "idle").catch((cause: unknown) => {
               this.fail(cause);
             });
           }
@@ -211,18 +213,27 @@ export class GatewayHttpServer implements AsyncDisposable {
 
     if (this.stopped) return new Response("Service is stopping", { status: 503 });
 
-    const server = this.gateway.createServer();
-    server.server.onerror = reportServerError;
+    const server = this.gateway.createServer({
+      transport: "http",
+      closeReason: () => session.reason,
+    });
 
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sessionId) => {
         this.sessions.set(sessionId, session);
       },
-      onsessionclosed: () => this.retire(session),
+      onsessionclosed: () => this.retire(session, "client"),
     });
 
-    const session: Session = { server, transport, requests: 0, lastActivity: performance.now() };
+    const session: Session = {
+      server,
+      transport,
+      requests: 0,
+      lastActivity: performance.now(),
+      reason: "initialization_failed",
+    };
+
     this.owned.add(session);
     try {
       await server.connect(transport);
@@ -237,7 +248,7 @@ export class GatewayHttpServer implements AsyncDisposable {
         try {
           onClose?.();
         } finally {
-          void this.retire(session).catch((cause: unknown) => {
+          void this.retire(session, "transport").catch((cause: unknown) => {
             this.fail(cause);
           });
         }
@@ -322,7 +333,12 @@ export class GatewayHttpServer implements AsyncDisposable {
     return new Response(body, { status: response.status, headers: response.headers });
   }
 
-  private retire(session: Session): Promise<void> {
+  private retire(
+    session: Session,
+    reason: SessionCloseReason = "initialization_failed",
+  ): Promise<void> {
+    if (session.closing === undefined) session.reason = reason;
+
     // Publish the shared closing promise before server.close() can reenter via callbacks.
     session.closing ??= Promise.resolve().then(async () => {
       const id = session.transport.sessionId;
@@ -351,7 +367,7 @@ export class GatewayHttpServer implements AsyncDisposable {
   private async dispose() {
     clearInterval(this.timer);
     const stopping = this.listener.stop(false);
-    const pending = [...this.owned].map((session) => this.retire(session));
+    const pending = [...this.owned].map((session) => this.retire(session, "shutdown"));
     const results = await Promise.allSettled(new Set([...pending, ...this.retiring]));
     await this.listener.stop(true);
     await stopping;

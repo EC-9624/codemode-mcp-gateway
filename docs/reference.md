@@ -644,7 +644,9 @@ Guest response handling preserves MCP data:
   excluded; messages are public, not redacted, and must not contain secrets.
   Other invocation exceptions remain generic `Host tool failed.` rejections.
   Hosts observe the original cause in both cases through `onToolException`; `gw`
-  writes the original error name/message/code to stderr.
+  emits structured `gw.tool.exception` events with session/execution IDs, the
+  qualified tool name, call ID, and a controlled error category. Raw exception
+  messages, stacks, and response data are not included in operational logs.
 
 A completed call can therefore have delivered an upstream response with
 `isError: true`: the summary records completion, while the MCP flag received by

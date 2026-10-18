@@ -61,6 +61,8 @@ export type ExecuteOptions = {
   tools?: Readonly<Record<string, SandboxTool>>;
   /** Caller cancellation. The reason stays private; worker cleanup is still awaited. */
   signal?: AbortSignal;
+  /** Per-execution observer; overrides the constructor observer when supplied. */
+  onToolException?: (exception: ToolException) => void;
 };
 
 /** Fixed configuration and default tool bindings, snapshotted at construction. */

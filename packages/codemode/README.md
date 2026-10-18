@@ -115,6 +115,10 @@ execution is still running. Failures after the outcome is fixed, such as tools r
 abort, are not reported. If the observer throws, the execution rejects with
 `SandboxExecutionError` carrying that error.
 
+An `execute(code, { onToolException })` observer overrides the constructor default
+for that execution only, allowing concurrent callers to retain their own diagnostic
+context. It has the same private-cause and observer-failure contract.
+
 Call records stay in invocation order and contain only `callId`, `name`, `status`,
 and an interruption `reason` when applicable. `completed` means the parent serialized
 a response before execution ended, including tool failures; it does not establish

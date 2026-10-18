@@ -1,5 +1,4 @@
 import { dirname } from "node:path";
-import { z } from "zod";
 import { serve } from "../stdio/serve.ts";
 import { login, logout } from "../auth/login.ts";
 import { type CredentialOptions } from "../auth/credentials.ts";
@@ -20,9 +19,7 @@ import { formatToolList } from "./tool-list.ts";
 import { setup } from "./setup.ts";
 import { commandHelp, parseCommand } from "./command.ts";
 import { outputMode, withProgress, wrapText } from "./presentation.ts";
-
-// Standalone builds embed this value; ordinary package/source runs read their manifest.
-declare const GW_BUILD_VERSION: string;
+import { gatewayVersion } from "../version.ts";
 
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
@@ -45,14 +42,7 @@ export async function main(
   }
 
   if (command.kind === "version") {
-    const version =
-      typeof GW_BUILD_VERSION === "undefined"
-        ? z
-            .object({ version: z.string() })
-            .parse(await Bun.file(new URL("../../package.json", import.meta.url)).json()).version
-        : GW_BUILD_VERSION;
-
-    console.log(`gw ${version}`);
+    console.log(`gw ${await gatewayVersion()}`);
 
     return 0;
   }

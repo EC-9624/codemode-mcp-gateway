@@ -204,11 +204,11 @@ describe("CMG HTTP upstream", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"failed"');
+    await app.waitFor('"gw.upstream.state":"failed"');
     expect(await app.client.ping()).toEqual({});
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
-    expect(app.stderr).toContain("authentication");
+    expect(app.stderr).toContain('"error.type":"connect"');
     expect(app.stderr).not.toContain("Private upstream challenge");
     expect(app.stderr).not.toContain("synthetic-token");
   }, 10_000);
@@ -226,10 +226,10 @@ describe("CMG HTTP upstream", () => {
     });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"failed"');
+    await app.waitFor('"gw.upstream.state":"failed"');
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
-    expect(app.stderr).toContain("Missing environment variable CMG_TEST_MISSING_TOKEN");
+    expect(app.stderr).toContain('"error.type":"connection"');
     expect(upstream.requests).toHaveLength(0);
   }, 10_000);
 
@@ -244,10 +244,10 @@ describe("CMG HTTP upstream", () => {
     await using app = await gatewayProcess({ upstream: { type: "remote", url: upstream.url } });
 
     await app.client.connect(app.transport, { timeout: 4_000 });
-    await app.waitFor('"state":"failed"');
+    await app.waitFor('"gw.upstream.state":"failed"');
     app.child.stdin.end();
     expect(await app.closed).toEqual({ code: 0, signal: null });
-    expect(app.stderr).toContain("Upstream tool discovery failed");
+    expect(app.stderr).toContain('"error.type":"discovery"');
     expect(upstream.requests.some((request) => request.method === "DELETE")).toBe(true);
   }, 10_000);
 });

@@ -116,7 +116,7 @@ export async function gatewayProcess(
     },
     async waitForConnections(count: number) {
       const signal = AbortSignal.timeout(4_000);
-      while (stderr.split('"state":"connected"').length - 1 < count)
+      while (stderr.split('"gw.upstream.state":"connected"').length - 1 < count)
         await once(child.stderr, "data", { signal });
     },
     [Symbol.asyncDispose]: () => cleanup.disposeAsync(),

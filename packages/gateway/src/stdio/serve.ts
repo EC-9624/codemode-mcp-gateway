@@ -2,7 +2,7 @@
  * Process lifetime of the stdio gateway. Gateway owns connections and MCP instances.
  *
  * Discovery/status is available while upstreams initialize independently. EOF cancels setup.
- * Status changes and tool exception diagnostics are written to stderr as JSON lines;
+ * Gateway events use terminal text or structured JSON on stderr;
  * agents receive public protocol messages but only `Host tool failed.` for unknown exceptions.
  *
  * EOF, SIGINT, and SIGTERM abort setup and active executions. Cleanup closes the MCP
@@ -14,7 +14,7 @@ import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/s
 import { readConfiguration } from "../config.ts";
 import { type CredentialOptions } from "../auth/credentials.ts";
 import { Gateway } from "../gateway.ts";
-import { reportServerError, reportToolException } from "../diagnostics.ts";
+import { Logger } from "../observability/logger.ts";
 
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
@@ -24,16 +24,36 @@ import { reportServerError, reportToolException } from "../diagnostics.ts";
  */
 export async function serve(
   path: string,
-  options: CredentialOptions & { signal?: AbortSignal } = {},
+  options: CredentialOptions & { signal?: AbortSignal; logger?: Logger } = {},
 ): Promise<void> {
   options.signal?.throwIfAborted();
   const config = await readConfiguration(path);
   options.signal?.throwIfAborted();
   await using cleanup = new AsyncDisposableStack();
+  const logger = options.logger ?? (await Logger.fromEnvironment());
+
+  const started = performance.now();
+  let reason: "signal" | "host" | "failure" | "eof" = "host";
+  cleanup.defer(() =>
+    logger.emit({
+      name: "gw.service.stopped",
+      attributes: {
+        "gw.transport": "stdio",
+        "gw.shutdown.reason": reason,
+        "gw.service.duration_ms": performance.now() - started,
+      },
+    }),
+  );
   const shutdown = new AbortController();
   const stopped = Promise.withResolvers<void>();
 
   const stop = () => {
+    if (
+      !shutdown.signal.aborted &&
+      (options.signal?.reason === "SIGINT" || options.signal?.reason === "SIGTERM")
+    )
+      reason = "signal";
+
     shutdown.abort();
     stopped.resolve();
   };
@@ -43,31 +63,37 @@ export async function serve(
   if (options.signal?.aborted) stop();
 
   for (const event of ["SIGINT", "SIGTERM"] as const) {
-    process.on(event, stop);
+    const interrupted = () => {
+      reason = "signal";
+      stop();
+    };
+
+    process.on(event, interrupted);
     cleanup.defer(() => {
-      process.off(event, stop);
+      process.off(event, interrupted);
     });
   }
 
   if (shutdown.signal.aborted) return;
 
-  const gateway = cleanup.use(
-    new Gateway(config, dirname(path), {
-      ...options,
-      signal: shutdown.signal,
-      onStatus: (status) => {
-        console.error(
-          JSON.stringify({
-            server: status.name,
-            state: status.state,
-            toolCount: status.toolCount,
-            ...("error" in status ? { error: status.error } : {}),
-          }),
-        );
-      },
-      onToolException: reportToolException,
-    }),
-  );
+  const gateway = new Gateway(config, dirname(path), {
+    ...options,
+    signal: shutdown.signal,
+    logger,
+  });
+
+  cleanup.defer(async () => {
+    try {
+      await gateway.close();
+    } catch (cause) {
+      reason = "failure";
+      logger.emit({
+        name: "gw.service.failed",
+        attributes: { "gw.component": "cleanup", "error.type": "cleanup" },
+      });
+      throw cause;
+    }
+  });
 
   const ready = gateway.start();
 
@@ -75,22 +101,29 @@ export async function serve(
 
   const entry = serveStdio(
     () => {
-      const server = gateway.createServer();
-      server.server.onerror = reportServerError;
-
-      return server;
+      return gateway.createServer({ transport: "stdio", closeReason: () => "transport" });
     },
     {
       transport: wire,
-      onerror: () => console.error("CMG protocol error."),
+      onerror: () =>
+        logger.emit({
+          name: "gw.service.failed",
+          attributes: { "gw.component": "stdio", "error.type": "mcp_protocol" },
+        }),
     },
   );
 
   cleanup.defer(() => entry.close());
+  logger.emit({
+    name: "gw.service.started",
+    attributes: { "gw.transport": "stdio", "process.pid": process.pid },
+  });
   // Preserve the SDK's close callback while observing EOF even before handshake.
   const onClose = wire.onclose;
   wire.onclose = () => {
     onClose?.();
+    if (!shutdown.signal.aborted) reason = "eof";
+
     stop();
   };
 
@@ -103,7 +136,14 @@ export async function serve(
       }),
     ]);
   } catch (error) {
-    if (!shutdown.signal.aborted) throw error;
+    if (!shutdown.signal.aborted) {
+      reason = "failure";
+      logger.emit({
+        name: "gw.service.failed",
+        attributes: { "gw.component": "stdio", "error.type": "infrastructure" },
+      });
+      throw error;
+    }
   } finally {
     stop();
   }

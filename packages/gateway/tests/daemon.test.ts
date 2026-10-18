@@ -13,15 +13,15 @@ const token = "synthetic-persistent-http-token-0123456789";
 
 test("interactive HTTP serving reports readable startup and upstream events only on stderr", async () => {
   await using files = await fixture();
-  const app = await start(files, {}, "notes: disabled", true);
+  const app = await start(files, {}, "state=disabled", true);
 
   await app.stop();
   const logs = await app.logs;
 
-  expect(logs).toContain(`Gateway listening at ${files.origin}/mcp`);
-  expect(logs).toContain("Press Ctrl-C to stop.");
-  expect(logs).toContain("notes: disabled");
-  expect(logs).not.toContain('"event":"listening"');
+  expect(logs).toContain("INFO  Gateway listening.");
+  expect(logs).toContain(`port=${files.port}`);
+  expect(logs).toContain("upstream=notes state=disabled");
+  expect(logs).not.toContain('"eventName":"gw.service.started"');
   expect(logs).not.toContain(token);
   expect(await new Response(app.child.stdout).text()).toBe("");
 });
@@ -46,7 +46,7 @@ test("HTTP serving logs protocol failures without exposing upstream response dat
       },
     }),
   );
-  const app = await start(files, {}, '"state":"connected"');
+  const app = await start(files, {}, '"gw.upstream.state":"connected"');
   await using agent = await connect(files);
 
   const response = await agent.client.callTool({
@@ -61,8 +61,9 @@ test("HTTP serving logs protocol failures without exposing upstream response dat
   expect(responseText(response)).toBe(
     "MCP tool \"malformed\" failed (code -32602): Structured content does not match the tool's output schema: data must have required property 'sum'",
   );
-  expect(logs).toContain('"tool":"test.malformed","callId":1');
-  expect(logs).toContain('"name":"ProtocolError"');
+  expect(logs).toContain('"eventName":"gw.tool.exception"');
+  expect(logs).toContain('"gw.tool.name":"test.malformed","gw.tool.call_id":1');
+  expect(logs).toContain('"error.type":"mcp_protocol"');
   expect(logs + JSON.stringify(response)).not.toContain("upstream-private-detail");
   expect(logs).not.toContain(token);
 });
@@ -123,7 +124,7 @@ test("status succeeds when it reads a failed upstream without probing another co
       mcp: { servers: { missing: { type: "local", command: ["must-not-exist"] } } },
     }),
   );
-  const app = await start(files, {}, '"state":"failed"');
+  const app = await start(files, {}, '"gw.upstream.state":"failed"');
 
   const status = files.spawn(["status", "--config", files.config, "--json"]);
   const output = new Response(status.stdout).json();
@@ -248,7 +249,7 @@ test("an occupied port fails without probing its owner or starting upstream conn
 
   expect(await child.exited).toBe(1);
   expect(await logs).toContain("already in use");
-  expect(await logs).not.toContain('"state":"connecting"');
+  expect(await logs).not.toContain('"gw.upstream.state":"connecting"');
   expect(await logs).not.toContain(token);
   expect(requests).toHaveLength(0);
 });
@@ -477,7 +478,7 @@ test("tools list selects the running catalog rather than local upstream definiti
       },
     }),
   );
-  const app = await start(files, {}, '"state":"connected"');
+  const app = await start(files, {}, '"gw.upstream.state":"connected"');
   const diagnostic = join(files.directory, "tools.json");
   await Bun.write(
     diagnostic,
@@ -525,7 +526,7 @@ test("piped tools list contains only tool records and puts unavailable-upstream 
       },
     }),
   );
-  const app = await start(files, {}, '"state":"connected"');
+  const app = await start(files, {}, '"gw.upstream.state":"connected"');
 
   const child = files.spawn(["tools", "list", "-c", files.config]);
   const output = new Response(child.stdout).text();
@@ -548,7 +549,7 @@ test("tools list reports a failed upstream explicitly instead of treating it as 
       mcp: { servers: { missing: { type: "local", command: ["nonexistent-tools-upstream"] } } },
     }),
   );
-  const app = await start(files, {}, '"state":"failed"');
+  const app = await start(files, {}, '"gw.upstream.state":"failed"');
 
   const child = files.spawn(["tools", "list", "missing", "-c", files.config, "--json"]);
   const output = new Response(child.stdout).json();
@@ -693,7 +694,7 @@ async function fixture() {
 async function start(
   files: Awaited<ReturnType<typeof fixture>>,
   environment: NodeJS.ProcessEnv = {},
-  marker = '"event":"listening"',
+  marker = '"eventName":"gw.service.started"',
   terminal = false,
 ) {
   const child = files.spawn(["serve", "--config", files.config], environment, terminal);

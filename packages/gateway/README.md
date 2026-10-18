@@ -199,10 +199,11 @@ OAuth storage identity is the server name plus canonical URL.
 Invalid configuration fails before connecting. Enabled upstreams initialize
 independently; the agent-facing server is available while they connect. Expected
 failures leave other upstreams usable, including when no upstream is ready yet.
-State changes use readable messages on interactive HTTP stderr, and JSON lines on
-redirected HTTP stderr and stdio stderr. States are `disabled`,
+State changes use readable messages on terminal stderr and structured JSON lines on
+redirected stderr, for both HTTP and stdio. States are `disabled`,
 `connecting`, `connected`, `needs-auth`, and `failed`, with tool counts and controlled
-error messages. Status is last-observed connection state, not an active health check.
+error categories in logs; status/discovery retains public recovery messages.
+Status is last-observed connection state, not an active health check.
 
 ```js
 return await tools.searchTools({ query: "search documents", server: "notion" });
@@ -319,6 +320,86 @@ For the synthetic upstream, the agent-facing MCP response is:
 
 Use bracket notation for exact qualified names. Local discovery calls share the execution budget.
 
+## Structured logging
+
+`gw serve` writes operational events to stderr: readable lines on a terminal, one
+JSON object per line when redirected. Stdio stdout remains exclusively MCP; CLI
+command results and explicit OAuth/browser instructions are not operational logs.
+
+```sh
+gw serve                          # Readable terminal events
+gw serve 2>gateway.jsonl           # Structured records
+GW_LOG_LEVEL=debug gw serve        # Include session lifecycle events
+GW_LOG_LEVEL=warn gw serve         # Warnings and errors only
+```
+
+`GW_LOG_LEVEL` accepts `debug`, `info` (default), `warn`, or `error`. Invalid values
+fail before serving. Initial upstream states/transitions and successful/cancelled
+executions are informational. Session open/close events are debug; recoverable
+upstream/tool failures and guest failures are warnings; infrastructure failures
+are errors. Events include:
+
+- `gw.service.started`, `gw.service.stopped`, `gw.service.failed`
+- `gw.upstream.state_changed`
+- `gw.session.opened`, `gw.session.closed`
+- `gw.execution.finished`, `gw.tool.exception`
+- `gw.protocol.failed`, `gw.output.save_failed`, `gw.logging.failed`
+
+Records follow an OpenTelemetry-aligned logical shape, **not OTLP wire JSON**:
+
+```json
+{
+  "timestamp": "2026-10-18T06:20:15.123Z",
+  "severityNumber": 9,
+  "severityText": "INFO",
+  "eventName": "gw.execution.finished",
+  "body": "Execution finished.",
+  "resource": {
+    "service.name": "codemode-mcp-gateway",
+    "service.version": "0.0.0",
+    "service.instance.id": "92a35cc7-6428-4692-afab-a6ec2797c565"
+  },
+  "instrumentationScope": { "name": "codemode-mcp-gateway", "version": "0.0.0" },
+  "attributes": {
+    "gw.transport": "http",
+    "gw.session.id": "7364dfee-a32c-4627-89b3-7d5cbe0c313d",
+    "gw.execution.id": "c236f042-691e-43a3-82fa-02c76e257b90",
+    "gw.execution.outcome": "success",
+    "gw.execution.duration_ms": 142.6,
+    "gw.execution.calls.total": 3,
+    "gw.execution.calls.completed": 3,
+    "gw.execution.calls.interrupted": 0
+  }
+}
+```
+
+Session IDs are locally generated diagnostic identifiers, not HTTP MCP session IDs.
+Call IDs are execution-local and must be correlated with execution IDs. Durations
+use a monotonic clock and cover executor settlement/worker cleanup, not response
+formatting or streaming. Outcomes distinguish `success`, `script_error`, `timeout`,
+`cancelled`, `limit` (with `gw.execution.limit.resource`), and `infrastructure_error`.
+A completed call means its response was serialized, not that its external operation
+succeeded. An execution can catch a tool failure and still return successfully.
+
+Gateway records never include submitted code, tool arguments/results, credentials,
+headers, raw exception messages, or stacks. Explicit public errors still reach agents
+under the existing protocol contract. Inherited local upstream stderr is separate,
+untrusted output and may contain arbitrary text; it is not converted into these events.
+
+There is **no OpenTelemetry dependency, OTLP export, tracing, metrics collection, or
+network delivery** in this implementation. Trace/span fields are not fabricated.
+OTEL exporter environment variables do not enable export. File redirection/rotation
+belongs to the caller. Logging is best-effort: a failing sink is reported once without
+changing execution outcomes. Buffered stderr above 64 KiB causes whole-record drops;
+a later writable emission reports the drop count. A blocked or broken stderr may
+prevent that warning from being delivered.
+
+Programmatic callers opt in with `new Logger({ version, level, onLog })` and
+`new Gateway(config, directory, { logger })`, imported from the package root.
+`onLog` receives the same full records instead of the default renderer. Instances
+do not install global hooks, start network activity, or need shutdown flushing.
+`GatewayHttpServer` borrows the gateway's logger; importing the package does not log.
+
 ## Results and failures
 
 The response contains only the returned value: strings as plain text, other values
@@ -332,8 +413,9 @@ error messages. Infrastructure failures show `Sandbox execution failed.`; privat
 diagnostics stay host-side. MCP protocol errors reject in the script with the original tool name,
 numeric code, and message, including SDK-generated output-schema errors. Error data
 and stacks are excluded; messages are public and are not redacted. Unknown exceptions
-still reject as `Host tool failed.`. For both cases, `gw` writes the qualified tool
-name, call ID, and original error name/message/code to stderr as one JSON line.
+still reject as `Host tool failed.`. For both cases, `gw` emits a `gw.tool.exception`
+event with the qualified tool name, session/execution IDs, call ID, and a controlled
+error category. Raw error messages and stacks are excluded from operational logs.
 Cancellation cannot roll back upstream side effects. Metadata-only call reports
 belong to the host executor; they are not sent in agent-facing MCP responses.
 
@@ -705,6 +787,13 @@ upstream/
   connection.ts        One outgoing transport/OAuth session and its cleanup
 
 auth/                  Upstream OAuth, credential stores, and login/logout
+
+observability/
+  events.ts            Typed metadata-only event contracts and severity
+  logger.ts            Local structured logger and level filtering
+  presentation.ts      JSON/terminal rendering of the same records
+  config.ts            Logging environment validation
+  execution.ts         Execution-local correlation and outcome logging
 ```
 
 Gateway startup and recovery passes are serialized, so no separate connection-attempt
