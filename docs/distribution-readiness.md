@@ -5,8 +5,8 @@ deliverables. Documentation cleanup does not publish or approve any artifact.
 
 ## Public source repository
 
-- [ ] Choose a license for original project code and include it consistently.
-      Existing third-party MIT notices do not license this project.
+- [x] License original project code under MIT, with license files and metadata in
+      the repository and workspace packages. Third-party notices remain separate.
 - [ ] Choose the GitHub owner/repository URL before adding permanent external links.
 - [ ] Scan the working tree **and Git history** for credentials/private data. Moving
       or redacting a file in HEAD does not remove earlier copies; investigate findings,

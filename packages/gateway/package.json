@@ -3,12 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "description": "A Bun MCP service composing code-mode execution and upstream MCP tools",
+  "license": "MIT",
   "bin": {
     "gw": "./dist/cli.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "main": "./dist/index.js",

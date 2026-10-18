@@ -2,9 +2,11 @@
   "name": "@codemode-mcp-gateway/codemode",
   "version": "0.0.0",
   "description": "Run JavaScript with application-supplied tools in worker-backed QuickJS on Bun",
+  "license": "MIT",
   "files": [
     "dist",
     "README.md",
+    "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",

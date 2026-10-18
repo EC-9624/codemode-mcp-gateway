@@ -1,30 +1,21 @@
 # codemode-mcp-gateway
 
-A code-mode gateway for MCP tools. Connect your upstream MCP servers once, then let
-coding agents discover tools, compose calls, and filter results with JavaScript.
-The gateway exposes one MCP tool, `execute`, rather than putting every upstream
-schema into the client's tool catalog. It does not run a model or agent loop.
+**Connect your MCP servers once. Discover and compose their tools with JavaScript.**
 
-Development and source/package runs require **Bun 1.4.3**, pinned in `.bun-version`.
-The standalone `gw` executable includes its runtime. Package names are provisional;
-nothing has been published. This is a working MVP, not an OS-isolated or
-production-hardened sandbox.
+codemode-mcp-gateway exposes one MCP tool, `execute`, instead of adding every upstream
+tool schema to your agent's tool catalog. Agents discover tools on demand, inspect
+their schemas, and write JavaScript to combine calls and return relevant results.
 
-## Try the local demo
+Use it with MCP clients such as Claude Code and Codex. The gateway handles tool
+connections and execution—not models or agent loops.
 
-```sh
-bun install --frozen-lockfile --ignore-scripts
-bun run example:server
-```
+**Status:** Working MVP. Build from source with **Bun 1.4.3**;
 
-The example launches a client, gateway, and synthetic math MCP upstream, discovers
-`add`, inspects its schema, and returns 5. Repository commands run source directly;
-these examples do not require a build.
+## Quick start
 
-No configuration, credentials, model calls, or external provider is needed. See
-the [example index](examples/README.md) for package-specific commands and expected output.
+### 1. Install
 
-## Install and set up gw
+Requires **Bun 1.4.3**. Run from the repository root:
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
@@ -32,37 +23,124 @@ bun run install:gw
 "$HOME/.local/bin/gw" --version
 ```
 
-This builds `dist/gw` and installs it at `~/.local/bin/gw`. Add that directory to
-PATH yourself, or use the absolute path. No shell files, clients, or services are
-changed. Use `--force` to explicitly replace an installed executable; use
-`bun run build:standalone` for build-only output. Builds target the host platform;
-standalone checks currently establish macOS arm64, not a cross-platform release.
-No downloadable release binaries or registry packages are published yet.
+Add `~/.local/bin` to your `PATH` to use `gw` directly.
+
+The standalone executable includes its runtime. Local upstream servers may still
+require their own runtimes and dependencies. Builds target the current platform;
+standalone verification currently covers macOS arm64.
+
+### 2. Configure your MCP servers
+
+Prepare the configuration and HTTP authentication token:
 
 ```sh
 gw setup --transport http
-# Edit ~/.config/codemode-mcp-gateway/config.json to define your upstreams.
-gw config check
-gw auth login notion  # Only for a configured OAuth upstream named notion.
-gw probe              # Optional: test fresh upstream connections, then close them.
-gw serve              # Foreground HTTP gateway; keep this terminal running.
 ```
 
-Without `--transport http`, `setup` creates only missing configuration; HTTP token preparation is explicit.
-It never configures clients, authorizes upstreams, or starts a process. Its starter
-has no upstreams and is not runnable until edited. For example, a Notion-only
-configuration is `{ "mcp": { "servers": { "notion": { "type": "remote",
-"url": "https://mcp.notion.com/mcp", "oauth": {} } } } }`.
+Edit `~/.config/codemode-mcp-gateway/config.json`. For example, to connect Notion:
 
-### Connect Codex and Claude Code over HTTP
+```json
+{
+  "mcp": {
+    "servers": {
+      "notion": {
+        "type": "remote",
+        "url": "https://mcp.notion.com/mcp",
+        "oauth": {}
+      }
+    }
+  }
+}
+```
 
-Both clients connect to the same running gateway at `http://127.0.0.1:4791/mcp`.
-In a separate terminal, check it with `gw status --json`. Obtain its token with
-`gw token show` privately, then replace `<your-private-token>` below. These are
-placeholders: never commit real tokens or copy them into logs.
+Validate the configuration and authorize access:
 
-**Codex:** merge this entry into your private `~/.codex/config.toml` (or
-`$CODEX_HOME/config.toml`):
+```sh
+gw config check
+gw auth login notion
+```
+
+Login is explicit and interactive. The running gateway uses saved credentials and
+refreshes them noninteractively.
+
+For a local MCP server, use a command instead:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "my-server": {
+        "type": "local",
+        "command": ["bun", "/absolute/path/to/mcp-server.ts"]
+      }
+    }
+  }
+}
+```
+
+The local server must already exist and support MCP over stdio. Its working
+directory defaults to the configuration directory. Local and remote servers can
+coexist under `mcp.servers`.
+
+Setup creates only missing gateway files. It does not configure clients, authorize
+upstreams, or start a process.
+
+### 3. Start the gateway
+
+```sh
+gw serve
+```
+
+Keep this terminal running. The default endpoint is:
+
+```text
+http://127.0.0.1:4791/mcp
+```
+
+In another terminal, check upstream readiness and browse tools:
+
+```sh
+gw status
+gw tools list
+gw tools list notion
+```
+
+Upstreams connect independently. Connected servers remain usable if another server
+is unavailable.
+
+### 4. Connect your agent
+
+Retrieve your gateway token privately:
+
+```sh
+gw token show
+```
+
+Replace `<your-private-token>` below. **Never commit real tokens or copy them into
+logs.** Gateway HTTP authentication is separate from upstream OAuth.
+
+#### Claude Code
+
+Merge this entry into the user-level `mcpServers` object in `~/.claude.json`,
+preserving existing settings:
+
+```json
+{
+  "mcpServers": {
+    "codemode-mcp-gateway": {
+      "type": "http",
+      "url": "http://127.0.0.1:4791/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-private-token>"
+      }
+    }
+  }
+}
+```
+
+#### Codex
+
+Add this entry to `~/.codex/config.toml`, or `$CODEX_HOME/config.toml`:
 
 ```toml
 [mcp_servers.codemode-mcp-gateway]
@@ -72,36 +150,121 @@ startup_timeout_sec = 60
 tool_timeout_sec = 60
 ```
 
-**Claude Code:** merge this entry into the user-level `mcpServers` object in
-`~/.claude.json`, preserving any other servers and settings:
+Restart or reconnect your client after editing its configuration.
 
-```json
-{
-  "mcpServers": {
-    "codemode-mcp-gateway": {
-      "type": "http",
-      "url": "http://127.0.0.1:4791/mcp",
-      "headers": { "Authorization": "Bearer <your-private-token>" }
-    }
-  }
-}
+Both clients can share the running gateway. They do not launch it, and closing
+either client does not stop it.
+
+## Discover, inspect, call
+
+Agents submit JavaScript to `execute({ code })`. Code runs as an async function
+body, so top-level `await` and `return` work.
+
+These examples use the math upstream from the [gateway examples](packages/gateway/examples/README.md).
+Each snippet is a separate `execute` invocation—not a terminal command.
+
+### Discover tools
+
+```js
+return await tools.searchTools({
+  query: "add numbers",
+  server: "math",
+});
 ```
 
-Restart/reconnect the clients after editing their configuration. They do not launch
-`gw`; keep the HTTP process running yourself. Closing either client does not stop
-the gateway or the other client's session. Existing HTTP registrations and saved
-upstream OAuth credentials need no change when updating the executable.
+Search returns ranked name and description previews, pagination information, and
+upstream availability. Full schemas are fetched separately.
 
-`gw serve` defaults to authenticated loopback HTTP; `--transport http` is equivalent.
-It reads the private token or `GW_HTTP_TOKEN`, never provisions or rotates it.
-Upstream OAuth remains separate and explicit. Remote network hosting is not
-implemented. See [local deployment](docs/local-installation.md) for nondefault
-paths, updates, token rotation, and the local-port trust limitation.
+### Inspect a schema
 
-### Optional client-owned stdio
+Use the exact qualified name returned by discovery:
 
-For a client that should launch its own gateway instead of using shared HTTP,
-configure a stdio command rather than a URL/header entry:
+```js
+return await tools.describeTool({ name: "math.add" });
+```
+
+### Call the tool
+
+After inspecting its schema:
+
+```js
+const response = await tools["math.add"]({ a: 2, b: 3 });
+
+if (response.isError) {
+  return response.content;
+}
+
+return response.structuredContent.sum;
+```
+
+The result is `5`.
+
+Complete upstream MCP responses are available inside the script. Check `isError`
+explicitly: an upstream tool error is returned data, not automatically a thrown
+JavaScript exception.
+
+### Compose calls
+
+Use ordinary JavaScript to combine independent requests and select the result you
+need:
+
+```js
+const responses = await Promise.all([
+  tools["math.add"]({ a: 2, b: 3 }),
+  tools["math.add"]({ a: 10, b: 20 }),
+]);
+
+return responses.map((response) => {
+  if (response.isError) {
+    return { error: response.content };
+  }
+
+  return { sum: response.structuredContent.sum };
+});
+```
+
+## CLI examples
+
+```sh
+# Validate configuration without connecting
+gw config check
+
+# Test fresh upstream connections, then close them
+gw probe
+gw probe notion
+
+# Inspect the running HTTP gateway
+gw status
+gw status --json
+
+# Browse its current tool catalog
+gw tools list
+gw tools list notion
+gw tools list notion --offset 50
+gw tools list --all
+gw tools list notion --json
+
+# Authorize an OAuth upstream
+gw auth login notion
+
+# Get focused help
+gw help
+gw help auth login
+```
+
+`status` and `tools list` query the running HTTP gateway. `probe` opens separate,
+temporary upstream connections.
+
+Use `--config /path/to/config.json` to select another configuration. Restart the
+gateway after changing upstream definitions.
+
+See the [gateway guide](packages/gateway/README.md) for full configuration and
+command details.
+
+## Client-owned stdio
+
+If you prefer your client to launch its own gateway, configure a stdio command
+instead of an HTTP endpoint:
 
 ```json
 {
@@ -110,233 +273,100 @@ configure a stdio command rather than a URL/header entry:
 }
 ```
 
-Each launch owns separate upstream connections and an executor budget. No gateway
-HTTP token or listening port is needed. Closing stdin requests cleanup; stdout
-is exclusively MCP, and diagnostics use stderr. For a nondefault configuration,
-append `"--config", "/absolute/path/to/config.json"` to the args.
+Each launch owns separate upstream connections and execution limits. No gateway
+HTTP token or listening port is needed. Saved upstream credentials are still
+required where applicable.
 
-`gw` alone and command groups show help; use `gw help auth login` for focused help.
-Commands are explicit: legacy aliases, positional configuration paths, `--stdio`,
-and `--server` are not supported. The gateway never edits client configs or manages
-an OS service. Both transports expose `execute({ code })`.
-Configure named upstreams under `mcp.servers`; this example assumes you supply a
-local `mcp-server.ts` beside your configuration:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "math": { "type": "local", "command": ["bun", "./mcp-server.ts"] },
-      "notion": { "type": "remote", "url": "https://mcp.notion.com/mcp", "oauth": {} }
-    }
-  }
-}
-```
-
-Local paths resolve from the configuration directory. The included
-[`packages/gateway/examples/multi.json`](packages/gateway/examples/multi.json) references the shared math fixture and longer
-Notion deadlines. Serving and management commands use
-`$XDG_CONFIG_HOME/codemode-mcp-gateway/config.json` or `~/.config/codemode-mcp-gateway/config.json`; `--config <path>`
-overrides it. `config check` validates without connecting; `probe [server]` opens
-and closes fresh connections without a gateway HTTP token. `status [server]`
-queries only the running HTTP gateway, not client-owned stdio processes.
-Login is explicit and interactive; serving
-uses private file-backed credentials and noninteractive refresh. OAuth snapshots
-live under `$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
-`~/.local/state/codemode-mcp-gateway/credentials`), not Keychain. Files are plaintext
-with owner-only permissions. Existing Keychain users must log in again; old entries
-are left untouched. Logout removes local credentials, not the upstream grant.
-
-Upstreams initialize independently, so MCP readiness does not imply tool readiness.
-Discovery reports server availability; connected upstreams remain usable when
-others fail. Credential changes can recover waiting servers, and connection
-failures use backoff; failed scripts are never automatically replayed. See the
-[CLI/upstream guide](packages/gateway/README.md#named-upstreams-and-hot-recovery)
-and [local OAuth limitations](packages/gateway/README.md#local-oauth).
-
-### Discover, inspect, call
-
-List the running HTTP gateway's upstream tools from your terminal:
-
-```sh
-gw status                        # Gateway process, sessions, and upstream health
-gw tools list                    # First 50 tools across upstreams
-gw tools list notion             # First 50 tools from one upstream
-gw tools list --offset 50        # Next page across upstreams
-gw tools list notion --offset 50 # Next page from one upstream
-gw tools list notion --all       # Explicitly print every tool for this upstream
-gw tools list --all              # Every tool across all upstreams
-gw tools list notion --json      # Complete metadata, unpaginated and untruncated
-```
-
-Terminal tables fit the available width and show short descriptions. Selecting an
-upstream shows its original tool names; cross-upstream listings use qualified names.
-Piped tool output is headerless TSV (`name`, `description`), always qualified and
-untruncated, with pagination hints and unavailable-upstream warnings on stderr.
-For example, `gw tools list --all | cut -f1` prints every available qualified name.
-`--offset` works with or without a server and cannot be combined with `--all`;
-JSON stays complete and cannot be combined with either text-listing option.
-
-This reads the current catalog without opening fresh upstream connections or
-calling tools. Failed, connecting, and disabled upstreams are reported on stderr;
-successful retrieval exits 0 even when upstreams are unavailable. `--config`/`-c`
-selects the gateway port; no running HTTP gateway means an error, not a fresh probe.
-After updating an older running gateway, restart it to enable tool listing.
-
-Help groups getting-started, inspection, and authentication commands; focused help
-shows relevant flags and examples. `status` owns the health overview, while `probe`
-labels its results as a fresh connectivity check. Their piped output is headerless
-TSV (`upstream`, `state`, `tool count`, `public error message`). Interactive HTTP
-serving uses readable operational events on terminal stderr; redirected HTTP and stdio
-logs use structured JSON lines. Set `GW_LOG_LEVEL=debug|info|warn|error` (`info` by
-default). Logs correlate sessions/executions without recording code, arguments,
-results, or raw exception messages. Logs stay local; metrics and traces can be
-exported explicitly with `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP/HTTP protobuf).
-Ordinary serving makes no telemetry requests;
-see [structured logging](packages/gateway/README.md#structured-logging).
-Slow probes and browser authorization show terminal-only progress;
-JSON and MCP stdout remain free of presentation messages.
-
-Submit async function bodies to `execute`; top-level `await` and `return` work:
-
-```js
-return await tools.searchTools({ query: "add numbers", server: "math" });
-```
-
-Search returns `{ tools, total, nextOffset, servers }`: five ranked name/short-description
-previews by default, without schemas. Use the exact qualified name from discovery:
-
-```js
-return await tools.describeTool({ name: "math.add" });
-```
-
-After inspecting the schema and checking that the server is connected:
-
-```js
-const response = await tools["math.add"]({ a: 2, b: 3 });
-if (response.isError) return response.content;
-return response.structuredContent.sum;
-```
-
-The example returns `5`. Upstream MCP results remain complete inside the script;
-`isError` is data the script must inspect. For more search matches, repeat the query
-with `offset: nextOffset` until null; `limit` changes page size. Discovery helpers
-share the tool-call budget. See the [discovery contract](docs/reference.md#catalog-and-discovery).
-
-### Returned output and spill files
-
-Agent-facing MCP responses contain **text only**: strings as plain text, other
-returned values as compact JSON, or useful error text. There is no report envelope,
-call list, or `structuredContent`; `isError: true` appears only on failure. Host
-libraries retain execution reports with metadata-only call summaries.
-
-Above **40,000 UTF-8 bytes**, the gateway returns a UTF-8-safe head/tail preview and
-an absolute path to the full output in a private local file. Use native harness
-file/shell tools on the shared filesystem; there is no custom artifact tool.
-Long single-line JSON may require shell parsing rather than a line-based reader.
-Files last until their MCP session is retired; closing one client never deletes
-another client's output. HTTP DELETE retires immediately, and sessions without
-open requests/event streams retire after a 60-second grace. Crashes can leave files
-behind. There is no total storage quota or startup sweep. A failed save preserves the preview and
-execution outcome and reports that full output could not be saved.
-
-The hard final-output default is **16 MiB** in the gateway, **256 KiB** in the
-library. This is not streaming and does not bound temporary tool/transport
-allocations. See [output/failure details](packages/gateway/README.md#results-and-failures).
+For a nondefault configuration, append `"--config", "/absolute/path/to/config.json"`
+to `args`.
 
 ## How it works
 
 ```text
-MCP client -> execute({ code }) -> fresh worker + QuickJS guest
-                                -> host tool adapter -> upstream MCP server
-           <- returned value/error text, or a saved-output preview and local path
+MCP client
+    │
+    │ execute({ code })
+    ▼
+Gateway
+    ├── Fresh worker + QuickJS VM
+    │       │
+    │       └── Tool calls over a JSON bridge
+    │                   │
+    └── Host adapters ──┴── Upstream MCP servers
+    │
+    ▼
+Returned value or error text
 ```
 
-The host owns tool connections and callbacks; the guest sees only injected tools.
-Discovery and bindings are snapshotted for each execution. A running gateway shares
-one executor and its upstreams across its MCP sessions.
+Each execution runs in a fresh QuickJS VM with resource limits. Scripts have no
+direct access to host filesystem, network, or process APIs. External actions go
+through configured host tools.
 
-### Packages
+The host owns upstream connections and credentials. Each execution receives a
+snapshot of available tool bindings; an HTTP gateway shares its executor and
+upstream connections across client sessions.
 
-| Package                                                         | Responsibility                                                                   |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| [`@codemode-mcp-gateway/codemode`](packages/codemode/README.md) | Execute JavaScript with host tools; no MCP dependency                            |
-| [`@codemode-mcp-gateway/mcp`](packages/mcp/README.md)           | Adapt connected MCP clients or expose a borrowed executor as an MCP server       |
-| [`codemode-mcp-gateway`](packages/gateway/README.md)            | Compose upstreams, discovery, configuration, OAuth, lifecycle, API, and `gw` CLI |
+### Results and large output
 
-Each package has its own README, runnable `examples/`, public entry, and tests.
+Agent-facing responses contain text: strings are returned directly, and other
+values are serialized as JSON.
 
-Codemode owns workers/VMs; MCP uses only codemode's public contracts. Gateway owns
-connections and selects QuickJS. Importing its programmatic entry starts no CLI or
-process listeners. All three support Bun only. MCP and gateway remain private;
-codemode is independently packable. Import package roots, not runtime deep paths.
+Above **40,000 UTF-8 bytes**, the gateway returns a preview and a private local path
+to the full output. Clients can read that file with their own file or shell tools
+when they share the gateway's filesystem. Files are temporary and tied to the MCP
+session.
 
-For standalone execution:
+See the [execution reference](docs/reference.md) for output and lifecycle details.
 
-```ts
-import { CodeExecutor, ToolResult } from "@codemode-mcp-gateway/codemode";
+### Execution boundaries
 
-const sandbox = new CodeExecutor({ tools: { answer: () => ToolResult.success(42) } });
-const report = await sandbox.execute("return await tools.answer();");
-console.log(report.result); // { ok: true, value: 42 }
-```
+- Tools retain the permissions of their upstream connections.
+- Cancellation cannot undo upstream side effects.
+- Failed scripts are not automatically replayed.
+- Guest memory and execution limits do not cap all host work or upstream payload
+  allocations.
+- HTTP serving is authenticated and loopback-only.
+- Upstream OAuth credentials are stored locally as plaintext files with owner-only
+  permissions.
 
-## Defaults and limitations
+Default gateway limits include four concurrent executions, 100 tool calls per
+execution, ten active calls per execution, and a 256 MiB guest memory limit.
 
-- Each execution owns a fresh worker and VM. Tools run on the host thread and cross
-  JSON; scripts have no direct host filesystem, network, or process access.
-- Policy is constructor-owned; per-execution tool snapshots and cancellation do
-  not override limits. Expected guest failures resolve in reports; infrastructure
-  failures reject. Private host exceptions are not exposed to scripts.
-- Four executions per executor by default, including cleanup. Excess submissions
-  fail immediately without a worker, queue, or retry. Separate gateways have
-  independent budgets.
-- Per execution: 100 total calls, ten active calls; additional calls queue in
-  invocation order. Guest memory defaults to 256 MiB, stack to 1 MiB, source to
-  256 KiB. Gateway guest/total deadlines are 5/10 seconds; library deadlines are
-  unset. See [exact limits](packages/codemode/README.md#limits-and-boundaries).
-- Workers are not OS/process isolation. Guest limits do not bound aggregate
-  concurrent memory, host work, or tool payloads. Deadlines are not hard response
-  latency caps; host work and cleanup can delay completion.
-- Cancellation is cooperative for host callbacks and cannot roll back upstream
-  side effects. No remote agent hosting, model loop, or team credential management
-  is implemented. The agent-facing CLI defaults to loopback HTTP; client-owned stdio is explicit.
+See [limits and boundaries](packages/codemode/README.md#limits-and-boundaries) and
+[local deployment](docs/local-installation.md) for the complete contracts.
 
-## Testing and distribution
+## Packages
+
+| Package                                                         | Purpose                                                                 |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`@codemode-mcp-gateway/codemode`](packages/codemode/README.md) | Execute JavaScript with host tools, without an MCP dependency           |
+| [`@codemode-mcp-gateway/mcp`](packages/mcp/README.md)           | Adapt MCP clients and expose executors as MCP servers                   |
+| [`codemode-mcp-gateway`](packages/gateway/README.md)            | Upstream connections, discovery, configuration, OAuth, and the `gw` CLI |
+
+All three currently support Bun only. Package names are provisional and unpublished.
+
+## Development
 
 ```sh
+bun install --frozen-lockfile --ignore-scripts
 bun run check
 bun run example
-bun run example:mcp
-bun run --cwd packages/codemode test
-bun run --cwd packages/mcp test
-bun run --cwd packages/gateway test
-bun run verify:packages
-bun run verify:packages:clean
 ```
 
-Each package owns its tests and local `check` command. Root `check` coordinates
-builds, typechecking, lint, formatting checks, tests, and packed-consumer verification;
-there is no root test suite. `verify:packages` builds/packs all workspaces and checks
-unrelated temporary consumers, declarations, workers, MCP, gateway API, and packaged
-`gw`. Temporary overrides stand in for unpublished registry versions; nothing is
-published. Use `bun run typecheck` for typechecking and `bun run format` for formatting.
-The clean variant copies current source without inherited installs/builds, then
-performs a frozen install, `install:gw` in an isolated HOME, and the same consumer checks. Local
-packing does not rely on lifecycle hooks; script-disable settings remain respected.
-See the [script guide](scripts/README.md) for build/installation commands versus
-optional diagnostics and archived studies.
+`bun run check` runs builds, typechecking, lint, formatting checks, tests, and
+packaged-consumer verification.
 
-## Documentation and release status
+See [testing conventions](docs/testing.md), the [script guide](scripts/README.md),
+and [project conventions](AGENTS.md).
 
-- [Documentation index](docs/README.md): current user/developer guides and optional diagnostics.
-- [Behavior and ownership reference](docs/reference.md): exact execution/MCP contracts.
-- [Historical evidence](docs/archive/README.md): dated investigations, interoperability,
-  and retired deployment workflows; not current onboarding or fresh validation.
-- [Distribution checklist](docs/distribution-readiness.md): public-source, binary,
-  license, and registry decisions tracked separately.
-- [Project conventions](AGENTS.md): development rules.
+## Documentation
 
-This project is unreleased. A public source repository does not imply published
-packages, downloadable binaries, or production readiness. The project license has
-not yet been chosen; third-party notices are not a license for the surrounding code.
+- [Documentation index](docs/README.md)
+- [Local installation and client setup](docs/local-installation.md)
+- [Gateway configuration and CLI](packages/gateway/README.md)
+- [Runnable examples](examples/README.md)
+- [Execution and MCP reference](docs/reference.md)
+
+## License
+
+[MIT](LICENSE). Third-party components retain their respective licenses and notices.
