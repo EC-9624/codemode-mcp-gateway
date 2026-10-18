@@ -124,6 +124,7 @@ async function readToken(path: string): Promise<string | undefined> {
 
   let file;
   try {
+    // Reject symlinks at open and avoid waiting on a FIFO before the regular-file check.
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (cause) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
@@ -145,6 +146,7 @@ async function readToken(path: string): Promise<string | undefined> {
       "The HTTP token file must be a regular file owned by this user with mode 0600.",
     );
 
+  // Allow a 256-byte ASCII token plus CRLF; reject oversized files before reading them.
   if (info.size > 258)
     throw new GatewayError(
       "The HTTP token file is invalid. It must contain one private token of 32–256 letters, digits, underscores, or hyphens.",

@@ -50,9 +50,11 @@ export async function acquireLease(
 
       try {
         release = await lock(join(path, credentialName(connection) + ".credentials"), {
+          // This is a lock marker, not an existing credential file to resolve.
           realpath: false,
           stale: 20_000,
           update: 1_000,
+          // The outer loop owns the deadline and cancellable waits.
           retries: 0,
           onCompromised: (cause) =>
             lost.abort(

@@ -20,6 +20,8 @@ export class OutputFiles {
 
     let notice: string;
     try {
+      // Concurrent outputs share one directory creation. A failed attempt must not
+      // cache rejection forever; later output can retry without replaying tool calls.
       this.directory ??= promises.mkdtemp(join(tmpdir(), "cmg-output-")).catch((cause: unknown) => {
         this.directory = undefined;
         throw cause;

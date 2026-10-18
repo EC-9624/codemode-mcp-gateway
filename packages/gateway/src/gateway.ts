@@ -38,6 +38,7 @@ export class Gateway implements AsyncDisposable {
   private readonly executor: CodeExecutor;
   private readonly servers = new Set<McpServer>();
   private readonly failed = Promise.withResolvers<unknown>();
+  // Box the cause: `throw undefined` is a failure, not the absence of one.
   private fatal: { cause: unknown } | undefined;
   private cached:
     | { tools: Readonly<Record<string, SandboxTool>>; connections: ConnectionSnapshot[] }

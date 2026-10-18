@@ -45,12 +45,16 @@ export async function authorize(
   const discovery = discovered.value;
   const previous = stored.value;
 
+  // Explicit configuration wins over challenge scopes, then resource-advertised scopes.
+  // Do not request every scope supported by the authorization server.
   const scopes = new Set(
     (connection.scope ?? discovery.challengeScope)?.split(/\s+/).filter(Boolean) ??
       discovery.resourceScopes ??
       [],
   );
 
+  // Some providers require offline_access to issue refresh tokens. Either discovery
+  // source may advertise it; requesting it does not guarantee a refresh token.
   if (
     discovery.resourceScopes?.includes("offline_access") ||
     discovery.metadata.scopes_supported?.includes("offline_access")
@@ -61,6 +65,7 @@ export async function authorize(
   // so consent cannot be constrained by an incompatibly scoped client registration.
   const scope = scopes.size === 0 ? undefined : [...scopes].join(" ");
 
+  // DCR expiry is Unix seconds; 0 means no expiry, and omission supplies no deadline.
   const expiresAt = previous?.client.client_secret_expires_at;
 
   const reusable =
@@ -350,6 +355,7 @@ export async function discoverOAuth(
   if (resource !== null) {
     const server = new URL(connection.url);
     const target = new URL(resource);
+    // Match path segments, not just string prefixes: /api must not also match /apix.
     const prefix = target.pathname.endsWith("/") ? target.pathname : target.pathname + "/";
     if (
       target.origin !== server.origin ||

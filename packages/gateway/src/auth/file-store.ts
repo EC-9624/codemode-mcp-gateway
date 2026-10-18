@@ -75,6 +75,8 @@ export function fileCredentialStore(
       const directory = await privateDirectory(location.value.directory, true);
       if (!directory.ok) return directory;
 
+      // Replacement must refuse an existing unsafe path just as load() does, even
+      // though publishing the new snapshot uses rename rather than an in-place write.
       const opened = await openCredential(location.value.path);
       if (!opened.ok) return opened;
 
@@ -181,6 +183,7 @@ async function privateDirectory(path: string, create: boolean): Promise<AuthResu
 async function openCredential(path: string) {
   let file;
   try {
+    // Reject symlinks at open and avoid waiting on a FIFO before the regular-file check.
     file = await promises.open(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,

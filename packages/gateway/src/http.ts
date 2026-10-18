@@ -146,6 +146,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     const authorization = request.headers.get("authorization");
     const submitted = authorization?.match(/^Bearer +([A-Za-z0-9_-]+)$/i)?.[1];
 
+    // Hash both tokens to equal-length buffers: timingSafeEqual rejects unequal lengths.
     if (submitted === undefined || !timingSafeEqual(digest(submitted), this.tokenHash)) {
       return new Response("Unauthorized", {
         status: 401,
@@ -252,9 +253,12 @@ export class GatewayHttpServer implements AsyncDisposable {
   }
 
   private async dispatch(session: Session, request: Request): Promise<Response> {
+    // Returning response headers does not finish an SSE stream. Keep the session
+    // active until the body ends, fails, or is cancelled, or the request aborts.
     session.requests++;
     let finished = false;
 
+    // Abort and stream completion can both arrive; decrement the active count only once.
     const finish = () => {
       if (finished) return;
 
@@ -316,6 +320,7 @@ export class GatewayHttpServer implements AsyncDisposable {
   }
 
   private retire(session: Session): Promise<void> {
+    // Publish the shared closing promise before server.close() can reenter via callbacks.
     session.closing ??= Promise.resolve().then(async () => {
       const id = session.transport.sessionId;
       if (id !== undefined) this.sessions.delete(id);
@@ -328,6 +333,8 @@ export class GatewayHttpServer implements AsyncDisposable {
     });
     const closing = session.closing;
     this.retiring.add(closing);
+    // Keep rejected promises tracked after the session leaves owned, so shutdown
+    // still reports their cleanup failures.
     void closing.then(
       () => this.retiring.delete(closing),
       (cause: unknown) => {
