@@ -251,6 +251,12 @@ JSON lines with service/session/execution metadata. `GW_LOG_LEVEL` selects `debu
 arguments, results, or raw exception messages. See the package's structured logging
 section for the data shape and inherited-upstream-stderr limitation.
 
+Metrics/tracing is separately opt-in: set `OTEL_EXPORTER_OTLP_ENDPOINT` to an
+OTLP/HTTP protobuf collector before `gw serve`. This exports execution/call timing,
+connection health, capacity, and session counts—not logs or payloads. Per-signal
+endpoints, headers, exporters, timeout limits, and ownership are documented in the
+package's [metrics and traces](../packages/gateway/README.md#metrics-and-traces) section.
+
 ```sh
 bun run gw auth login notion --config packages/gateway/examples/multi.json
 bun run gw probe --config packages/gateway/examples/multi.json --json

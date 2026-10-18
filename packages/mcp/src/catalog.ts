@@ -78,7 +78,9 @@ export async function createMcpCatalog(
   }
 
   const catalog = ToolCatalog.create(
-    Object.fromEntries(listing.tools.map((tool) => [tool.name, createMcpTool(client, tool)])),
+    Object.fromEntries(
+      listing.tools.map((tool) => [tool.name, createMcpTool(client, tool, options.onToolResponse)]),
+    ),
   );
 
   // Synchronous compilation can outlast the timer before the event loop gets another turn.
@@ -89,7 +91,11 @@ export async function createMcpCatalog(
   return catalog;
 }
 
-function createMcpTool(client: Client, tool: Tool): ToolDefinition {
+function createMcpTool(
+  client: Client,
+  tool: Tool,
+  onResponse: McpCatalogOptions["onToolResponse"],
+): ToolDefinition {
   const compiled = compileToolSchema(tool.inputSchema);
   if (!compiled.ok) {
     throw new Error(
@@ -100,13 +106,16 @@ function createMcpTool(client: Client, tool: Tool): ToolDefinition {
 
   const invoke = validateTool(
     compiled.validator,
-    async (args, { signal }) => {
+    async (args, context) => {
       // Normalization precedes validation; the JSON validator preserves arguments unchanged.
       if (!isArguments(args)) throw new Error("MCP argument normalization failed.");
 
       let response: CallToolResult;
       try {
-        response = await client.callTool({ name: tool.name, arguments: args }, { signal });
+        response = await client.callTool(
+          { name: tool.name, arguments: args },
+          { signal: context.signal },
+        );
       } catch (cause) {
         // The SDK also uses ProtocolError for local output validation. Both messages are public.
         if (cause instanceof ProtocolError) {
@@ -118,6 +127,8 @@ function createMcpTool(client: Client, tool: Tool): ToolDefinition {
 
         throw cause;
       }
+
+      onResponse?.(context, response.isError === true);
 
       return ToolResult.success({
         content: response.content,

@@ -1,7 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { CodeExecutor, ToolResult, type ToolException } from "@codemode-mcp-gateway/codemode";
+import {
+  CodeExecutor,
+  ToolResult,
+  type ToolException,
+  type ToolContext,
+} from "@codemode-mcp-gateway/codemode";
 
 describe("CodeExecutor tools", () => {
+  test("tool contexts expose invocation IDs with a shared execution signal", async () => {
+    const contexts: ToolContext[] = [];
+
+    const sandbox = new CodeExecutor({
+      tools: {
+        note: (_args, context) => {
+          contexts.push(context);
+
+          return ToolResult.success();
+        },
+      },
+    });
+
+    await sandbox.execute("await tools.note(); await tools.note();");
+
+    expect(contexts.map((context) => context.callId)).toEqual([1, 2]);
+    expect(contexts[0]?.signal).toBe(contexts[1]?.signal);
+  });
+
   test("per-execution exception observers override the default without mixing concurrent calls", async () => {
     const defaults: ToolException[] = [];
     const first: ToolException[] = [];

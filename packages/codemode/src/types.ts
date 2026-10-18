@@ -63,6 +63,8 @@ export type ExecuteOptions = {
   signal?: AbortSignal;
   /** Per-execution observer; overrides the constructor observer when supplied. */
   onToolException?: (exception: ToolException) => void;
+  /** Called once after admission, before worker setup. Observer exceptions reject as infrastructure failures. */
+  onAdmitted?: () => void;
 };
 
 /** Fixed configuration and default tool bindings, snapshotted at construction. */

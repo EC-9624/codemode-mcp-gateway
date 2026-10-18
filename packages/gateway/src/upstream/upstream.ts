@@ -7,6 +7,7 @@ import { GatewayError } from "../errors.ts";
 import { AuthorizationError } from "../auth/result.ts";
 import { credentialVersion, oauthConnection, type CredentialOptions } from "../auth/credentials.ts";
 import { fileCredentialStore } from "../auth/file-store.ts";
+import { type Telemetry, type SpanObservation } from "../observability/telemetry.ts";
 
 const statusBase = { name: z.string(), updatedAt: z.string() };
 const publicFailure = z.object({ kind: z.string(), message: z.string() });
@@ -46,6 +47,7 @@ export type ConnectionSnapshot = {
  * so recovery does not close resources those executions need.
  */
 export class Upstream {
+  readonly transport: "http" | "stdio";
   private state: State;
   private updatedAt = new Date().toISOString();
   private readonly auth: ConnectionAuth;
@@ -60,13 +62,14 @@ export class Upstream {
     private readonly config: ServerConfiguration,
     private readonly directory: string,
     private readonly signal: AbortSignal,
-    options: CredentialOptions,
+    private readonly options: CredentialOptions & { telemetry?: Telemetry },
     private readonly events: {
       changed: () => void;
       status: (status: ServerStatus) => void;
       failed: (cause: unknown) => void;
     },
   ) {
+    this.transport = config.type === "local" ? "stdio" : "http";
     this.state = { kind: config.disabled ? "disabled" : "connecting" };
     const oauth = oauthConnection(name, config);
     this.auth = oauth.ok
@@ -79,7 +82,7 @@ export class Upstream {
       : { kind: "none" };
   }
 
-  start(): Promise<void> {
+  start(trigger: "initial" | "recovery" = "initial"): Promise<void> {
     if (this.config.disabled) {
       this.report();
 
@@ -87,7 +90,7 @@ export class Upstream {
     }
 
     // Gateway serializes startup and recovery passes; no separate attempt registry is needed.
-    return Promise.resolve().then(() => this.open());
+    return Promise.resolve().then(() => this.open(trigger));
   }
 
   status(): ServerStatus {
@@ -130,9 +133,9 @@ export class Upstream {
 
       if (credentialVersion(loaded.value) === this.version) return;
 
-      await this.start();
+      await this.start("recovery");
     } else if (this.state.kind === "failed" && Date.now() >= this.state.retryAt) {
-      await this.start();
+      await this.start("recovery");
     }
   }
 
@@ -148,7 +151,42 @@ export class Upstream {
     );
   }
 
-  private async open() {
+  private async open(trigger: "initial" | "recovery") {
+    if (this.signal.aborted) return;
+
+    const started = performance.now();
+
+    const attributes = {
+      "gw.upstream.name": this.name,
+      "gw.upstream.transport": this.transport,
+      "gw.upstream.connection.trigger": trigger,
+    };
+
+    const operation = this.options.telemetry?.startSpan("gw.upstream.connect", attributes);
+    let failure: "infrastructure_error" | undefined;
+    try {
+      await this.connect(operation);
+    } catch (cause) {
+      failure = "infrastructure_error";
+      throw cause;
+    } finally {
+      const observed = this.signal.aborted ? "cancelled" : this.state.kind;
+      const outcome = failure ?? observed;
+      this.options.telemetry?.connectionFinished(
+        this.name,
+        this.transport,
+        trigger,
+        outcome,
+        performance.now() - started,
+      );
+      operation?.end(
+        { "gw.upstream.connection.outcome": outcome },
+        outcome !== "connected" && outcome !== "cancelled",
+      );
+    }
+  }
+
+  private async connect(operation: SpanObservation | undefined) {
     if (this.signal.aborted) return;
 
     const attempt = ++this.attempt;
@@ -190,6 +228,22 @@ export class Upstream {
             };
 
       connection = await connectUpstream(this.config, this.directory, this.signal, guarded, {
+        response: (context, isError) => this.options.telemetry?.toolResponse(context, isError),
+        phase: (phase) => {
+          const span = this.options.telemetry?.startSpan(
+            phase === "initialize" ? "gw.upstream.initialize" : "gw.upstream.discovery",
+            { "gw.upstream.name": this.name },
+            operation,
+          );
+
+          return {
+            end: (failed: boolean) => {
+              const observed = failed ? "failure" : "success";
+              const outcome = this.signal.aborted ? "cancelled" : observed;
+              span?.end({ "gw.upstream.phase.outcome": outcome }, failed && !this.signal.aborted);
+            },
+          };
+        },
         closed: () => {
           if (this.signal.aborted || this.attempt !== attempt || this.state.kind !== "connected")
             return;

@@ -6,11 +6,16 @@ import { httpToken } from "./token.ts";
 import { GatewayError } from "../errors.ts";
 import { type CredentialOptions } from "../auth/credentials.ts";
 import { Logger } from "../observability/logger.ts";
+import { Telemetry } from "../observability/telemetry.ts";
 
 /** Foreground HTTP process; deployment and client configuration belong to the caller. */
 export async function serveHttp(
   path: string,
-  options: CredentialOptions & { signal?: AbortSignal; logger?: Logger } = {},
+  options: CredentialOptions & {
+    signal?: AbortSignal;
+    logger?: Logger;
+    telemetry?: Telemetry;
+  } = {},
 ) {
   options.signal?.throwIfAborted();
   const config = await readConfiguration(path);
@@ -19,6 +24,9 @@ export async function serveHttp(
   options.signal?.throwIfAborted();
   await using cleanup = new AsyncDisposableStack();
   const logger = options.logger ?? (await Logger.fromEnvironment());
+  const telemetry = options.telemetry ?? (await Telemetry.fromEnvironment(logger));
+  if (options.telemetry === undefined && telemetry !== undefined)
+    cleanup.defer(() => telemetry.close());
 
   const started = performance.now();
   let reason: "signal" | "host" | "failure" = "host";
@@ -68,6 +76,7 @@ export async function serveHttp(
     ...options,
     signal: shutdown.signal,
     logger,
+    ...(telemetry === undefined ? {} : { telemetry }),
   });
 
   cleanup.defer(async () => {

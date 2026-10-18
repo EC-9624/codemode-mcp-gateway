@@ -21,3 +21,4 @@ export { fileCredentialStore } from "./auth/file-store.ts";
 export { AuthorizationError, type AuthResult, type AuthFailure } from "./auth/result.ts";
 export { Logger, type LoggerOptions } from "./observability/logger.ts";
 export { type GatewayEvent, type GatewayLog } from "./observability/events.ts";
+export { Telemetry, type TelemetryOptions } from "./observability/telemetry.ts";

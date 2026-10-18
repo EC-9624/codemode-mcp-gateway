@@ -119,6 +119,13 @@ An `execute(code, { onToolException })` observer overrides the constructor defau
 for that execution only, allowing concurrent callers to retain their own diagnostic
 context. It has the same private-cause and observer-failure contract.
 
+`onAdmitted` in execution options observes successful admission before worker setup;
+it is not called for pre-aborted, oversized, or over-capacity submissions. Throwing
+observers reject with `SandboxExecutionError` and release the reservation.
+`activeExecutionCount` reports occupied capacity through actual worker cleanup,
+including a worker whose termination failed until it exits. Tool contexts expose
+an optional execution-local `callId` in addition to their shared cancellation signal.
+
 Call records stay in invocation order and contain only `callId`, `name`, `status`,
 and an interruption `reason` when applicable. `completed` means the parent serialized
 a response before execution ended, including tool failures; it does not establish

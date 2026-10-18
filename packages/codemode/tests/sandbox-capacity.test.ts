@@ -6,6 +6,27 @@ import { executionErrorOf } from "./support/execution-error.ts";
 import { gateTermination } from "./support/worker-cleanup.ts";
 
 describe("CodeExecutor execution capacity", () => {
+  test("admission observers run only after a slot is reserved and throwing observers release it", async () => {
+    const sandbox = new CodeExecutor({ maxSourceBytes: 10 });
+    const observed: number[] = [];
+    const cause = new Error("private observer failure");
+
+    await sandbox.execute("x".repeat(11), { onAdmitted: () => observed.push(-1) });
+
+    const failed = await executionErrorOf(
+      sandbox.execute("return 1;", {
+        onAdmitted: () => {
+          observed.push(sandbox.activeExecutionCount);
+          throw cause;
+        },
+      }),
+    );
+
+    expect(observed).toEqual([1]);
+    expect(failed.cause).toBe(cause);
+    expect(sandbox.activeExecutionCount).toBe(0);
+  });
+
   test("holds admission across per-execution tool snapshots until worker cleanup completes", async () => {
     using captured = captureWorker();
     const sandbox = new CodeExecutor({ maxConcurrentExecutions: 1 });
@@ -16,6 +37,7 @@ describe("CodeExecutor execution capacity", () => {
     const worker = await captured.worker;
     using termination = gateTermination(worker);
     await termination.terminating;
+    expect(sandbox.activeExecutionCount).toBe(1);
 
     let reads = 0;
 
@@ -30,6 +52,7 @@ describe("CodeExecutor execution capacity", () => {
     termination.release();
     const previous = await running;
     const recovered = await sandbox.execute("return await tools.value();", { tools: currentTools });
+    expect(sandbox.activeExecutionCount).toBe(0);
 
     expect(rejected).toMatchObject({
       result: { ok: false, error: { kind: "limit", resource: "executions", maximum: 1 } },

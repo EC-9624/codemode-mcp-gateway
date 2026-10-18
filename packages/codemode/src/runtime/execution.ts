@@ -266,7 +266,7 @@ export class WorkerExecution {
       this.calls.dispatch(call.callId, call.name);
 
       // Domain validation belongs to the callback; the protocol only checks JSON syntax.
-      const result = await callTool(tool, call.args, this.context);
+      const result = await callTool(tool, call.args, { ...this.context, callId: call.callId });
 
       // Converting a late result would run getters/toJSON after execution has ended.
       // Aborted tools also commonly fail late; those causes are not diagnostics.

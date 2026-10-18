@@ -29,13 +29,15 @@ function success(value?: unknown) {
   return { ok: true, value } satisfies ToolResult;
 }
 
-/** Host-only execution context shared by all tool calls in one execution. */
+/** Host-only call metadata with an execution-scoped cancellation signal. */
 export type ToolContext = {
   /**
    * Aborted when execution fails, times out, or is cancelled; not on successful completion.
    * Uses a generic AbortError, never the caller's reason. Tools must stop cooperatively.
    */
   readonly signal: AbortSignal;
+  /** Execution-local invocation sequence when supplied by CodeExecutor. */
+  readonly callId?: number;
 };
 
 /** Validate unknown arguments and return an explicit outcome; thrown errors stay private. */

@@ -2,13 +2,40 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { Client, type Tool } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
-import { ToolResult } from "@codemode-mcp-gateway/codemode";
+import { ToolResult, type ToolContext } from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { createMcpServer } from "./fixtures/mcp-tools.ts";
 import { connectMcp, requireTool, toolServer } from "./support/mcp.ts";
 import { rejectionOf } from "./support/rejection.ts";
 
 describe("createMcpCatalog discovery", () => {
+  test("response observers receive only the known MCP error flag and the caller's context", async () => {
+    const server = toolServer();
+    server.server.setRequestHandler("tools/list", () => ({
+      tools: [{ name: "note", inputSchema: { type: "object" } }],
+    }));
+    server.server.setRequestHandler("tools/call", () => ({
+      content: [{ type: "text", text: "private response" }],
+      isError: true,
+    }));
+    await using connection = await connectMcp(server);
+    const observed: { context: ToolContext; isError: boolean }[] = [];
+
+    const catalog = await createMcpCatalog(connection.client, {
+      onToolResponse: (context, isError) => observed.push({ context, isError }),
+    });
+
+    const context = { signal: new AbortController().signal, callId: 3 };
+
+    const result = await requireTool(catalog, "note")({}, context);
+
+    expect(observed).toEqual([{ context, isError: true }]);
+    expect(observed[0]?.context).toBe(context);
+    expect(result).toEqual(
+      ToolResult.success({ content: [{ type: "text", text: "private response" }], isError: true }),
+    );
+  });
+
   test("imports every page with the original names and metadata", async () => {
     const server = toolServer();
     const cursors: (string | undefined)[] = [];

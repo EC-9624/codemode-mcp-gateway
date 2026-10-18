@@ -1,10 +1,14 @@
-import { type ExecutionReport } from "@codemode-mcp-gateway/codemode";
+import { type ExecutionReport, type ToolContext } from "@codemode-mcp-gateway/codemode";
 
 export type McpCatalogOptions = {
   /** Overall tool discovery deadline in milliseconds. Defaults to 15000. */
   timeoutMs?: number;
   /** Cancels discovery only. Invocation uses the execution's ToolContext.signal. */
   signal?: AbortSignal;
+  /** Metadata-only observation at the MCP boundary, not an inference from tool JSON.
+   * Called synchronously after a response; throwing observers reject the tool invocation.
+   */
+  onToolResponse?: (context: ToolContext, isError: boolean) => void;
 };
 
 export type CodemodeServerOptions = {

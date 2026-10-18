@@ -190,7 +190,9 @@ TSV (`upstream`, `state`, `tool count`, `public error message`). Interactive HTT
 serving uses readable operational events on terminal stderr; redirected HTTP and stdio
 logs use structured JSON lines. Set `GW_LOG_LEVEL=debug|info|warn|error` (`info` by
 default). Logs correlate sessions/executions without recording code, arguments,
-results, or raw exception messages. There is no telemetry export or new dependency;
+results, or raw exception messages. Logs stay local; metrics and traces can be
+exported explicitly with `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP/HTTP protobuf).
+Ordinary serving makes no telemetry requests;
 see [structured logging](packages/gateway/README.md#structured-logging).
 Slow probes and browser authorization show terminal-only progress;
 JSON and MCP stdout remain free of presentation messages.

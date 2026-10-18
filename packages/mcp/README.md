@@ -94,7 +94,7 @@ for both cases.
 
 ## Discovery and limits
 
-`createMcpCatalog(client, { timeoutMs, signal }?)` lists tools and compiles input
+`createMcpCatalog(client, { timeoutMs, signal, onToolResponse }?)` lists tools and compiles input
 schemas once. Discovery defaults to a 15-second overall deadline, including
 listing and schema compilation. The returned catalog is a startup snapshot;
 there is no automatic refresh or subscription to upstream changes.
@@ -105,6 +105,13 @@ there is no automatic refresh or subscription to upstream changes.
 - Tool responses retain `content`, optional `structuredContent`, and optional `isError`,
   but not top-level `_meta` or unrelated extension fields.
 - Synchronous schema compilation cannot be interrupted; the deadline is checked afterward.
+
+`onToolResponse(context, isError)` is an optional synchronous, metadata-only hook
+at the MCP response boundary. It receives the caller's `ToolContext` and the known
+MCP error flag, never response contents. It is not called for validation failures
+or protocol exceptions without a response. Throwing observers reject the invocation;
+applications must contain their own best-effort telemetry failures. The adapter does
+not interpret arbitrary returned JSON as an error or import an observability SDK.
 
 The server's `execute` tool accepts only `{ code: string }`. Limits stay in the supplied
 executor; request arguments cannot override them. This adapter adds no tool-payload

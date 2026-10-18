@@ -13,6 +13,11 @@ export class CodeExecutor {
   private readonly options: ResolvedOptions;
   private activeExecutions = 0;
 
+  /** Occupied capacity, including a worker whose termination failed until its actual exit. */
+  get activeExecutionCount(): number {
+    return this.activeExecutions;
+  }
+
   /**
    * Validate fixed limits before reading and snapshotting tool bindings. No worker starts here.
    * Invalid limits throw RangeError; registry access failures throw SandboxExecutionError.
@@ -71,6 +76,12 @@ export class CodeExecutor {
     this.activeExecutions++;
     let worker: Worker | undefined;
     try {
+      try {
+        options.onAdmitted?.();
+      } catch (cause) {
+        throw new SandboxExecutionError([], cause);
+      }
+
       let tools: ReadonlyMap<string, SandboxTool>;
       try {
         const supplied = options.tools;

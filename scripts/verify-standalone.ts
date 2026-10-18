@@ -103,9 +103,33 @@ await Bun.write(
   }),
 );
 
+const exports: { path: string; contentType: string | null; bytes: Buffer }[] = [];
+
+const collector = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    exports.push({
+      path: new URL(request.url).pathname,
+      contentType: request.headers.get("content-type"),
+      bytes: Buffer.from(await request.arrayBuffer()),
+    });
+
+    return new Response(new Uint8Array(), {
+      headers: { "content-type": "application/x-protobuf" },
+    });
+  },
+});
+
+cleanup.defer(() => collector.stop(true));
+
 const child = Bun.spawn([binary, "serve"], {
   cwd: directory,
-  env: environment,
+  env: {
+    ...environment,
+    OTEL_EXPORTER_OTLP_ENDPOINT: collector.url.href,
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+  },
   stdout: "pipe",
   stderr: "pipe",
 });
@@ -202,6 +226,8 @@ const records = logs
         timestamp: z.iso.datetime(),
         severityNumber: z.number(),
         eventName: z.string(),
+        traceId: z.string().optional(),
+        spanId: z.string().optional(),
         resource: z.object({
           "service.version": z.literal(manifest.version),
           "service.instance.id": z.uuid(),
@@ -217,6 +243,20 @@ ok(records.some((record) => record.attributes["gw.execution.outcome"] === "timeo
 ok(records.some((record) => record.attributes["gw.execution.outcome"] === "cancelled"));
 ok(records.some((record) => record.eventName === "gw.service.stopped"));
 ok(!logs.includes("return 43;"));
+deepEqual(new Set(exports.map((entry) => entry.path)), new Set(["/v1/traces", "/v1/metrics"]));
+ok(exports.every((entry) => entry.contentType === "application/x-protobuf"));
+
+const executionContext = z
+  .object({ traceId: z.string(), spanId: z.string() })
+  .parse(records.find((record) => record.eventName === "gw.execution.finished"));
+
+const traceBytes = Buffer.concat(
+  exports.filter((entry) => entry.path === "/v1/traces").map((entry) => entry.bytes),
+);
+
+ok(traceBytes.includes(Buffer.from(executionContext.traceId, "hex")));
+ok(traceBytes.includes(Buffer.from(executionContext.spanId, "hex")));
+ok(!traceBytes.includes("return 43;"));
 equal(await new Response(child.stdout).text(), "");
 
 const stdioConfig = join(directory, "stdio.json");
@@ -243,7 +283,7 @@ deepEqual(await stdio.callTool({ name: "execute", arguments: { code: "return 44;
 });
 await stdio.close();
 console.log(
-  "Standalone gw verified: setup, private token, embedded version/WASM/workers, host calls, timeout/recovery, cancellation, HTTP, and stdio with an empty PATH outside the checkout.",
+  "Standalone gw verified: setup, private token, embedded version/WASM/workers, host calls, timeout/recovery, cancellation, HTTP, stdio, and correlated OTLP metrics/traces with an empty PATH outside the checkout.",
 );
 
 async function run(args: string[]) {

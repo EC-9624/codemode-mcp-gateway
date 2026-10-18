@@ -386,10 +386,10 @@ headers, raw exception messages, or stacks. Explicit public errors still reach a
 under the existing protocol contract. Inherited local upstream stderr is separate,
 untrusted output and may contain arbitrary text; it is not converted into these events.
 
-There is **no OpenTelemetry dependency, OTLP export, tracing, metrics collection, or
-network delivery** in this implementation. Trace/span fields are not fabricated.
-OTEL exporter environment variables do not enable export. File redirection/rotation
-belongs to the caller. Logging is best-effort: a failing sink is reported once without
+The logger itself has no exporters or network delivery. Without telemetry configured,
+trace/span fields are absent, not fabricated. Optional metrics/tracing is described
+below; **logs are never exported by the gateway**. File redirection/rotation belongs
+to the caller. Logging is best-effort: a failing sink is reported once without
 changing execution outcomes. Buffered stderr above 64 KiB causes whole-record drops;
 a later writable emission reports the drop count. A blocked or broken stderr may
 prevent that warning from being delivered.
@@ -399,6 +399,109 @@ Programmatic callers opt in with `new Logger({ version, level, onLog })` and
 `onLog` receives the same full records instead of the default renderer. Instances
 do not install global hooks, start network activity, or need shutdown flushing.
 `GatewayHttpServer` borrows the gateway's logger; importing the package does not log.
+
+## Metrics and traces
+
+Metrics/tracing is **opt-in**, using the official OpenTelemetry SDKs with
+OTLP/HTTP protobuf. Ordinary `gw serve` has no telemetry network delivery. Enable
+both signals with an explicit collector endpoint:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+gw serve
+```
+
+The base endpoint gets `/v1/traces` and `/v1/metrics` appended, preserving its path.
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+override the base and are used as-is. A generic or per-signal endpoint enables the
+corresponding signal unless its exporter is `none`. Explicit
+`OTEL_TRACES_EXPORTER=otlp` or `OTEL_METRICS_EXPORTER=otlp` also enables that signal,
+defaulting its endpoint to `http://localhost:4318`. Set either exporter to `none`
+to disable it; `OTEL_SDK_DISABLED=true` disables both environment-configured signals.
+
+Use `OTEL_EXPORTER_OTLP_HEADERS` for collector authentication; per-signal
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_METRICS_HEADERS` replace
+the general headers. Values are comma-separated `name=value` pairs with percent
+encoding. Gateway/upstream credentials are never reused for collector authentication.
+URLs containing credentials or fragments are rejected without displaying their values.
+Only `http/protobuf` is supported; explicit `grpc` or `http/json` is rejected.
+There is no log exporter, automatic instrumentation, global provider registration,
+context forwarding, or baggage propagation to upstreams.
+
+### Collected metrics
+
+| Instrument                        | Type/unit                    | Dimensions                                                           |
+| --------------------------------- | ---------------------------- | -------------------------------------------------------------------- |
+| `gw.execution.count`              | Counter, executions          | Inbound transport, admission, outcome, limit resource when relevant  |
+| `gw.execution.duration`           | Histogram, seconds           | Same as execution count                                              |
+| `gw.execution.active`             | Observable gauge, executions | None; actual occupied executor capacity                              |
+| `gw.upstream.call.count`          | Counter, calls               | Upstream name, outgoing transport, observed outcome                  |
+| `gw.upstream.call.duration`       | Histogram, seconds           | Same as call count                                                   |
+| `gw.upstream.connection.count`    | Counter, attempts            | Upstream name, outgoing transport, initial/recovery trigger, outcome |
+| `gw.upstream.connection.duration` | Histogram, seconds           | Same as connection count                                             |
+| `gw.upstream.state`               | Observable gauge, upstreams  | Configured upstream name and current state                           |
+| `gw.session.active`               | UpDownCounter, sessions      | Inbound transport                                                    |
+
+Admission is `admitted` or `rejected`; pre-aborted, oversized, and capacity-rejected
+submissions do not acquire a worker. Duration includes these quick rejections, so
+filter on admission when comparing execution latency. Occupied capacity is read
+from the executor: failed worker termination cannot falsely report a free slot.
+The state gauge samples current snapshots and emits zero for other states, not a
+cumulative count of transitions. Session counts include owned MCP contexts during
+initialization, not only negotiated HTTP sessions returned by `/status`.
+
+Call outcomes distinguish `response`, `mcp_tool_error`, `protocol_error`,
+`authorization_error`, `tool_failure`, `exception`, and `interrupted`. The adapter
+observes the actual MCP `isError` flag; failure-shaped payloads are never interpreted
+as status. Call timing begins at host dispatch, includes validation/authentication
+and upstream waits, and ends on return or interruption. It excludes guest queue
+wait and bridge serialization. The guest bridge queues excess tool concurrency;
+excess executions are rejected. Queue-wait timing is not collected yet.
+
+Metrics are independent of log levels and trace sampling. No tool names, session
+IDs, execution IDs, call IDs, trace IDs, raw URLs, or error messages are metric
+dimensions. The configured OTLP reader limits each instrument to 128 time series.
+Process/service identity is resource metadata, not a per-operation dimension.
+
+### Trace boundaries and correlation
+
+Each observed execution is an independent `gw.execution` root span. Its upstream
+calls are `gw.upstream.call` client spans, with local call IDs and tool names as
+attributes. Concurrent executions retain explicit, separate contexts. Connection
+attempts use independent `gw.upstream.connect` roots with initialization/discovery
+children; background recovery is not attached to an unrelated execution.
+
+Execution spans carry outcome, admission, limits, and call counts. Logs emitted
+within observed operations carry their real OTel trace/span context; `gw.tool.exception`
+uses its call span when available. Known MCP tool errors mark the call span as failed,
+but a script that handles an error can still have a successful execution span.
+Interrupted calls end once and cannot be rewritten by late completions. This does
+not establish cancellation or rollback of the external operation.
+
+These are local gateway traces, not end-to-end distributed upstream traces. MCP
+response formatting, HTTP SSE lifetime, guest queue wait, worker subphases, OAuth
+refresh/lock waiting, and output-storage details are not separate spans or metrics
+in this slice. No code, arguments, results, credentials, headers, or arbitrary
+exception messages/stacks are included in telemetry.
+
+### Ownership and export failures
+
+The serving entry owns environment-configured telemetry and closes it after gateway
+cleanup. Span queues are bounded (128 records); metrics export every 10 seconds and
+on shutdown. `OTEL_EXPORTER_OTLP_TIMEOUT` and per-signal timeout overrides accept
+1–2000 milliseconds (default 1000). Provider flush/shutdown waits are bounded;
+shutdown waits at most 5 seconds, but cannot forcibly cancel arbitrary user-supplied
+exporter code. Data can be dropped; there is no durable delivery guarantee.
+Exporter failures emit one controlled `gw.telemetry.failed` warning per signal
+without exposing private causes or changing execution results.
+
+Programmatic composition can use `new Telemetry({ logger, spanExporter, metrics })`
+with a metrics reader or exporter (a discriminated `kind` option), then pass
+`{ logger, telemetry }` to `Gateway`. The gateway borrows telemetry; the caller
+owns `telemetry.flush()` / `close()` or `await using`. No SDK is imported into the
+codemode or MCP libraries; their narrow admission/context/response hooks remain
+transport/telemetry independent.
 
 ## Results and failures
 
@@ -793,7 +896,9 @@ observability/
   logger.ts            Local structured logger and level filtering
   presentation.ts      JSON/terminal rendering of the same records
   config.ts            Logging environment validation
-  execution.ts         Execution-local correlation and outcome logging
+  execution.ts         Execution-local correlation, outcome logs, and call spans
+  telemetry.ts         Owned metrics/traces providers; no global instrumentation
+  telemetry-config.ts  Explicit OTLP opt-in and safe environment validation
 ```
 
 Gateway startup and recovery passes are serialized, so no separate connection-attempt

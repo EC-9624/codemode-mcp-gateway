@@ -5,7 +5,12 @@ import {
   InsufficientScopeError,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { ToolCatalog, ToolResult, type ToolDefinition } from "@codemode-mcp-gateway/codemode";
+import {
+  ToolCatalog,
+  ToolResult,
+  type ToolDefinition,
+  type ToolContext,
+} from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { resolveHeaders, type ServerConfiguration } from "../config.ts";
 import { type CredentialStore, type OAuthConnection } from "../auth/credentials.ts";
@@ -25,6 +30,8 @@ export class UpstreamError extends GatewayError {
 }
 
 type ConnectionEvents = {
+  response?: (context: ToolContext, isError: boolean) => void;
+  phase?: (phase: "initialize" | "discovery") => { end: (failed: boolean) => void };
   closed: () => void;
   authorization: {
     failed: (error: AuthorizationError) => void;
@@ -110,7 +117,15 @@ export async function connectUpstream(
   };
 
   const client = new Client({ name: "codemode-mcp-gateway", version: "0.0.0" });
-  const connecting = client.connect(transport, { signal: handshake, timeout: 5_000 });
+  const initializing = events.phase?.("initialize");
+  let connecting: Promise<void>;
+  try {
+    connecting = client.connect(transport, { signal: handshake, timeout: 5_000 });
+  } catch (cause) {
+    initializing?.end(true);
+    throw cause;
+  }
+
   const spawned = transport instanceof StdioClientTransport && transport.pid !== null;
   setup.defer(async () => {
     if (spawned) await closed.promise;
@@ -142,7 +157,9 @@ export async function connectUpstream(
     await connecting;
     handshake.throwIfAborted();
     initialized = true;
+    initializing?.end(false);
   } catch (cause) {
+    initializing?.end(true);
     if (cause instanceof AuthorizationError) {
       authorizationUnavailable = true;
       throw cause;
@@ -160,9 +177,15 @@ export async function connectUpstream(
   }
 
   let catalog: ToolCatalog;
+  const discovery = events.phase?.("discovery");
   try {
-    catalog = await createMcpCatalog(client, { signal });
+    catalog = await createMcpCatalog(client, {
+      signal,
+      ...(events.response === undefined ? {} : { onToolResponse: events.response }),
+    });
+    discovery?.end(false);
   } catch (cause) {
+    discovery?.end(true);
     if (cause instanceof AuthorizationError) {
       authorizationUnavailable = true;
       throw cause;

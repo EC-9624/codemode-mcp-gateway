@@ -655,6 +655,7 @@ async function fixture() {
         {
           env: {
             ...process.env,
+            OTEL_SDK_DISABLED: "true",
             HOME: directory,
             CODEX_HOME: join(directory, ".codex"),
             CLAUDE_CONFIG_DIR: join(directory, ".claude"),

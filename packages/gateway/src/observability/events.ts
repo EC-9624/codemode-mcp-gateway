@@ -103,7 +103,17 @@ export type GatewayEvent =
       attributes:
         | { "gw.logging.failure": "sink" }
         | { "gw.logging.failure": "backpressure"; "gw.logging.dropped": number };
+    }
+  | {
+      name: "gw.telemetry.failed";
+      attributes: { "gw.component": "traces" | "metrics" | "shutdown" };
     };
+
+export type LogTraceContext = {
+  readonly traceId: string;
+  readonly spanId: string;
+  readonly traceFlags: number;
+};
 
 export type GatewayLog = {
   readonly timestamp: string;
@@ -176,6 +186,8 @@ export function describeEvent(
       return warn("Full output could not be saved.");
     case "gw.logging.failed":
       return warn("Log delivery failed; execution is unaffected.");
+    case "gw.telemetry.failed":
+      return warn("Telemetry delivery failed; execution is unaffected.");
   }
 }
 

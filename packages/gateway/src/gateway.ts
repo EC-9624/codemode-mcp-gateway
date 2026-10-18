@@ -5,6 +5,7 @@ import {
   type SandboxTool,
   type ToolDefinition,
   type ToolException,
+  type ToolContext,
 } from "@codemode-mcp-gateway/codemode";
 import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
@@ -17,7 +18,8 @@ import { type CredentialOptions } from "./auth/credentials.ts";
 import { discoveryBindings, toolDefinitions } from "./catalog.ts";
 import { type ToolList } from "./tool-list.ts";
 import { type Logger } from "./observability/logger.ts";
-import { ExecutionLog } from "./observability/execution.ts";
+import { ExecutionObservation } from "./observability/execution.ts";
+import { type Telemetry } from "./observability/telemetry.ts";
 import {
   type Transport,
   type SessionContext,
@@ -36,6 +38,8 @@ export type GatewayOptions = CredentialOptions & {
   onToolException?: (exception: ToolException) => void;
   /** Borrowed local logger. Omitted disables structured events; generic protocol diagnostics remain. */
   logger?: Logger;
+  /** Borrowed metrics/tracing providers. The caller owns flushing/shutdown. */
+  telemetry?: Telemetry;
 };
 
 /**
@@ -52,7 +56,11 @@ export class Gateway implements AsyncDisposable {
   // Box the cause: `throw undefined` is a failure, not the absence of one.
   private fatal: { cause: unknown } | undefined;
   private cached:
-    | { tools: Readonly<Record<string, SandboxTool>>; connections: ConnectionSnapshot[] }
+    | {
+        tools: Readonly<Record<string, SandboxTool>>;
+        connections: ConnectionSnapshot[];
+        owners: ReadonlyMap<string, Upstream>;
+      }
     | undefined;
   private starting: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
@@ -60,13 +68,17 @@ export class Gateway implements AsyncDisposable {
   private maintenance: Promise<void> | undefined;
   private readonly abort = () => this.shutdown.abort();
   private readonly reportedStates = new Map<string, ServerStatus["state"]>();
+  private readonly unregisterTelemetry: (() => void) | undefined;
 
   constructor(
     config: Configuration,
     directory: string,
     private readonly options: GatewayOptions = {},
   ) {
-    this.instanceId = options.logger?.resource["service.instance.id"] ?? crypto.randomUUID();
+    this.instanceId =
+      options.telemetry?.resource["service.instance.id"] ??
+      options.logger?.resource["service.instance.id"] ??
+      crypto.randomUUID();
     const snapshot = structuredClone(config);
     const onToolException = options.onToolException;
     this.executor = new CodeExecutor({
@@ -100,6 +112,10 @@ export class Gateway implements AsyncDisposable {
           failed: (cause) => this.fail(cause),
         }),
     );
+    this.unregisterTelemetry = options.telemetry?.registerGateway(() => ({
+      active: this.executor.activeExecutionCount,
+      servers: this.status(),
+    }));
     options.signal?.addEventListener("abort", this.abort, { once: true });
     if (options.signal?.aborted) this.abort();
   }
@@ -182,6 +198,7 @@ export class Gateway implements AsyncDisposable {
           await output.close();
         } finally {
           this.servers.delete(server);
+          this.options.telemetry?.sessionChanged(session["gw.transport"], -1);
           this.options.logger?.emit({
             name: "gw.session.closed",
             attributes: {
@@ -197,6 +214,7 @@ export class Gateway implements AsyncDisposable {
     });
 
     this.servers.add(server);
+    this.options.telemetry?.sessionChanged(session["gw.transport"], 1);
     server.server.onerror = reportProtocolError;
     this.options.logger?.emit({ name: "gw.session.opened", attributes: session });
 
@@ -251,19 +269,22 @@ export class Gateway implements AsyncDisposable {
 
     const definitions: Array<[string, ToolDefinition]> = [];
     const connections: ConnectionSnapshot[] = [];
+    const owners = new Map<string, Upstream>();
     for (const upstream of this.upstreams) {
       const connection = upstream.snapshot();
       if (connection === undefined) continue;
 
       connections.push(connection);
-      for (const [name, definition] of toolDefinitions(connection.catalog))
+      for (const [name, definition] of toolDefinitions(connection.catalog)) {
         definitions.push([`${upstream.name}.${name}`, definition]);
+        owners.set(`${upstream.name}.${name}`, upstream);
+      }
     }
 
     const catalog = ToolCatalog.create(Object.fromEntries(definitions));
     const tools = discoveryBindings(catalog, this.status());
 
-    this.cached = { tools, connections };
+    this.cached = { tools, connections, owners };
 
     return this.cached;
   }
@@ -278,16 +299,32 @@ export class Gateway implements AsyncDisposable {
     const snapshot = this.snapshot();
 
     const observation =
-      this.options.logger === undefined
+      this.options.logger === undefined && this.options.telemetry === undefined
         ? undefined
-        : new ExecutionLog(this.options.logger, session);
+        : new ExecutionObservation(this.options.logger, session, this.options.telemetry);
+
+    const tools =
+      this.options.telemetry === undefined || observation === undefined
+        ? snapshot.tools
+        : Object.fromEntries(
+            Object.entries(snapshot.tools).map(([name, tool]) => {
+              const owner = snapshot.owners.get(name);
+              if (owner === undefined) return [name, tool] as const;
+
+              return [
+                name,
+                (args: unknown, context: ToolContext) =>
+                  observation.call(owner.name, owner.transport, name, tool, args, context),
+              ] as const;
+            }),
+          );
 
     // Recovery may replace connections mid-execution. Retain this revision until executor cleanup.
     for (const connection of snapshot.connections) connection.retain();
 
     try {
       const report = await this.executor.execute(code, {
-        tools: snapshot.tools,
+        tools,
         ...(observation === undefined
           ? {}
           : {
@@ -295,6 +332,7 @@ export class Gateway implements AsyncDisposable {
                 observation.toolException(exception);
                 this.options.onToolException?.(exception);
               },
+              onAdmitted: () => observation.admitted(),
             }),
         signal: AbortSignal.any([
           this.shutdown.signal,
@@ -346,6 +384,8 @@ export class Gateway implements AsyncDisposable {
     if (this.fatal !== undefined) errors.push(this.fatal.cause);
 
     if (errors.length > 0) throw new AggregateError(errors, "Gateway cleanup failed.");
+
+    this.unregisterTelemetry?.();
   }
 }
 

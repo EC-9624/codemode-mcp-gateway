@@ -15,6 +15,7 @@ import { readConfiguration } from "../config.ts";
 import { type CredentialOptions } from "../auth/credentials.ts";
 import { Gateway } from "../gateway.ts";
 import { Logger } from "../observability/logger.ts";
+import { Telemetry } from "../observability/telemetry.ts";
 
 /**
  * Load configuration and serve MCP on process stdin/stdout until EOF or a shutdown signal.
@@ -24,13 +25,20 @@ import { Logger } from "../observability/logger.ts";
  */
 export async function serve(
   path: string,
-  options: CredentialOptions & { signal?: AbortSignal; logger?: Logger } = {},
+  options: CredentialOptions & {
+    signal?: AbortSignal;
+    logger?: Logger;
+    telemetry?: Telemetry;
+  } = {},
 ): Promise<void> {
   options.signal?.throwIfAborted();
   const config = await readConfiguration(path);
   options.signal?.throwIfAborted();
   await using cleanup = new AsyncDisposableStack();
   const logger = options.logger ?? (await Logger.fromEnvironment());
+  const telemetry = options.telemetry ?? (await Telemetry.fromEnvironment(logger));
+  if (options.telemetry === undefined && telemetry !== undefined)
+    cleanup.defer(() => telemetry.close());
 
   const started = performance.now();
   let reason: "signal" | "host" | "failure" | "eof" = "host";
@@ -80,6 +88,7 @@ export async function serve(
     ...options,
     signal: shutdown.signal,
     logger,
+    ...(telemetry === undefined ? {} : { telemetry }),
   });
 
   cleanup.defer(async () => {

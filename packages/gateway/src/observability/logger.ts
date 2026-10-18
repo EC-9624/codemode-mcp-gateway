@@ -1,6 +1,11 @@
 import { gatewayVersion } from "../version.ts";
 import { logConfiguration, type LogLevel } from "./config.ts";
-import { describeEvent, type GatewayEvent, type GatewayLog } from "./events.ts";
+import {
+  describeEvent,
+  type GatewayEvent,
+  type GatewayLog,
+  type LogTraceContext,
+} from "./events.ts";
 import { renderLog } from "./presentation.ts";
 
 export type LoggerOptions = {
@@ -43,7 +48,7 @@ export class Logger {
       ((record) => console.error(renderLog(record, process.stderr.isTTY === true)));
   }
 
-  emit(event: GatewayEvent): void {
+  emit(event: GatewayEvent, trace?: LogTraceContext): void {
     const description = describeEvent(event);
     if (description.severityNumber < this.minimum) return;
 
@@ -69,6 +74,9 @@ export class Logger {
       attributes: Object.freeze({ ...event.attributes }),
       resource: this.resource,
       instrumentationScope: this.instrumentationScope,
+      ...(trace === undefined
+        ? {}
+        : { traceId: trace.traceId, spanId: trace.spanId, traceFlags: trace.traceFlags }),
     });
 
     try {

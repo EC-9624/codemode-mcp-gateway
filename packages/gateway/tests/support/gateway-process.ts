@@ -57,7 +57,7 @@ export async function gatewayProcess(
     ],
     {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...options.environment },
+      env: { ...process.env, OTEL_SDK_DISABLED: "true", ...options.environment },
     },
   );
 
