@@ -174,6 +174,7 @@ function isCallId(value: unknown): value is number {
 }
 
 function isToolNames(value: unknown): value is string[] {
+  // Materialize sparse holes as undefined; every() alone would skip them and accept invalid names.
   return (
     Array.isArray(value) &&
     Array.from(value).every((name: unknown) => typeof name === "string") &&

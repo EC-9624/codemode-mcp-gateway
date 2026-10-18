@@ -6,7 +6,7 @@ export type ToolCallLimits = Pick<ExecutionLimits, "maxToolCalls" | "maxConcurre
 /** Total admission counts queued calls too; only active slots are reusable. */
 export function createToolCallBudget(limits: ToolCallLimits) {
   let total = 0;
-  let pending = 0;
+  let active = 0;
 
   return {
     admit(): ToolCallLimit | undefined {
@@ -24,7 +24,7 @@ export function createToolCallBudget(limits: ToolCallLimits) {
       return undefined;
     },
     start(): ToolCallLimit | undefined {
-      if (pending >= limits.maxConcurrentToolCalls) {
+      if (active >= limits.maxConcurrentToolCalls) {
         return {
           kind: "limit",
           resource: "concurrent-tool-calls",
@@ -33,12 +33,12 @@ export function createToolCallBudget(limits: ToolCallLimits) {
         };
       }
 
-      pending++;
+      active++;
 
       return undefined;
     },
     release() {
-      pending--;
+      active--;
     },
   };
 }

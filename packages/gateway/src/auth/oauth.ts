@@ -98,6 +98,10 @@ export async function authorize(
     }
 
     try {
+      // Intentionally retain deprecated DCR: initial login has no CIMD or pre-registered
+      // client support yet. Prefer CIMD once a metadata URL can be configured and the
+      // server advertises support, retaining DCR as a compatibility fallback.
+      // https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2858
       client = await registerClient(discovery.authorizationServerUrl, {
         metadata: discovery.metadata,
         clientMetadata: {

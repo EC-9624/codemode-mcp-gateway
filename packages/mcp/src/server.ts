@@ -52,6 +52,7 @@ when a script fails; do not blindly replay scripts that may have performed write
 
   override close(): Promise<void> {
     this.shutdown.abort();
+    // Cache the closing promise before SDK cleanup can re-enter close through transport callbacks.
     this.closing ??= Promise.resolve().then(() => this.stop());
 
     return this.closing;

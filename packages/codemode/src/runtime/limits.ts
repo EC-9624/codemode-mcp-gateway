@@ -3,8 +3,6 @@ import { SandboxLimits } from "../limits.ts";
 /** Longer delays overflow host timers, which then fire immediately; sizes and counts share the range. */
 export const MAX_LIMIT = SandboxLimits.totalTimeoutMs.maximum;
 
-export const MAX_STACK_SIZE_BYTES = SandboxLimits.maxStackSizeBytes.maximum;
-
 export type ExecutionLimits = {
   readonly timeoutMs: number | undefined;
   readonly memoryLimitBytes: number;

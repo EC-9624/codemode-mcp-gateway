@@ -152,6 +152,7 @@ export function createDiscoveryTools(catalog: ToolCatalog) {
 
         return {
           name: tool.name,
+          // Truncation can split a UTF-16 surrogate pair; repair the preview before returning it.
           description:
             description.length > 200 ? description.slice(0, 199).toWellFormed() + "…" : description,
         };

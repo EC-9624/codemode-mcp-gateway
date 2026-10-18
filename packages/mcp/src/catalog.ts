@@ -8,13 +8,13 @@ import {
   ToolResult,
   validateTool,
   ToolCatalog,
+  SandboxLimits,
   type ToolDefinition,
 } from "@codemode-mcp-gateway/codemode";
 import { compileToolSchema } from "./schema.ts";
 import { type McpCatalogOptions } from "./types.ts";
 
-// Codemode keeps its equivalent constant internal; MCP depends only on its public API.
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+const MAX_TIMEOUT_MS = SandboxLimits.timeoutMs.maximum;
 
 /**
  * Discover a catalog snapshot from a connected, application-owned MCP client.
