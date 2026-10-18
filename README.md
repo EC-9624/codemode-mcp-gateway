@@ -96,8 +96,11 @@ or a positional path overrides it. `check` validates without connecting; `doctor
 queries the actual running service using the same saved token or override (`doctor --stdio` explicitly
 probes fresh connections and needs no gateway HTTP token).
 Login is explicit and interactive; serving
-uses saved OS credentials and noninteractive refresh. Logout removes local
-credentials, not the upstream grant.
+uses private file-backed credentials and noninteractive refresh. OAuth snapshots
+live under `$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
+`~/.local/state/codemode-mcp-gateway/credentials`), not Keychain. Files are plaintext
+with owner-only permissions. Existing Keychain users must log in again; old entries
+are left untouched. Logout removes local credentials, not the upstream grant.
 
 Upstreams initialize independently, so MCP readiness does not imply tool readiness.
 Discovery reports server availability; connected upstreams remain usable when

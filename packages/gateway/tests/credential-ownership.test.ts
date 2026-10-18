@@ -66,7 +66,7 @@ describe("credential ownership fault boundaries", () => {
             home,
             ".local",
             "state",
-            "cmg",
+            "codemode-mcp-gateway",
             "locks",
             credentialName({ id: "test", url: "https://example.com/mcp" }) + ".credentials.lock",
           ),

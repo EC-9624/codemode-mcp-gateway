@@ -3,8 +3,8 @@ import { Credentials, type CredentialStore } from "codemode-mcp-gateway";
 import { rename } from "node:fs/promises";
 
 // The CLI dispatcher accepts a store seam; running it here preserves CLI diagnostics
-// and process shutdown behavior without invoking the production OS credential service.
-// Synthetic credentials only. Production entry points never select this file-backed test store.
+// and process shutdown behavior with externally controlled synthetic snapshots and fault injection.
+// This intentionally loose test store is not the production private-file adapter.
 const path = process.env.CMG_TEST_CREDENTIALS;
 const directory = process.env.CMG_TEST_LOCKS;
 if (path === undefined || directory === undefined) throw new Error("Missing OAuth fixture paths");

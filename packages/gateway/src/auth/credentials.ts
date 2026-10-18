@@ -1,4 +1,3 @@
-import { secrets } from "bun";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { type ServerConfiguration } from "../config.ts";
@@ -76,12 +75,6 @@ export type CredentialStore = {
   clear(): Promise<AuthResult<void>>;
 };
 
-type SecretService = {
-  get(key: { service: string; name: string }): Promise<string | null>;
-  set(key: { service: string; name: string; value: string }): Promise<void>;
-  delete(key: { service: string; name: string }): Promise<boolean>;
-};
-
 export function oauthConnection(
   name: string,
   upstream: ServerConfiguration,
@@ -102,86 +95,6 @@ export function oauthConnection(
 
 export function credentialName(connection: OAuthConnection): string {
   return createHash("sha256")
-    .update(connection.id + "\0" + connection.url)
+    .update(connection.id + "\0" + new URL(connection.url).href)
     .digest("hex");
-}
-
-/** Uses the current OS user's credential service; no plaintext fallback. */
-export function credentialStore(
-  connection: OAuthConnection,
-  service: SecretService = secrets,
-): CredentialStore {
-  const key = { service: "codemode-mcp-gateway", name: credentialName(connection) };
-
-  return {
-    async load() {
-      let stored: string | null;
-      try {
-        stored = await service.get(key);
-      } catch (cause) {
-        return AuthResult.failure(
-          "storage",
-          "Could not read the OS credential store. Unlock or enable your credential service.",
-          cause,
-        );
-      }
-
-      if (stored === null) return AuthResult.success(undefined);
-
-      let input: unknown;
-      try {
-        input = JSON.parse(stored);
-      } catch (cause) {
-        return AuthResult.failure(
-          "invalid",
-          "Stored OAuth credentials are invalid. Run gw logout, then gw login.",
-          cause,
-        );
-      }
-
-      const parsed = Credentials.safeParse(input);
-      if (!parsed.success || parsed.data.upstreamUrl !== connection.url) {
-        return AuthResult.failure(
-          "invalid",
-          "Stored OAuth credentials do not match this connection. Run gw logout, then gw login.",
-        );
-      }
-
-      return AuthResult.success(parsed.data);
-    },
-    async save(value) {
-      const parsed = Credentials.safeParse(value);
-      if (!parsed.success || parsed.data.upstreamUrl !== connection.url) {
-        return AuthResult.failure(
-          "invalid",
-          "Cannot store credentials for a different upstream connection.",
-        );
-      }
-
-      try {
-        await service.set({ ...key, value: JSON.stringify(parsed.data) });
-      } catch (cause) {
-        return AuthResult.failure(
-          "storage",
-          "Could not save OAuth credentials in the OS credential store. Authorization may need to be repeated.",
-          cause,
-        );
-      }
-
-      return AuthResult.success(undefined);
-    },
-    async clear() {
-      try {
-        await service.delete(key);
-      } catch (cause) {
-        return AuthResult.failure(
-          "storage",
-          "Could not remove OAuth credentials from the OS credential store.",
-          cause,
-        );
-      }
-
-      return AuthResult.success(undefined);
-    },
-  };
 }

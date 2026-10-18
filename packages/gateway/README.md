@@ -396,33 +396,69 @@ added when either advertises it. Registration and browser consent request the sa
 scopes. To replace an existing incorrectly scoped registration, run
 `gw logout --server <name>`, then `gw login --server <name>`; login alone reuses registration.
 
-Serving is noninteractive: it loads the current OS user's saved credentials and
+Serving is noninteractive: it loads the current user's saved credential files and
 refreshes them without prompting for browser consent. Missing or revoked authorization
 requires another explicit login. A permission/scope denial never automatically widens
 the grant. Your upstream account and granted authorization determine access.
 
-Credentials and registration details use Bun's experimental `secrets` API (macOS
-Keychain or Linux libsecret); there is no plaintext fallback. The OS service may
-require unlocking or an access prompt. Server name and canonical upstream URL
-select the entry; stored issuer/resource bindings are checked before refreshing.
+Credentials and registration details are plaintext versioned JSON snapshots in
+`$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
+`~/.local/state/codemode-mcp-gateway/credentials`). The directory has mode 0700 and
+each file has mode 0600; POSIX ownership and permissions are checked, and Windows
+uses inherited user-directory ACLs. Symlinked directories/files and nonregular files
+are rejected. Files are not encrypted by the application: processes running as your
+user can read them. Keep this state outside Git and protect its backups.
+
+There is no Keychain/libsecret backend, automatic migration, or storage fallback.
+After upgrading from OS credential storage, restart the gateway and run `gw login`
+again for each OAuth server. Existing Keychain entries and the old `cmg/locks`
+directory are not read or deleted.
+
+Server name and canonical upstream URL select a SHA-256-named file;
+stored issuer/resource bindings are checked before refreshing.
 Registration's loopback redirect URI is reused, so its port must be available during
 later logins. Changing the name or URL selects a new entry; use the original configuration
 to log out of the old entry.
+
+The public `fileCredentialStore(connection, { directory? })` factory implements the
+existing `CredentialStore` interface and does no I/O on construction. `load()` reads
+fresh snapshots without creating missing files; absent credentials return success
+with `undefined`. `save()` validates the snapshot and upstream binding, writes and
+syncs a private temporary file, then atomically replaces the destination. Readers
+see a complete old or new snapshot. `clear()` removes only that connection's file
+and succeeds if already absent, including when the directory is absent. Malformed
+snapshots return `invalid`; filesystem and permission failures return `storage`,
+never absence. This is not a power-loss durability or cross-process fencing guarantee.
+
+Hosts can use the same options with `login`, `logout`, and `Gateway`:
+
+```ts
+import { fileCredentialStore, type CredentialOptions } from "codemode-mcp-gateway";
+
+const options = {
+  store: (connection) =>
+    fileCredentialStore(connection, { directory: "/absolute/private/credentials" }),
+} satisfies CredentialOptions;
+```
+
+Custom credential directories must be absolute. All processes sharing credentials
+must also share `lockDirectory` (the default is shared already); the store itself
+does not acquire another lock. The separate gateway HTTP token is unchanged.
 
 Multiple gateway processes can share the same connection and credentials. Ordinary
 tool calls hold no credential lock. Before refreshing, CMG acquires a short
 `proper-lockfile` lock, reloads credentials, and reuses a token already replaced by
 another process. Otherwise it refreshes and saves under that lock. No native FFI is used.
 
-The lock lives in `$XDG_STATE_HOME/cmg/locks` (default `~/.local/state/cmg/locks`)
+The lock lives in `$XDG_STATE_HOME/codemode-mcp-gateway/locks`
+(default `~/.local/state/codemode-mcp-gateway/locks`)
 and contains no credentials. Empty `XDG_STATE_HOME` uses that default; relative values
 are rejected so different working directories cannot split credential ownership.
 CMG renews it every second; an abandoned lock becomes
 eligible for recovery after 20 seconds. Acquisition waits up to 25 seconds and is
 cancellable during serving/login. Lost ownership aborts auth requests and blocks
 further credential writes. This is an advisory heartbeat lock, not transactional
-fencing against an arbitrarily suspended process. The OS credential service must
-still be available on the host.
+fencing against an arbitrarily suspended process.
 
 Login locks registration setup and final persistence, but releases the lock during
 browser consent. If credentials change meanwhile (another login, logout, or refresh),
@@ -619,8 +655,10 @@ workflows through public login/logout; `credentials.test.ts` specifies the expor
 `authorization.test.ts` exercises running gateways through real SDK clients.
 Only `credential-ownership.test.ts` retains internal session/lease probes, for
 out-of-order store completions, persistence publication, and compromised/crashed
-lock ownership that the public serving API cannot expose precisely. The real OS adapter
-is exercised through public login/logout with scoped spies on Bun's secret service.
+lock ownership that the public serving API cannot expose precisely.
+`credential-store.test.ts` exercises real file permissions, symlinks, and atomic replacement
+through the exported factory; `gateway-file-credentials.test.ts` verifies default paths and
+login/refresh/restart/logout across real processes with synthetic credentials.
 Its helpers and upstream fixtures are package-local. Packed-consumer fixtures additionally verify the installed API
 and `gw` executable through the root distribution checks.
 Repository testing conventions live in `docs/testing.md`, not the shipped package.

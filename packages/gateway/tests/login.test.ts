@@ -1,9 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { secrets } from "bun";
+import { promises } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { login, logout, Credentials, type CredentialStore } from "codemode-mcp-gateway";
 import { configuration } from "./support/configuration.ts";
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
 import { rejectionOf } from "./support/rejection.ts";
+import { credentialFiles } from "./support/credentials.ts";
 
 describe("login", () => {
   test.each([
@@ -191,13 +193,17 @@ describe("login", () => {
       oauth: { scope: "read" },
     });
 
-    using read = spyOn(secrets, "get").mockResolvedValue(stored(upstream.credentials()));
+    await using files = await credentialFiles();
+    const store = files.store({ id: "notes", url: upstream.url });
+    expect(await store.save(upstream.credentials())).toMatchObject({ ok: true });
+    const path = await files.path();
+    const content = stored(upstream.credentials());
+    await writeFile(path, content);
 
-    using write = spyOn(secrets, "set").mockRejectedValue(new Error("Unexpected credential write"));
-
-    using remove = spyOn(secrets, "delete").mockResolvedValue(false);
-
-    const result = await login(config.path, { lockDirectory: config.lockDirectory });
+    const result = await login(config.path, {
+      store: files.store,
+      lockDirectory: config.lockDirectory,
+    });
 
     expect(result).toMatchObject({ ok: false, error: { kind: "invalid" } });
     if (!result.ok) {
@@ -207,12 +213,10 @@ describe("login", () => {
     }
 
     expect(upstream.requests).toEqual([]);
-    expect(read).toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
+    expect(await readFile(path, "utf8")).toBe(content);
   });
 
-  test("reports failed credential persistence without exposing service diagnostics", async () => {
+  test("reports failed credential persistence without exposing filesystem diagnostics", async () => {
     await using upstream = await oauthFixture();
 
     await using config = await configuration({
@@ -221,19 +225,25 @@ describe("login", () => {
       oauth: { scope: "read" },
     });
 
-    using read = spyOn(secrets, "get").mockResolvedValue(null);
-    using write = spyOn(secrets, "set").mockRejectedValue(new Error("private keychain detail"));
-    using remove = spyOn(secrets, "delete").mockResolvedValue(false);
+    await using files = await credentialFiles();
 
-    const result = await login(config.path, { lockDirectory: config.lockDirectory });
+    using write = spyOn(promises, "rename").mockRejectedValue(
+      new Error("private filesystem detail"),
+    );
+
+    const result = await login(config.path, {
+      store: files.store,
+      lockDirectory: config.lockDirectory,
+      authorize: async () => {
+        throw new Error("Credential persistence must fail before browser presentation.");
+      },
+    });
 
     expect(result).toMatchObject({ ok: false, error: { kind: "storage" } });
-    if (!result.ok) expect(result.error.message).not.toContain("private keychain detail");
+    if (!result.ok) expect(result.error.message).not.toContain("private filesystem detail");
 
     expect(upstream.exchanges).toBe(0);
-    expect(read).toHaveBeenCalled();
     expect(write).toHaveBeenCalledTimes(1);
-    expect(remove).not.toHaveBeenCalled();
   });
 
   test("a rejected client is removed so a later login can register again", async () => {

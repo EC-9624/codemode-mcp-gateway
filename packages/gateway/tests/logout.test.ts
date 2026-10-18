@@ -1,11 +1,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { secrets } from "bun";
+import { promises } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { login, logout } from "codemode-mcp-gateway";
 import { configuration } from "./support/configuration.ts";
 import { memoryCredentials, oauthFixture } from "./support/oauth.ts";
+import { credentialFiles } from "./support/credentials.ts";
 
 describe("logout", () => {
-  test("removes only the selected id and URL from the OS credential service", async () => {
+  test("removes only the selected id and URL from file-backed credentials", async () => {
     await using notes = await oauthFixture();
     await using calendar = await oauthFixture();
 
@@ -36,19 +38,7 @@ describe("logout", () => {
       "personal",
     );
 
-    const entries = new Map<string, string>();
-
-    using read = spyOn(secrets, "get").mockImplementation(
-      async (key) => entries.get(key.service + ":" + key.name) ?? null,
-    );
-
-    using write = spyOn(secrets, "set").mockImplementation(async (key) => {
-      entries.set(key.service + ":" + key.name, key.value);
-    });
-
-    using remove = spyOn(secrets, "delete").mockImplementation(async (key) =>
-      entries.delete(key.service + ":" + key.name),
-    );
+    await using files = await credentialFiles();
 
     for (const [config, upstream] of [
       [personal, notes],
@@ -57,6 +47,7 @@ describe("logout", () => {
     ] as const) {
       expect(
         await login(config.path, {
+          store: files.store,
           lockDirectory: personal.lockDirectory,
           authorize: async (url) => {
             await fetch(await upstream.authorize(url));
@@ -65,19 +56,23 @@ describe("logout", () => {
       ).toMatchObject({ ok: true });
     }
 
-    const saved = new Map(entries);
-    expect(saved.size).toBe(3);
-    const selected = write.mock.calls[0]?.[0];
-    if (selected === undefined) throw new Error("Expected saved personal credentials");
+    const selected = files.store({ id: "personal", url: notes.url });
+    const unselected = files.store({ id: "work", url: notes.url });
+    const differentUrl = files.store({ id: "personal", url: calendar.url });
+    const savedWork = await unselected.load();
+    const savedOther = await differentUrl.load();
+    expect((await readdir(files.directory)).length).toBe(3);
 
-    const result = await logout(personal.path, { lockDirectory: personal.lockDirectory });
+    const result = await logout(personal.path, {
+      store: files.store,
+      lockDirectory: personal.lockDirectory,
+    });
 
     expect(result).toEqual({ ok: true, value: undefined });
-    expect(remove).toHaveBeenCalledWith({ service: selected.service, name: selected.name });
-    saved.delete(selected.service + ":" + selected.name);
-    expect(entries).toEqual(saved);
-    expect(entries.size).toBe(2);
-    expect(read).toHaveBeenCalled();
+    expect(await selected.load()).toEqual({ ok: true, value: undefined });
+    expect(await unselected.load()).toEqual(savedWork);
+    expect(await differentUrl.load()).toEqual(savedOther);
+    expect((await readdir(files.directory)).length).toBe(2);
   });
 
   test("succeeds when local credentials are already absent without contacting the provider", async () => {
@@ -122,29 +117,41 @@ describe("logout", () => {
     expect(upstream.requests).toEqual([]);
   });
 
-  test("returns a controlled storage failure when the OS service cannot delete credentials", async () => {
+  test("returns a controlled storage failure when the credential file cannot be deleted", async () => {
     await using config = await configuration({
       type: "remote",
       url: "https://example.com/mcp",
       oauth: {},
     });
 
-    using read = spyOn(secrets, "get").mockResolvedValue(null);
-    using write = spyOn(secrets, "set").mockResolvedValue(undefined);
-    using remove = spyOn(secrets, "delete").mockRejectedValue(new Error("private keychain detail"));
+    await using upstream = await oauthFixture();
+    await using files = await credentialFiles();
+    const store = files.store({ id: "notes", url: "https://example.com/mcp" });
+    expect(
+      await store.save({ ...upstream.credentials(), upstreamUrl: "https://example.com/mcp" }),
+    ).toMatchObject({ ok: true });
 
-    const result = await logout(config.path, { lockDirectory: config.lockDirectory });
+    using remove = spyOn(promises, "unlink").mockRejectedValue(
+      new Error("private filesystem detail"),
+    );
+
+    const result = await logout(config.path, {
+      store: files.store,
+      lockDirectory: config.lockDirectory,
+    });
 
     expect(result).toMatchObject({
       ok: false,
       error: {
         kind: "storage",
-        message: "Could not remove OAuth credentials from the OS credential store.",
+        message: "Could not remove the OAuth credential file.",
       },
     });
     expect(remove).toHaveBeenCalledTimes(1);
-    expect(read).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
+    expect(await store.load()).toMatchObject({
+      ok: true,
+      value: { upstreamUrl: "https://example.com/mcp" },
+    });
   });
 
   test("logout during consent prevents a pending login from restoring credentials", async () => {

@@ -22,7 +22,9 @@ export async function acquireLease(
   if (directory === undefined && xdg !== undefined && xdg !== "" && !isAbsolute(xdg))
     return AuthResult.failure("invalid", "XDG_STATE_HOME must be an absolute path.");
 
-  const path = directory ?? join(xdg || join(homedir(), ".local", "state"), "cmg", "locks");
+  const path =
+    directory ?? join(xdg || join(homedir(), ".local", "state"), "codemode-mcp-gateway", "locks");
+
   const lost = new AbortController();
   const deadline = performance.now() + (options.waitMs ?? 25_000);
   let release: (() => Promise<void>) | undefined;

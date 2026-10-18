@@ -40,9 +40,9 @@ and runtimes. Automated standalone execution checks verify the host platform onl
 
 The standalone executable deliberately does not auto-load cwd `.env` or
 `bunfig.toml` files. Inject environment settings through your shell or supervisor
-explicitly. Standalone packaging does not add remote network hosting or solve
-headless OAuth credential storage; the listener remains loopback-only and OAuth
-still uses the OS credential service and explicit interactive login.
+explicitly. Standalone packaging does not add remote network hosting; the listener
+remains loopback-only. OAuth uses private credential files and explicit interactive
+login; serving reads and refreshes saved grants without Keychain prompts.
 
 ## Prepare gateway files explicitly
 
@@ -82,7 +82,7 @@ Use the same `--config` path for setup/check/login/serve when choosing a nondefa
 configuration. `gw token` needs no configuration.
 
 To update, stop the gateway, replace the executable, and start it again. The files
-above and upstream OS credentials are separate from the binary and remain intact.
+above and upstream credential files are separate from the binary and remain intact.
 Keep a previous binary yourself if you want rollback. No version-directory manager
 or automatic process restart is provided.
 
@@ -122,7 +122,10 @@ with mode 0700, and the token file must be owned with mode 0600.
 
 Clients send `Authorization: Bearer <your-token>` to
 `http://127.0.0.1:4791/mcp`. This credential is unrelated to upstream OAuth tokens,
-which remain in the OS credential store and still require explicit login.
+which are plaintext snapshots in `$XDG_STATE_HOME/codemode-mcp-gateway/credentials`
+(default `~/.local/state/codemode-mcp-gateway/credentials`). OAuth files use mode 0600
+in a mode-0700 directory; the application does not encrypt them. Initial authorization
+still requires explicit login.
 
 **Rotation is explicit:** replace the private token-file contents with a new valid
 high-entropy value (retaining mode 0600), or change the environment override, then
@@ -215,7 +218,12 @@ remain usable. Logout removes local upstream credentials, not the provider grant
   Old service `auth.json` keys and native headers are not imported or migrated.
 - Existing installations, launchd definitions, service credentials, and client
   settings are left untouched. Remove obsolete files yourself when no longer needed.
-- Upstream OAuth identities, stored grants, and lock locations are unchanged.
+- Upstream OAuth identities still use server name and canonical URL. This build
+  stores grants under `codemode-mcp-gateway/credentials` and locks under
+  `codemode-mcp-gateway/locks`, both below the XDG state root. Old `cmg/locks` files
+  are not reused. Stop old processes before switching builds.
+- Run `gw login --server <name>` again for existing OAuth servers after switching
+  from Keychain/libsecret storage. Old OS credentials are not imported, read, or deleted.
 
 Historical validation of the retired installer, automatic registration, and OS
 service commands is retained in [the archive](archive/deployment-validation.md),

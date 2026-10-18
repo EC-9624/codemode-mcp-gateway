@@ -11,4 +11,5 @@ export { serve } from "./server.ts";
 export { GatewayHttpServer, type HttpOptions, type HttpListenResult } from "./http.ts";
 export { login, logout, type LoginOptions, type CredentialOptions } from "./auth/login.ts";
 export { type CredentialStore, Credentials, type OAuthConnection } from "./auth/credentials.ts";
+export { fileCredentialStore } from "./auth/file-store.ts";
 export { AuthorizationError, type AuthResult, type AuthFailure } from "./auth/result.ts";

@@ -8,7 +8,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ToolCatalog, ToolResult } from "@codemode-mcp-gateway/codemode";
 import { createMcpCatalog } from "@codemode-mcp-gateway/mcp";
 import { resolveHeaders, type ServerConfiguration } from "./config.ts";
-import { credentialStore, oauthConnection } from "./auth/credentials.ts";
+import { oauthConnection } from "./auth/credentials.ts";
+import { fileCredentialStore } from "./auth/file-store.ts";
 import { OAuthSession } from "./auth/session.ts";
 import { AuthorizationError } from "./auth/result.ts";
 import { GatewayError } from "./errors.ts";
@@ -62,7 +63,7 @@ export async function connectUpstream(
 
     const opened = await OAuthSession.open(
       connection.value,
-      (options.store ?? credentialStore)(connection.value),
+      (options.store ?? fileCredentialStore)(connection.value),
       handshake,
       options.lockDirectory,
       authorizationFailed,

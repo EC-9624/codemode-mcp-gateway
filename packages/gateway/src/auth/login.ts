@@ -1,16 +1,12 @@
 import { authenticationTarget, readConfiguration } from "../config.ts";
-import {
-  credentialStore,
-  oauthConnection,
-  type CredentialStore,
-  type OAuthConnection,
-} from "./credentials.ts";
+import { oauthConnection, type CredentialStore, type OAuthConnection } from "./credentials.ts";
+import { fileCredentialStore } from "./file-store.ts";
 import { acquireLease } from "./lease.ts";
 import { authorize, isInvalidClient, oauthFailure } from "./oauth.ts";
 import { AuthResult } from "./result.ts";
 import { isDeepStrictEqual } from "node:util";
 
-/** Hosts may inject a scoped store; production CLI commands use the OS credential service. */
+/** Hosts may inject a scoped store; CLI commands use private file-backed credentials. */
 export type CredentialOptions = {
   store?: (connection: OAuthConnection) => CredentialStore;
   lockDirectory?: string;
@@ -56,7 +52,7 @@ export async function login(path: string, options: LoginOptions = {}): Promise<A
     ...(options.signal === undefined ? [] : [options.signal]),
   ]);
 
-  const store = (options.store ?? credentialStore)(connection.value);
+  const store = (options.store ?? fileCredentialStore)(connection.value);
   const prepared = await prepareLogin(connection.value, store, signal, options.lockDirectory);
 
   if (!prepared.ok) return signal.aborted ? oauthFailure(signal.reason, signal) : prepared;
@@ -136,7 +132,7 @@ export async function logout(
   await using cleanup = new AsyncDisposableStack();
 
   cleanup.use(lease.value);
-  const store = lease.value.guard((options.store ?? credentialStore)(connection.value));
+  const store = lease.value.guard((options.store ?? fileCredentialStore)(connection.value));
 
   return await store.clear();
 }

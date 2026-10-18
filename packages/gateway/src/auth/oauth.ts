@@ -61,14 +61,14 @@ export async function authorize(
   // so consent cannot be constrained by an incompatibly scoped client registration.
   const scope = scopes.size === 0 ? undefined : [...scopes].join(" ");
 
+  const expiresAt = previous?.client.client_secret_expires_at;
+
   const reusable =
     previous !== undefined &&
     previous.upstreamUrl === connection.url &&
     previous.issuer === discovery.issuer &&
     previous.resource === discovery.resource &&
-    (previous.client.client_secret_expires_at === undefined ||
-      previous.client.client_secret_expires_at === 0 ||
-      previous.client.client_secret_expires_at * 1000 > Date.now());
+    (expiresAt === undefined || expiresAt === 0 || expiresAt * 1000 > Date.now());
 
   if (signal.aborted) return AuthResult.failure("cancelled", "OAuth login was cancelled.");
 

@@ -5,12 +5,8 @@ import { type ServerConfiguration } from "./config.ts";
 import { connectUpstream, UpstreamError } from "./connection.ts";
 import { GatewayError } from "./errors.ts";
 import { AuthorizationError } from "./auth/result.ts";
-import {
-  credentialStore,
-  credentialVersion,
-  oauthConnection,
-  type CredentialStore,
-} from "./auth/credentials.ts";
+import { credentialVersion, oauthConnection, type CredentialStore } from "./auth/credentials.ts";
+import { fileCredentialStore } from "./auth/file-store.ts";
 import { type CredentialOptions } from "./auth/login.ts";
 
 const statusBase = { name: z.string(), updatedAt: z.string() };
@@ -74,7 +70,7 @@ export class Upstream {
   ) {
     this.state = { kind: config.disabled ? "disabled" : "connecting" };
     const oauth = oauthConnection(name, config);
-    this.store = oauth.ok ? (options.store ?? credentialStore)(oauth.value) : undefined;
+    this.store = oauth.ok ? (options.store ?? fileCredentialStore)(oauth.value) : undefined;
   }
 
   start(): Promise<void> {

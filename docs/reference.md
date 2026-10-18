@@ -812,7 +812,14 @@ The CLI resolves an explicit config path before XDG (`$XDG_CONFIG_HOME/codemode-
 otherwise `~/.config/codemode-mcp-gateway/config.json`) and never implicitly loads cwd configuration.
 `check` validates offline, `doctor` reads the actual daemon (`doctor --stdio` explicitly
 opens fresh diagnostic connections), and named
-`login`/`logout` manage OS credentials. A running named gateway detects newly saved
+`login`/`logout` manage private plaintext OAuth snapshots under
+`$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
+`~/.local/state/codemode-mcp-gateway/credentials`), with locks in the sibling `locks`
+directory. The public `fileCredentialStore(connection, { directory? })` implements
+`CredentialStore`; a custom directory must be absolute. Writes sync a mode-0600
+temporary file before atomic replacement in a mode-0700 directory. Keychain/libsecret
+are no longer used; existing users must log in again, and old OS entries are untouched.
+A running named gateway detects newly saved
 authorized credentials and recreates affected upstream sessions without restarting
 the agent-facing connection. Unchanged failed grants are not refreshed repeatedly.
 Pre-exchange setup failures retry with backoff; transient credential-read failures
