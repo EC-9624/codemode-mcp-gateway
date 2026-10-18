@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { promises } from "node:fs";
 import {
   Client,
   InMemoryTransport,
@@ -187,6 +188,23 @@ describe("shared HTTP gateway", () => {
     expect(description).toContain("before gateway shutdown");
     await b.transport.terminateSession();
     expect(await Bun.file(pathB).exists()).toBe(false);
+  });
+
+  test("reports output-save failures without logging private causes", async () => {
+    await using app = await open();
+    await using a = await agent(app.host.url);
+    using faults = new DisposableStack();
+    faults.use(
+      spyOn(promises, "mkdtemp").mockRejectedValue(new Error("Private output storage detail")),
+    );
+    using diagnostics = spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await a.call('return "x".repeat(50_000);');
+
+    expect(response.isError).toBeUndefined();
+    expect(responseText(response)).toContain("[Full output could not be saved.]");
+    expect(diagnostics.mock.calls).toEqual([["CMG MCP session error."]]);
+    expect(responseText(response)).not.toContain("Private output storage detail");
   });
 
   test("closing the HTTP host leaves its borrowed gateway usable", async () => {

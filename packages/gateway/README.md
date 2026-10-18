@@ -79,6 +79,9 @@ Configuration-based commands accept `--config` or an optional positional path;
 `check` validates without connecting. `doctor` reads authenticated status from the
 actual HTTP process using the same token; `doctor --stdio` explicitly
 opens/closes fresh diagnostic connections without requiring that token.
+HTTP `doctor --server` selects from the running service, not the local upstream
+definitions, and fails if that server is absent. Fresh stdio probes select from
+the local configuration.
 `setup` creates `~/.local/state/codemode-mcp-gateway/token` (or under `XDG_STATE_HOME`),
 with mode 0600 inside an owned, non-symlinked 0700 directory. Symlinked, nonprivate,
 or invalid token files are refused, never fixed or replaced silently. Concurrent
@@ -600,6 +603,9 @@ bun run verify:standalone
 
 This package owns configuration, composition, CLI, end-to-end gateway, and
 stdio/HTTP shutdown tests in a flat `tests/` directory, grouped by public subject.
+`gateway-discovery.test.ts`, `gateway-lifecycle.test.ts`, `gateway-recovery.test.ts`,
+and `gateway-credential-races.test.ts` separate discovery/partial availability,
+startup/shutdown, recovery, and retired-credential races without sharing scenario logic.
 `login.test.ts`, `login-callback.test.ts`, `login-network.test.ts`, and `logout.test.ts` specify authorization
 workflows through public login/logout; `credentials.test.ts` specifies the exported schema.
 `authorization.test.ts` exercises running gateways through real SDK clients.

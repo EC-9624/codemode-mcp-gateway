@@ -46,6 +46,11 @@ describe("gw executable", () => {
     { name: "setup stdio", args: ["setup", "--stdio"] },
     { name: "setup server selection", args: ["setup", "--server", "notes"] },
     { name: "token configuration", args: ["token", "--config", "unused.json"] },
+    { name: "check server selection", args: ["check", "--server", "notes"] },
+    { name: "login JSON", args: ["login", "--json"] },
+    { name: "check stdio", args: ["check", "--stdio"] },
+    { name: "blank configuration", args: ["check", "--config", " "] },
+    { name: "blank server", args: ["doctor", "--server", " "] },
   ])("rejects $name with usage on stderr", async ({ args }) => {
     const result = await runProcess([cli, ...args]);
 

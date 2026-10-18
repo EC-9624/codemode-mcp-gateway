@@ -1,5 +1,4 @@
 import { dirname } from "node:path";
-import { parseArgs } from "node:util";
 import { z } from "zod";
 import { serve } from "./server.ts";
 import { login, logout, type CredentialOptions } from "./auth/login.ts";
@@ -16,6 +15,7 @@ import { serveHttp } from "./daemon.ts";
 import { httpToken } from "./http-token.ts";
 import { httpStatus } from "./status.ts";
 import { setup } from "./setup.ts";
+import { parseCommand } from "./command.ts";
 
 // Standalone builds embed this value; ordinary package/source runs read their manifest.
 declare const GW_BUILD_VERSION: string;
@@ -50,40 +50,26 @@ Client configuration, installation, and process supervision are user-managed.
 Stdio serving writes MCP to stdout and diagnostics to stderr. Login is explicit;
 running multi-upstream gateways recover automatically after credentials change.`;
 
-type Command = "setup" | "token" | "serve" | "check" | "doctor" | "login" | "logout";
-
 /** CLI boundaries render only deliberately public errors. */
 export async function main(
   args: readonly string[],
   options: CredentialOptions = {},
 ): Promise<number> {
-  let parsed;
-  try {
-    parsed = parseArgs({
-      args: [...args],
-      allowPositionals: true,
-      options: {
-        config: { type: "string", short: "c" },
-        server: { type: "string" },
-        json: { type: "boolean" },
-        help: { type: "boolean", short: "h" },
-        version: { type: "boolean", short: "v" },
-        stdio: { type: "boolean" },
-      },
-    });
-  } catch {
+  const parsed = parseCommand(args);
+  if (!parsed.ok) {
     console.error("Invalid arguments. Run gw --help for usage.");
 
     return 2;
   }
 
-  if (parsed.values.help || args.length === 0) {
+  const command = parsed.command;
+  if (command.kind === "help") {
     console.log(help);
 
     return 0;
   }
 
-  if (parsed.values.version) {
+  if (command.kind === "version") {
     const version =
       typeof GW_BUILD_VERSION === "undefined"
         ? z
@@ -96,44 +82,9 @@ export async function main(
     return 0;
   }
 
-  const positionals = [...parsed.positionals];
-  const first = positionals[0];
-  let command: Command = "serve";
-  if (
-    first === "setup" ||
-    first === "token" ||
-    first === "serve" ||
-    first === "check" ||
-    first === "doctor" ||
-    first === "login" ||
-    first === "logout"
-  ) {
-    command = first;
-    positionals.shift();
-  }
-
-  const explicit = parsed.values.config ?? positionals[0];
-  const server = parsed.values.server;
-  if (
-    first === "service" ||
-    (command === "token" &&
-      (explicit !== undefined || parsed.values.json || parsed.values.stdio)) ||
-    positionals.length > 1 ||
-    (parsed.values.config !== undefined && positionals.length !== 0) ||
-    (explicit !== undefined && !explicit.trim()) ||
-    (server !== undefined && !server.trim()) ||
-    (server !== undefined && command !== "doctor" && command !== "login" && command !== "logout") ||
-    (parsed.values.json && command !== "check" && command !== "doctor") ||
-    (parsed.values.stdio && command !== "serve" && command !== "doctor")
-  ) {
-    console.error("Invalid arguments. Run gw --help for usage.");
-
-    return 2;
-  }
-
   using listeners = new DisposableStack();
   const shutdown = new AbortController();
-  if (command !== "serve") {
+  if (command.kind !== "serve") {
     for (const event of ["SIGINT", "SIGTERM"] as const) {
       const stop = () => shutdown.abort();
       process.on(event, stop);
@@ -142,7 +93,7 @@ export async function main(
   }
 
   try {
-    if (command === "token") {
+    if (command.kind === "token") {
       const token = await httpToken();
       if (shutdown.signal.aborted) return 130;
 
@@ -151,25 +102,28 @@ export async function main(
       return 0;
     }
 
-    const path = configurationPath(explicit);
-    if (command === "setup") {
+    const path = configurationPath(command.path);
+    if (command.kind === "setup") {
       await setup(path);
 
       return shutdown.signal.aborted ? 130 : 0;
     }
 
-    if (command === "login" || command === "logout") {
-      const selected = { ...options, ...(server === undefined ? {} : { server }) };
+    if (command.kind === "login" || command.kind === "logout") {
+      const selected = {
+        ...options,
+        ...(command.server === undefined ? {} : { server: command.server }),
+      };
 
       const result =
-        command === "login"
+        command.kind === "login"
           ? await login(path, { ...selected, signal: shutdown.signal })
           : await logout(path, selected);
 
       if (shutdown.signal.aborted) return 130;
 
       const success =
-        command === "login"
+        command.kind === "login"
           ? "Upstream authorization saved."
           : "Local upstream credentials removed. This does not revoke the upstream grant.";
 
@@ -178,12 +132,12 @@ export async function main(
       return result.ok ? 0 : 1;
     }
 
-    if (command === "check") {
+    if (command.kind === "check") {
       const config = await readConfiguration(path);
       if (shutdown.signal.aborted) return 130;
 
       const names = Object.keys(config.mcp.servers);
-      if (parsed.values.json)
+      if (command.json)
         console.log(JSON.stringify({ ok: true, configuration: path, servers: names }));
       else
         console.log(
@@ -193,16 +147,17 @@ export async function main(
       return 0;
     }
 
-    if (command === "doctor") {
-      const config = selectServer(await readConfiguration(path), server);
+    if (command.kind === "doctor") {
+      const config = await readConfiguration(path);
 
-      const remote = parsed.values.stdio
-        ? undefined
-        : await httpStatus(config.service.port, await httpToken(), shutdown.signal);
+      const remote =
+        command.transport === "stdio"
+          ? undefined
+          : await httpStatus(config.service.port, await httpToken(), shutdown.signal);
 
       let statuses: ServerStatus[];
       if (remote === undefined) {
-        await using gateway = new Gateway(config, dirname(path), {
+        await using gateway = new Gateway(selectServer(config, command.server), dirname(path), {
           ...options,
           signal: shutdown.signal,
         });
@@ -211,8 +166,12 @@ export async function main(
         statuses = gateway.status();
       } else {
         statuses = remote.upstreams.filter(
-          (status) => server === undefined || status.name === server,
+          (status) => command.server === undefined || status.name === command.server,
         );
+        if (command.server !== undefined && statuses.length === 0)
+          throw new GatewayError(
+            `Unknown server ${JSON.stringify(command.server)} in the running gateway.`,
+          );
       }
 
       if (shutdown.signal.aborted) return 130;
@@ -221,7 +180,7 @@ export async function main(
         (status) => status.state === "connected" || status.state === "disabled",
       );
 
-      if (parsed.values.json)
+      if (command.json)
         console.log(
           JSON.stringify({
             ok: healthy,
@@ -238,7 +197,7 @@ export async function main(
       return healthy ? 0 : 1;
     }
 
-    if (parsed.values.stdio || first !== "serve") await serve(path, options);
+    if (command.transport === "stdio") await serve(path, options);
     else await serveHttp(path, options);
 
     return 0;
@@ -250,7 +209,8 @@ export async function main(
         ? error.message
         : "CMG server failed. Private diagnostics were not displayed.";
 
-    if (parsed.values.json) console.log(JSON.stringify({ ok: false, error: { message } }));
+    if ((command.kind === "check" || command.kind === "doctor") && command.json)
+      console.log(JSON.stringify({ ok: false, error: { message } }));
     else console.error(message);
 
     return 1;

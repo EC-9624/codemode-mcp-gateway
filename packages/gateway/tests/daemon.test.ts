@@ -271,6 +271,57 @@ test("doctor reports a mismatched persistent token without displaying it", async
   await app.stop();
 });
 
+test("doctor rejects a locally configured server absent from the running service", async () => {
+  await using files = await fixture();
+  const app = await start(files);
+  const diagnostic = join(files.directory, "doctor.json");
+  await Bun.write(
+    diagnostic,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: { servers: { absent: { type: "local", command: ["unused"], disabled: true } } },
+    }),
+  );
+
+  const doctor = files.spawn(["doctor", "--config", diagnostic, "--server", "absent", "--json"]);
+  const output = new Response(doctor.stdout).json();
+  const diagnostics = new Response(doctor.stderr).text();
+
+  expect(await doctor.exited).toBe(1);
+  expect(await output).toEqual({
+    ok: false,
+    error: { message: 'Unknown server "absent" in the running gateway.' },
+  });
+  expect(await diagnostics).toBe("");
+  await app.stop();
+});
+
+test("doctor selects a running server even when absent from local configuration", async () => {
+  await using files = await fixture();
+  const app = await start(files);
+  const diagnostic = join(files.directory, "doctor.json");
+  await Bun.write(
+    diagnostic,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: { servers: { localOnly: { type: "local", command: ["unused"], disabled: true } } },
+    }),
+  );
+
+  const doctor = files.spawn(["doctor", "--config", diagnostic, "--server", "notes", "--json"]);
+  const output = new Response(doctor.stdout).json();
+  const diagnostics = new Response(doctor.stderr).text();
+
+  expect(await doctor.exited).toBe(0);
+  expect(await output).toMatchObject({
+    ok: true,
+    servers: [{ name: "notes", state: "disabled" }],
+    service: { pid: app.child.pid },
+  });
+  expect(await diagnostics).toBe("");
+  await app.stop();
+});
+
 test("doctor never forwards the persistent token to a redirected endpoint", async () => {
   await using files = await fixture();
   const requests: Request[] = [];

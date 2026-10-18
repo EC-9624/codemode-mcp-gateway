@@ -7,6 +7,7 @@ import { z } from "zod";
 import { type Gateway } from "./gateway.ts";
 import { httpCredential } from "./http-token.ts";
 import { type HttpStatus } from "./status.ts";
+import { reportServerError } from "./diagnostics.ts";
 
 const optionsSchema = z.strictObject({
   port: z.number().int().min(0).max(65535),
@@ -207,6 +208,7 @@ export class GatewayHttpServer implements AsyncDisposable {
     if (this.stopped) return new Response("Service is stopping", { status: 503 });
 
     const server = this.gateway.createServer();
+    server.server.onerror = reportServerError;
 
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),

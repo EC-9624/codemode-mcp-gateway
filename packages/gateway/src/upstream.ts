@@ -296,15 +296,16 @@ export class Upstream {
     if (cause.recovery === "login" && cause.credentialVersion !== undefined)
       this.blocked.set(cause.credentialVersion, cause);
 
-    // A replacement using the same grant is affected too; a newer grant is not.
-    if (
-      attempt !== this.attempt &&
-      (cause.recovery !== "login" ||
-        this.state.kind !== "connected" ||
-        cause.credentialVersion === undefined ||
-        this.state.lease.connection.credentialVersion !== cause.credentialVersion)
-    )
-      return;
+    if (attempt !== this.attempt) {
+      // Retired sessions can block a replacement's grant, but cannot invalidate a newer one.
+      const invalidatesCurrentGrant =
+        cause.recovery === "login" &&
+        cause.credentialVersion !== undefined &&
+        this.state.kind === "connected" &&
+        this.state.lease.connection.credentialVersion === cause.credentialVersion;
+
+      if (!invalidatesCurrentGrant) return;
+    }
 
     if (cause.credentialVersion !== undefined) this.version = cause.credentialVersion;
 
