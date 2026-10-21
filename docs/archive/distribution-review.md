@@ -3,8 +3,7 @@
 Slice 36 review, 2026-10-16. **Not approved for publication.** The initial read-only
 review was followed by the coordinating session's verification below. No registry
 publication or release-policy change was performed. This approval statement belongs
-to that historical review, not the current publication plan. See the
-[current distribution checklist](../distribution-readiness.md) for outstanding decisions.
+to that historical review, not the current publication plan.
 
 ## Release boundary and decisions
 

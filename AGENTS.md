@@ -1,7 +1,7 @@
 # codemode-mcp-gateway
 
 A code-mode sandbox built from first principles in explainable slices toward
-production readines. 
+production readiness.
 
 ## Scope
 
@@ -22,7 +22,7 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 ## General Style
 
 - Use strict TypeScript. Classes own sandbox configuration and per-execution
-  lifetimes; use plain functions for supporting logic. 
+  lifetimes; use plain functions for supporting logic.
 - Organize reusable packages under `packages/codemode/` and `packages/mcp/`, each
   with a `src/index.ts` public entry point, its own types, and a package README.
   Codemode runtime details stay internal to `packages/codemode/src/runtime/`.
@@ -241,4 +241,3 @@ Make states, failures, and ownership explicit. Keep the implementation simple.
 - Do not introduce speculative abstractions or configuration.
 - Do not commit, push, initialize Git, or create pull requests unless requested.
 - Keep explanations, commit messages, and summaries concise.
-

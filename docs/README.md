@@ -18,7 +18,6 @@
 
 - [Testing conventions](testing.md) and [script guide](../scripts/README.md).
 - [Installed-artifact verification](installed-validation.md).
-- [Distribution checklist](distribution-readiness.md): source, license, binary, and registry decisions.
 - [QuickJS patch](../patches/README.md) and its removal gate.
 
 ## Optional diagnostics

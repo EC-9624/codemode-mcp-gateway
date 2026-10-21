@@ -74,8 +74,11 @@ still require the full workspace; copying a package directory alone is unsupport
 
 Authorize the configured upstream explicitly before this check. Use the same OS
 user, server name, and canonical upstream URL as your saved login; credentials
-remain in the OS store. Stop on missing authorization rather than launching login
-implicitly during validation. Keep real queries, page IDs, and markers out of Git.
+remain in private plaintext files under
+`$XDG_STATE_HOME/codemode-mcp-gateway/credentials` (default
+`~/.local/state/codemode-mcp-gateway/credentials`). Do not copy them into the consumer.
+Stop on missing authorization rather than launching login implicitly during
+validation. Keep real queries, page IDs, and markers out of Git.
 
 ```sh
 bun notion-client.ts config/notion.json "<specific private query>" \

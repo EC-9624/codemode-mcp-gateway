@@ -9,7 +9,8 @@ their schemas, and write JavaScript to combine calls and return relevant results
 Use it with MCP clients such as Claude Code and Codex. The gateway handles tool
 connections and execution—not models or agent loops.
 
-**Status:** Working MVP. Build from source with **Bun 1.4.3**;
+**Status:** Working MVP, not a production-hardened sandbox. Build from source with
+**Bun 1.4.3**.
 
 ## Quick start
 
