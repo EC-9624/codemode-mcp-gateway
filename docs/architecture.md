@@ -25,6 +25,24 @@ within the owning package. Tests use another package's public API, never its
 implementation or test helpers. Source runs select the `development` condition;
 installed consumers load compiled `dist/` artifacts.
 
+## Codemode structure
+
+| Location                  | Responsibility                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `catalog.ts`              | Tool definitions, metadata/callback snapshots, and exact-name lookup                                              |
+| `search.ts`               | Text tokenization/plural aliases, exact-name/name-coverage preferences, substring eligibility, and stable ranking |
+| `bm25.ts`                 | Corpus frequency statistics and the BM25 scoring function, independent of tool names and discovery                |
+| `discovery.ts`            | Discovery argument validation, description previews, pagination, and the public page type                         |
+| `executor.ts`, `runtime/` | Host admission/supervision and worker-local QuickJS execution                                                     |
+
+The search policy delegates numeric scoring to `createBm25`; the `bm25` function
+contains the scoring formula. BM25 receives pretokenized documents with opaque
+values, and search requires only names/descriptions while preserving complete
+metadata in its results. Neither module imports catalog types, avoiding a type
+dependency cycle. Discovery depends on the catalog contract, not the scoring
+implementation. These modules remain internal: callers and tests use the same
+package-root catalog/discovery API.
+
 ## Gateway structure
 
 | Location                           | Responsibility                                                                            |

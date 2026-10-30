@@ -225,8 +225,14 @@ This is a working MVP, not a production-hardened sandbox.
   five name/short-description previews by default, without schemas. Read `page.tools`
   rather than the previous metadata array. Use `describeTool({ name })` for a selected
   tool's complete description/schema; follow `nextOffset` for additional matches.
-  Host `catalog.search()` remains an unpaged list of full metadata. Name matches rank
-  ahead of description-only matches, with stable ties.
+  Host `catalog.search()` remains an unpaged list of full metadata. Exact names rank
+  first, followed by name-match coverage and BM25 relevance over names and complete
+  descriptions, with stable ties. The index splits camel-case identifiers and
+  punctuation, normalizes Unicode tokens, adds limited English plural aliases
+  without replacing original tokens, and retains substring matching. Schemas
+  and private fields are not indexed. See the repository's
+  [offline search evaluation](../../docs/search-evaluation.md) for scoring details,
+  relevance judgments, and baseline comparisons.
 - `SandboxLimits` exposes shared defaults and upper bounds.
 
 Native schemas must implement both Standard Schema and Standard JSON Schema.

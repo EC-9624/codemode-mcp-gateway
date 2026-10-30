@@ -438,10 +438,21 @@ await sandbox.execute(
 );
 ```
 
-- Search matches whitespace-separated query terms case-insensitively. Rank first
-  by distinct terms in the name, then by distinct terms in the combined name and
-  description; ties retain catalog order. Matching uses complete descriptions.
-  Blank or unmatched host queries return an empty list.
+- Search ranks a case-insensitive exact name first, then distinct whitespace query
+  fragments found in the name, then BM25 relevance over the combined name and full
+  description. BM25 uses `k1 = 1.2`, `b = 0.75`, positive smoothed IDF, term-frequency
+  saturation, and document-length normalization. Statistics are built once per
+  catalog snapshot. The index splits camel-case/acronym identifiers and punctuation
+  into Unicode letter/number tokens, using NFKC normalization. Queries are lowercased
+  before tokenization so query casing cannot change ranking; duplicate tokens are
+  counted once. Limited English plural aliases are added alongside original tokens
+  (for example, `invoices`/`invoice` and `deliveries`/`delivery`); singular-ending
+  guards and exceptions keep `news` distinct from `new`. This is a heuristic, not
+  comprehensive stemming or language detection. Existing raw substring matches remain eligible even without token
+  matches; substring coverage breaks equal BM25 scores, then ties retain catalog
+  order. Blank or unmatched host queries return an empty list. No schemas, callbacks,
+  or private metadata enter the search index. See [search evaluation](search-evaluation.md)
+  for the formula, limitations, and reproducible comparison with the previous ranker.
 - Host `catalog.search()` returns all matching full metadata, including input schemas.
   `catalog.describe()` and guest `describeTool` return complete metadata for one name.
   Neither exposes implementations or extra definition fields, or invokes a tool.

@@ -164,15 +164,16 @@ describe("gateway discovery and partial availability", () => {
       },
     });
 
+    // Both descriptions match "Return"; BM25 ranks the shorter one first.
     expect(responseValue(response)).toMatchObject({
       first: {
-        tools: [{ name: "notes.dataset" }],
+        tools: [{ name: "notes.fail" }],
         total: 2,
         nextOffset: 1,
         servers: [{ name: "notes", state: "connected" }],
       },
       second: {
-        tools: [{ name: "notes.fail" }],
+        tools: [{ name: "notes.dataset" }],
         total: 2,
         nextOffset: null,
         servers: [{ name: "notes", state: "connected" }],

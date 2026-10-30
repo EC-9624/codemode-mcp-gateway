@@ -32,6 +32,8 @@ describe("ToolCatalog", () => {
 
     expect(catalog.describe("listInvoices")).toEqual(expected);
     expect(catalog.search("invoices")).toEqual([expected]);
+    expect(catalog.search("adapter")).toEqual([]);
+    expect(catalog.search("customerId")).toEqual([]);
     expect(calls).toBe(0);
   });
 
@@ -56,7 +58,161 @@ describe("ToolCatalog", () => {
       "listInvoices",
       "customerProfiles",
     ]);
+    expect(catalog.search("customer invoices")).toEqual(matches);
   });
+
+  test("ranks a rare intent term above common description terms", () => {
+    const catalog = ToolCatalog.create({
+      general: { description: "workspace record", execute: () => ToolResult.success() },
+      events: { description: "webhook", execute: () => ToolResult.success() },
+      alpha: { description: "workspace record", execute: () => ToolResult.success() },
+      bravo: { description: "workspace record", execute: () => ToolResult.success() },
+      charlie: { description: "workspace record", execute: () => ToolResult.success() },
+      delta: { description: "workspace record", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("workspace record webhook")[0]?.name).toBe("events");
+  });
+
+  test("normalizes description length instead of favoring an earlier verbose match", () => {
+    const catalog = ToolCatalog.create({
+      verbose: {
+        description: "Rotate credentials " + "unrelated details ".repeat(40),
+        execute: () => ToolResult.success(),
+      },
+      concise: { description: "Rotate credentials", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("rotate credentials").map((tool) => tool.name)).toEqual([
+      "concise",
+      "verbose",
+    ]);
+  });
+
+  test("uses term frequency when matching descriptions have the same length", () => {
+    const catalog = ToolCatalog.create({
+      first: { description: "rotate idle idle idle", execute: () => ToolResult.success() },
+      second: { description: "rotate rotate idle idle", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("rotate").map((tool) => tool.name)).toEqual(["second", "first"]);
+  });
+
+  test("saturates repeated terms rather than letting keyword stuffing overwhelm a precise match", () => {
+    const catalog = ToolCatalog.create({
+      repeated: { description: "invoices ".repeat(100), execute: () => ToolResult.success() },
+      precise: { description: "overdue invoices", execute: () => ToolResult.success() },
+      other: { description: "invoices", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("overdue invoices")[0]?.name).toBe("precise");
+  });
+
+  test("keeps catalog insertion order when relevance scores tie", () => {
+    const catalog = ToolCatalog.create({
+      second: { description: "Read records", execute: () => ToolResult.success() },
+      first: { description: "Read records", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("records").map((tool) => tool.name)).toEqual(["second", "first"]);
+  });
+
+  test("query casing does not change identifier tokenization or ranking", () => {
+    const catalog = ToolCatalog.create({
+      "crm.customerInvoicesArchive": {
+        description: "Historical records " + "with details ".repeat(20),
+        execute: () => ToolResult.success(),
+      },
+      "crm.customerInvoices": { description: "Read records", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("CustomerInvoices")).toEqual(catalog.search("CUSTOMERINVOICES"));
+    expect(catalog.search("CustomerInvoices")).toEqual(catalog.search("customerinvoices"));
+  });
+
+  test.each([
+    { query: "invoices", description: "Read an invoice" },
+    { query: "deliveries", description: "Inspect delivery history" },
+    { query: "policies", description: "Review a policy" },
+    { query: "repositories", description: "Inspect a repository" },
+    { query: "messages", description: "Read a message" },
+    { query: "boxes", description: "Open a box" },
+  ])("matches regular plural intent $query to a singular description", ({ query, description }) => {
+    const catalog = ToolCatalog.create({
+      inspect: { description, execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search(query).map((tool) => tool.name)).toEqual(["inspect"]);
+  });
+
+  test.each([
+    { query: "news", description: "Announce a new release" },
+    { query: "status", description: "Read statu data" },
+    { query: "analysis", description: "Read analysi data" },
+    { query: "access", description: "Read acces data" },
+    { query: "series", description: "Read sery data" },
+    { query: "species", description: "Read specy data" },
+    { query: "physics", description: "Read physic data" },
+    { query: "s3keys", description: "Read s3key data" },
+  ])("does not manufacture a singular match for $query", ({ query, description }) => {
+    const catalog = ToolCatalog.create({
+      inspect: { description, execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search(query)).toEqual([]);
+  });
+
+  test("deduplicates plural aliases and explicit singular query tokens", () => {
+    const catalog = ToolCatalog.create({
+      read: { description: "Read an invoice", execute: () => ToolResult.success() },
+      overdue: { description: "Find overdue invoices", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("invoices invoice INVOICES")).toEqual(catalog.search("invoices"));
+  });
+
+  test("retains exact plural evidence rather than replacing it with a singular token", () => {
+    const catalog = ToolCatalog.create({
+      single: { description: "Inspect invoice", execute: () => ToolResult.success() },
+      multiple: { description: "Inspect invoices", execute: () => ToolResult.success() },
+    });
+
+    expect(catalog.search("invoices").map((tool) => tool.name)).toEqual(["multiple", "single"]);
+  });
+
+  test("ranks an exact qualified tool name above a longer name containing it", () => {
+    const catalog = ToolCatalog.create({
+      "crm.listInvoicesArchived": { description: "Read", execute: () => ToolResult.success() },
+      "crm.listInvoices": {
+        description: "Read customer invoices " + "with pagination ".repeat(10),
+        execute: () => ToolResult.success(),
+      },
+    });
+
+    expect(catalog.search(" CRM.listInvoices ")[0]?.name).toBe("crm.listInvoices");
+  });
+
+  test.each([
+    { query: "list-invoices", name: "crm.listInvoices", description: "Read billing data" },
+    { query: "http-response", name: "readHTTPResponse", description: "Inspect network data" },
+    { query: "search_pages", name: "notion.search-pages", description: "Find content" },
+    { query: "café", name: "places.lookup", description: "Find a cafe\u0301 nearby" },
+    { query: "mail", name: "sendEmail", description: "Send a message" },
+    { query: "chron", name: "inspect", description: "Check synchronization state" },
+    { query: ".", name: "crm.read", description: "Read data" },
+    { query: "資料", name: "資料検索", description: "ドキュメントを探す" },
+    { query: "🔥", name: "🔥", description: "" },
+    { query: "\u0301", name: "accent", description: "cafe\u0301" },
+  ])(
+    "finds $name for $query without relying on whitespace-only tokenization",
+    ({ query, name, description }) => {
+      const catalog = ToolCatalog.create({
+        [name]: { description, execute: () => ToolResult.success() },
+      });
+
+      expect(catalog.search(query).map((tool) => tool.name)).toEqual([name]);
+    },
+  );
 
   test("matches a tool name when its description does not contain the query", () => {
     const catalog = ToolCatalog.create({
@@ -151,6 +307,8 @@ describe("ToolCatalog", () => {
     definition.execute = () => ToolResult.success(2);
 
     expect(catalog.describe("read")?.description).toBe("Original description");
+    expect(catalog.search("original").map((tool) => tool.name)).toEqual(["read"]);
+    expect(catalog.search("changed")).toEqual([]);
     expect(await catalog.tools.read?.(undefined, { signal: new AbortController().signal })).toEqual(
       ToolResult.success(1),
     );

@@ -20,11 +20,10 @@ export {
   type ToolSchema,
 } from "./tools.ts";
 export {
-  createDiscoveryTools,
   defineTool,
   ToolCatalog,
   type ToolDefinition,
   type ToolDescription,
-  type ToolSearchPage,
   type ToolInputSchema,
 } from "./catalog.ts";
+export { createDiscoveryTools, type ToolSearchPage } from "./discovery.ts";

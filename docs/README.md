@@ -27,6 +27,7 @@ These are not setup steps or automatic installation/CI prerequisites. Run heavy
 diagnostics serially; model/provider workflows require separate explicit authorization.
 
 - [Scripted CLI workflows](agent-validation.md): synthetic, no model/provider calls.
+- [Offline tool-search evaluation](search-evaluation.md): fixed relevance judgments and BM25/baseline comparisons.
 - [Managed-upstream transport soak](gateway-soak.md): controlled stdio/HTTP faults.
 - [Bounded library reliability](reliability.md): in-memory composition, not managed Gateway hosting.
 - [Actual model-agent validation](model-validation.md): paid calls requiring approval.

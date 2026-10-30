@@ -36,6 +36,17 @@ forward to the owning package. `example:http` connects to an already-running gat
 
 ## Optional diagnostics
 
+`bun run eval:search` runs a deterministic offline search-quality comparison with
+the previous ranker: graded relevance metrics, per-query results, and regression
+gates. It makes no model/provider calls. See the
+[search evaluation guide](../docs/search-evaluation.md) for the dataset and limits.
+
+`bun run bench:search` measures real catalog/discovery search with synthetic
+100/1,000/10,000-tool catalogs and a 1,000-tool long-description scenario. It reports
+build time, warm query median/p95, approximate retained heap, and discovery page
+size. It asserts basic search/pagination behavior but has no machine-specific
+latency gates. It makes no upstream or model calls.
+
 Execution/memory/concurrency/reliability baselines, gateway soak, HTTP-idle probes,
 scripted agent validation, and the stdio observer remain opt-in. Their fixtures
 and helpers stay with them. None runs during installation or routine `check`.
