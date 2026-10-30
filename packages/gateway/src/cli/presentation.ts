@@ -1,4 +1,4 @@
-import { type ServerStatus } from "../upstream/upstream.ts";
+import { type ServerStatus } from "../server-status.ts";
 
 export type OutputMode = { kind: "terminal"; width: number } | { kind: "pipe" };
 export type TextOutput = { stdout: string; stderr: string };

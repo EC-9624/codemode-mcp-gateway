@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ServerStatus } from "../upstream/upstream.ts";
+import { ServerStatus } from "../server-status.ts";
 
 /** Management snapshot served over HTTP; tool metadata uses the shared ToolList contract. */
 export const HttpStatus = z.object({

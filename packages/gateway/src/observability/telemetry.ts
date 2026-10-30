@@ -21,7 +21,7 @@ import {
   type PushMetricExporter,
 } from "@opentelemetry/sdk-metrics";
 import { type ToolContext } from "@codemode-mcp-gateway/codemode";
-import { type ServerStatus } from "../upstream/upstream.ts";
+import { type ServerStatus } from "../server-status.ts";
 import { type Logger } from "./logger.ts";
 import {
   type GatewayLog,

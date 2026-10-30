@@ -351,8 +351,20 @@ test.each([
   },
 );
 
-test("status selects a running server even when absent from local configuration", async () => {
+test("status selects only the requested running server even when absent from local configuration", async () => {
   await using files = await fixture();
+  await Bun.write(
+    files.config,
+    JSON.stringify({
+      service: { port: files.port },
+      mcp: {
+        servers: {
+          notes: { type: "local", command: ["unused"], disabled: true },
+          backup: { type: "local", command: ["unused"], disabled: true },
+        },
+      },
+    }),
+  );
   const app = await start(files);
   const diagnostic = join(files.directory, "status.json");
   await Bun.write(

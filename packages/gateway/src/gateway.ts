@@ -10,7 +10,8 @@ import {
 import { createCodemodeServer } from "@codemode-mcp-gateway/mcp";
 import { type McpServer } from "@modelcontextprotocol/server";
 import { type Configuration } from "./config.ts";
-import { Upstream, type ConnectionSnapshot, type ServerStatus } from "./upstream/upstream.ts";
+import { Upstream, type ConnectionSnapshot } from "./upstream/upstream.ts";
+import { type ServerStatus } from "./server-status.ts";
 import { executionInstructions } from "./instructions.ts";
 import { OutputFiles } from "./output.ts";
 import { GatewayError } from "./errors.ts";
@@ -27,8 +28,6 @@ import {
   type FailureType,
 } from "./observability/events.ts";
 import { reportServerError } from "./diagnostics.ts";
-
-export { type ServerStatus } from "./upstream/upstream.ts";
 
 export type GatewayOptions = CredentialOptions & {
   signal?: AbortSignal;

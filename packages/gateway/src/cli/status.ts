@@ -1,4 +1,4 @@
-import { type ServerStatus } from "../upstream/upstream.ts";
+import { type ServerStatus } from "../server-status.ts";
 import { type HttpStatus } from "../http/protocol.ts";
 import { formatServers, wrapText, type OutputMode } from "./presentation.ts";
 

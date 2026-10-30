@@ -16,6 +16,7 @@
 
 ## Develop and verify
 
+- [Architecture and ownership](architecture.md): package boundaries, gateway structure, and audit guardrails.
 - [Testing conventions](testing.md) and [script guide](../scripts/README.md).
 - [Installed-artifact verification](installed-validation.md).
 - [QuickJS patch](../patches/README.md) and its removal gate.

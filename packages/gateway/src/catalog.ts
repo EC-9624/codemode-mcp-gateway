@@ -5,7 +5,7 @@ import {
   type ToolCatalog,
   type ToolDefinition,
 } from "@codemode-mcp-gateway/codemode";
-import { type ServerStatus } from "./upstream/upstream.ts";
+import { type ServerStatus } from "./server-status.ts";
 
 /** Bind discovery to a fixed catalog/status revision; connection lifetimes stay with the gateway. */
 export function discoveryBindings(

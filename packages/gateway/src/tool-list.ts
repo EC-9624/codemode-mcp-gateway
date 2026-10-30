@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ServerStatus } from "./upstream/upstream.ts";
+import { ServerStatus } from "./server-status.ts";
 
 /** Current upstream metadata only: no callbacks, schemas, or discovery helpers. */
 export const ToolList = z.object({

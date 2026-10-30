@@ -1,4 +1,5 @@
 import { type SandboxResult } from "@codemode-mcp-gateway/codemode";
+import { type ServerStatus } from "../server-status.ts";
 
 export type Transport = "http" | "stdio" | "embedded";
 export type SessionContext = { "gw.transport": Transport; "gw.session.id": string };
@@ -66,7 +67,7 @@ export type GatewayEvent =
       name: "gw.upstream.state_changed";
       attributes: {
         "gw.upstream.name": string;
-        "gw.upstream.state": "disabled" | "connecting" | "connected" | "needs-auth" | "failed";
+        "gw.upstream.state": ServerStatus["state"];
         "gw.upstream.previous_state"?: string;
         "gw.upstream.tools": number;
         "error.type"?: FailureType;

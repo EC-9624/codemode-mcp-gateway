@@ -10,7 +10,8 @@ import {
   readConfiguration,
   type Configuration,
 } from "../config.ts";
-import { Gateway, type ServerStatus } from "../gateway.ts";
+import { Gateway } from "../gateway.ts";
+import { type ServerStatus } from "../server-status.ts";
 import { serveHttp } from "../http/serve.ts";
 import { httpToken } from "../http/token.ts";
 import { httpStatus, httpTools } from "../http/client.ts";
@@ -121,14 +122,7 @@ export async function main(
 
       const selected = command.output.server;
 
-      const servers = listing.servers.filter(
-        (server) => selected === undefined || server.name === selected,
-      );
-
-      if (selected !== undefined && servers.length === 0)
-        throw new GatewayError(
-          `Unknown server ${JSON.stringify(selected)} in the running gateway.`,
-        );
+      const servers = selectRunningServers(listing.servers, selected);
 
       const tools = listing.tools.filter(
         (tool) => selected === undefined || tool.server === selected,
@@ -158,27 +152,12 @@ export async function main(
           ? await httpStatus(config.service.port, await httpToken(), shutdown.signal)
           : undefined;
 
-      let statuses: ServerStatus[];
-      if (remote === undefined) {
-        statuses = await withProgress("Checking upstream connections…", !command.json, async () => {
-          await using gateway = new Gateway(selectServer(config, command.server), dirname(path), {
-            ...options,
-            signal: shutdown.signal,
-          });
-
-          await gateway.start();
-
-          return gateway.status();
-        });
-      } else {
-        statuses = remote.upstreams.filter(
-          (status) => command.server === undefined || status.name === command.server,
-        );
-        if (command.server !== undefined && statuses.length === 0)
-          throw new GatewayError(
-            `Unknown server ${JSON.stringify(command.server)} in the running gateway.`,
-          );
-      }
+      const statuses =
+        remote === undefined
+          ? await withProgress("Checking upstream connections…", !command.json, () =>
+              probeServers(config, path, command.server, { ...options, signal: shutdown.signal }),
+            )
+          : selectRunningServers(remote.upstreams, command.server);
 
       if (shutdown.signal.aborted) return interruptionCode(shutdown.signal);
 
@@ -238,6 +217,27 @@ export async function main(
 
 function interruptionCode(signal: AbortSignal): number {
   return signal.reason === "SIGTERM" ? 143 : 130;
+}
+
+async function probeServers(
+  config: Configuration,
+  path: string,
+  server: string | undefined,
+  options: CredentialOptions & { signal: AbortSignal },
+): Promise<ServerStatus[]> {
+  await using gateway = new Gateway(selectServer(config, server), dirname(path), options);
+
+  await gateway.start();
+
+  return gateway.status();
+}
+
+function selectRunningServers(statuses: ServerStatus[], name: string | undefined): ServerStatus[] {
+  const selected = statuses.filter((status) => name === undefined || status.name === name);
+  if (name !== undefined && selected.length === 0)
+    throw new GatewayError(`Unknown server ${JSON.stringify(name)} in the running gateway.`);
+
+  return selected;
 }
 
 function selectServer(config: Configuration, name: string | undefined): Configuration {

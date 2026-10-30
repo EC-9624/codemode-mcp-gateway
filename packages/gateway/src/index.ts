@@ -6,7 +6,8 @@ export {
   resolveHeaders,
   type ConfigurationInput,
 } from "./config.ts";
-export { Gateway, type GatewayOptions, type ServerStatus } from "./gateway.ts";
+export { Gateway, type GatewayOptions } from "./gateway.ts";
+export { type ServerStatus } from "./server-status.ts";
 export { type ToolList } from "./tool-list.ts";
 export { serve } from "./stdio/serve.ts";
 export { GatewayHttpServer, type HttpOptions, type HttpListenResult } from "./http/server.ts";

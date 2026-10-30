@@ -1,7 +1,7 @@
 import { type ToolCatalog } from "@codemode-mcp-gateway/codemode";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { z } from "zod";
 import { type ServerConfiguration } from "../config.ts";
+import { type ServerStatus } from "../server-status.ts";
 import { connectUpstream, UpstreamError, type ConnectionAuth } from "./connection.ts";
 import { GatewayError } from "../errors.ts";
 import { AuthorizationError } from "../auth/result.ts";
@@ -9,24 +9,7 @@ import { credentialVersion, oauthConnection, type CredentialOptions } from "../a
 import { fileCredentialStore } from "../auth/file-store.ts";
 import { type Telemetry, type SpanObservation } from "../observability/telemetry.ts";
 
-const statusBase = { name: z.string(), updatedAt: z.string() };
-const publicFailure = z.object({ kind: z.string(), message: z.string() });
-export const ServerStatus = z.discriminatedUnion("state", [
-  z.object({
-    ...statusBase,
-    state: z.literal("connected"),
-    toolCount: z.number().int().nonnegative(),
-  }),
-  z.object({ ...statusBase, state: z.enum(["disabled", "connecting"]), toolCount: z.literal(0) }),
-  z.object({
-    ...statusBase,
-    state: z.enum(["needs-auth", "failed"]),
-    toolCount: z.literal(0),
-    error: publicFailure,
-  }),
-]);
-export type ServerStatus = z.infer<typeof ServerStatus>;
-type PublicFailure = z.infer<typeof publicFailure>;
+type PublicFailure = Extract<ServerStatus, { state: "failed" | "needs-auth" }>["error"];
 type Connection = Awaited<ReturnType<typeof connectUpstream>>;
 type Lease = { connection: Connection; users: number; retired: boolean; disposal?: Promise<void> };
 type State =

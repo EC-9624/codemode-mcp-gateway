@@ -357,7 +357,8 @@ bun run example
 `bun run check` runs builds, typechecking, lint, formatting checks, tests, and
 packaged-consumer verification.
 
-See [testing conventions](docs/testing.md), the [script guide](scripts/README.md),
+See [architecture and ownership](docs/architecture.md),
+[testing conventions](docs/testing.md), the [script guide](scripts/README.md),
 and [project conventions](AGENTS.md).
 
 ## Documentation

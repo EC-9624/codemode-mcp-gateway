@@ -31,8 +31,20 @@
     "no-else-return": "error",
     "no-nested-ternary": "error",
     "no-useless-catch": "error",
+    "import/no-cycle": ["error", { "ignoreTypes": false, "ignoreExternal": true }],
     "import/no-duplicates": "error",
     "import/no-namespace": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^(@codemode-mcp-gateway/(codemode|mcp)|codemode-mcp-gateway)/|(^|/)(codemode|mcp|gateway)/(src|tests|dist)/",
+            "message": "Use the owning package's public entry point, not its implementation or tests."
+          }
+        ]
+      }
+    ],
     "oxc/no-accumulating-spread": "error",
     "typescript/consistent-type-imports": ["error", { "fixStyle": "inline-type-imports" }],
     "typescript/no-explicit-any": "error",
